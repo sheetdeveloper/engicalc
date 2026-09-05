@@ -10,6 +10,8 @@ import re
 
 import sympy as sp
 
+from .parsing import GREEK_NAMES, NAME_PATTERN, SAFE_FUNCTIONS
+
 
 def fmt(expr) -> str:
     """Format *expr* for display in the window."""
@@ -76,12 +78,83 @@ def symbol_names(expr) -> dict:
     except AttributeError:
         return names
     for symbol in symbols:
-        match = _DIFFERENCE.match(symbol.name)
-        if match:
-            letter, index = match.groups()
-            names[symbol] = (r"\Delta " + letter
-                             + (f"_{{{index}}}" if index else ""))
+        drawn = latex_name(symbol.name)
+        if drawn != symbol.name:
+            names[symbol] = drawn
     return names
+
+
+
+
+#: How a rate is spelled, and the accent it is drawn with. The two-dot form
+#: is checked first, or `xddot` would be read as `xd` with one dot.
+_RATES = (("ddot", r"\ddot"), ("dot", r"\dot"))
+_RATE_SUFFIX = {name: command for name, command in _RATES}
+
+
+def _base_latex(base: str, one_symbol: bool) -> str:
+    """The part of a name before its subscript."""
+    if base in GREEK_NAMES:
+        return "\\" + base.rstrip("_") + " "
+    if base in SAFE_FUNCTIONS:
+        return r"\mathrm{" + base + "}"
+    if one_symbol:
+        for suffix, command in _RATES:
+            # `dot` on its own is a name, not a rate with nothing under it.
+            if base.endswith(suffix) and len(base) > len(suffix):
+                return (command + "{"
+                        + latex_name(base[:-len(suffix)], one_symbol) + "}")
+    if one_symbol and len(base) > 1:
+        # Two italic letters side by side are what a product looks like, so
+        # a name that really is one symbol is set upright to say so: `Re` is
+        # a Reynolds number rather than R times e.
+        return r"\mathrm{" + base + "}"
+    return base
+
+
+def latex_name(name: str, one_symbol: bool = True) -> str:
+    """One variable name, typeset the way it is written by hand.
+
+    ``one_symbol`` says whether a run of letters is a single name. It is,
+    wherever the names have been declared - a sheet, a set of equations - and
+    it is not in the equation bar, where nothing is declared and `Re` really
+    does parse as R times e. Drawing it upright there would be a claim the
+    arithmetic does not support, so the letters stay italic and read as the
+    product they are.
+
+    Anything after an underscore is a subscript either way, because an
+    underscore name is a single symbol in every path. That is what makes a
+    subscript the way to write a multi-letter variable that has to survive.
+    """
+    word = str(name or "")
+    if not word:
+        return ""
+    # log10 and atan2 are whole names, not a log with a subscript.
+    if word in SAFE_FUNCTIONS:
+        return r"\mathrm{" + word + "}"
+    # dT is a change in T. Narrow on purpose - d then a capital - because
+    # `delta` in this library is a deflection, and dx and dt are
+    # differentials rather than differences.
+    difference = _DIFFERENCE.match(word)
+    if difference:
+        letter, index = difference.groups()
+        return r"\Delta " + letter + (f"_{{{index}}}" if index else "")
+    base, separator, index = word.partition("_")
+    if separator and index in _RATE_SUFFIX:
+        # m_dot spells the rate out with an underscore, which makes it one
+        # symbol in every path - so it draws with the dot in every path.
+        return _RATE_SUFFIX[index] + "{" + latex_name(base, one_symbol) + "}"
+    if not separator and one_symbol:
+        # Only split a trailing number off a name that is one symbol. Where
+        # it is not, T1 has already been read as T times 1 and a subscript
+        # would be drawing something that was never computed.
+        stripped = base.rstrip("0123456789")
+        if stripped and stripped != base:
+            base, index = stripped, base[len(stripped):]
+    drawn = _base_latex(base, one_symbol)
+    if index:
+        drawn += "_{" + latex_name(index, one_symbol) + "}"
+    return drawn
 
 
 def latex(expr, **kwargs) -> str:
@@ -90,16 +163,7 @@ def latex(expr, **kwargs) -> str:
     return sp.latex(expr, **kwargs)
 
 
-_GREEK = {
-    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε",
-    "zeta": "ζ", "eta": "η", "theta": "θ", "iota": "ι", "kappa": "κ",
-    "lambda": "λ", "lambda_": "λ", "mu": "μ", "nu": "ν", "xi": "ξ",
-    "pi": "π", "rho": "ρ", "sigma": "σ", "tau": "τ", "upsilon": "υ",
-    "phi": "φ", "chi": "χ", "psi": "ψ", "omega": "ω",
-    "Alpha": "Α", "Beta": "Β", "Gamma": "Γ", "Delta": "Δ", "Theta": "Θ",
-    "Lambda": "Λ", "Xi": "Ξ", "Pi": "Π", "Sigma": "Σ", "Phi": "Φ",
-    "Psi": "Ψ", "Omega": "Ω",
-}
+_GREEK = GREEK_NAMES
 _SUBSCRIPT = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 
 
@@ -133,6 +197,43 @@ def unicode_symbol(name: str) -> str:
         # as "taumax" - the underscore is doing real work and stays.
         return letter + "_" + _GREEK.get(index, index)
     return letter
+
+
+
+_TOKEN = re.compile(NAME_PATTERN)
+
+
+def pretty_names(text: str) -> str:
+    """Greek names in *text* written as their letters, and nothing else.
+
+    For text that is going back into an editable box and will be parsed
+    again, so only substitutions that survive the round trip are made. That
+    rules out the ``dT`` -> ``ΔT`` reading used by :func:`unicode_symbol`:
+    Δ reads back as ``Delta``, so the name would quietly change identity.
+    Greek names are the whole of what is safe here.
+    """
+    if not text:
+        return ""
+
+    def letter(match):
+        # A difference first: dT is a change in T, and the triangle is how
+        # that is written. U+2206, so it reads back as the dT it came from
+        # rather than colliding with a variable called Delta.
+        difference = _DIFFERENCE.match(match.group(0))
+        if difference:
+            base, index = difference.groups()
+            return "\u2206" + base + index
+        # sigma_max is a sigma with a subscript, so each part between the
+        # underscores is looked up rather than the whole name. Splitting only
+        # where both sides are non-empty leaves lambda_ alone, which exists
+        # to keep clear of the Python keyword and is not a subscript at all.
+        name = match.group(0)
+        if "_" in name and not name.endswith("_") and not name.startswith("_"):
+            return "_".join(GREEK_NAMES.get(part, part)
+                            for part in name.split("_"))
+        return GREEK_NAMES.get(name, name)
+
+    return _TOKEN.sub(letter, str(text))
 
 
 def fmt_set(solution) -> str:

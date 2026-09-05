@@ -39,7 +39,9 @@ import sympy as sp
 from matplotlib import mathtext
 from matplotlib.font_manager import FontProperties
 
+from ..core.display import latex_name
 from ..core.parsing import SAFE_FUNCTIONS
+from .widgets import images_are_stale
 
 DPI = 130
 # A hollow box reads as "type here"; mathtext has no \square or \Box, but it
@@ -56,11 +58,6 @@ _CHAR_LATEX = {
     ">=": r"\geq ",
     "!=": r"\neq ",
 }
-
-_GREEK_SET = set((
-    "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda_ mu nu xi "
-    "pi rho sigma tau phi chi psi omega Delta Omega Sigma Phi Gamma"
-).split())
 
 # Drawn upright. Taken from the parser so the two cannot disagree about what
 # counts as a function.
@@ -100,6 +97,10 @@ class Template:
     # flattened need this - `a+b` over `c` must not compile to `a+b/c`, while
     # anything written as a function call brings its own brackets.
     wrap: tuple[int, ...] = ()
+    # Slots that need brackets *drawn* when they hold more than an atom.
+    # Narrower than `wrap`: a fraction bar and a root already enclose their
+    # contents, so only a shape whose grouping is invisible needs them.
+    draw: tuple[int, ...] = ()
 
     @property
     def count(self) -> int:
@@ -111,8 +112,9 @@ TEMPLATES: dict[str, Template] = {t.key: t for t in [
     Template("frac", r"\frac{@0@}{@1@}", "@0@/@1@",
              ("numerator", "denominator"), wrap=(0, 1)),
     Template("power", r"{@0@}^{@1@}", "@0@^@1@", ("base", "exponent"),
-             wrap=(0, 1)),
-    Template("subscript", r"{@0@}_{@1@}", "@0@_@1@", ("symbol", "subscript")),
+             wrap=(0, 1), draw=(0,)),
+    Template("subscript", r"{@0@}_{@1@}", "@0@_@1@", ("symbol", "subscript"),
+             draw=(0,)),
     Template("sqrt", r"\sqrt{@0@}", "sqrt(@0@)", ("radicand",)),
     Template("nthroot", r"\sqrt[@0@]{@1@}", "root(@1@, @0@)",
              ("index", "radicand")),
@@ -179,29 +181,37 @@ def walk_rows(row: Row) -> list:
 
 
 def _word_to_latex(word: str) -> str:
-    """One run of letters: a Greek name, a function name, or a variable.
+    """One name: a Greek letter, a function, or a variable with a subscript.
 
-    Function names are set upright, as they are everywhere else in the app -
-    ``sin(x)`` should not read as three variables multiplied together.
-    Variables are left alone so they stay italic, which is what they should be.
+    Nothing is declared in the equation bar, so a run of letters is a product
+    here - `Re` parses as R times e - and it is drawn as one: italic letters
+    side by side. A subscript is the way to write a name that has to hold
+    together, and `c_p` is one symbol in every path, so it draws as one.
     """
-    if word in _GREEK_SET:
-        return "\\" + word.rstrip("_") + " "
-    if word in _FUNCTION_NAMES:
-        return r"\mathrm{" + word + "}"
-    return word
+    return latex_name(word, one_symbol=False)
 
 
 def _chars_to_latex(chars: str) -> str:
-    out = chars
-    for plain, drawn in _CHAR_LATEX.items():
-        out = out.replace(plain, drawn)
-    # Split into letter runs and everything else, so that "theta" is one word
-    # rather than something containing "eta", and "sin" is only a function when
-    # it stands alone.
-    # Trailing digits stay attached so log10, log2 and atan2 survive whole.
-    return "".join(_word_to_latex(part) if part[:1].isalpha() else part
-                   for part in re.split(r"([A-Za-z]+[0-9]*_?)", out) if part)
+    r"""Names drawn as names, and everything between them as notation.
+
+    The names come out first. Rewriting the characters first would put a
+    ``\cdot`` into the text and the splitter would then find the name `cdot`
+    inside it. Digits and underscores stay attached to the name they belong
+    to, so log10 survives whole and rho_a is one name with a subscript rather
+    than an o with something after it.
+    """
+    pieces = re.split(r"([A-Za-z][A-Za-z0-9_]*)", chars)
+    out = []
+    for index, piece in enumerate(pieces):
+        if not piece:
+            continue
+        if index % 2:                       # a captured name
+            out.append(_word_to_latex(piece))
+            continue
+        for plain, drawn in _CHAR_LATEX.items():
+            piece = piece.replace(plain, drawn)
+        out.append(piece)
+    return "".join(out)
 
 
 def _fill(pattern: str, parts: list) -> str:
@@ -230,9 +240,14 @@ def to_latex(row: Row, caret_row: Row | None = None,
             pieces.append(CARET_MARK)
         if isinstance(item, Group):
             flush()
-            pieces.append(_fill(item.template.latex,
-                                [to_latex(r, caret_row, caret_index)
-                                 for r in item.rows]))
+            drawn = []
+            for slot_index, slot in enumerate(item.rows):
+                inner = to_latex(slot, caret_row, caret_index)
+                if slot_index in item.template.draw and \
+                        not _is_atom(to_text(slot)):
+                    inner = r"\left(" + inner + r"\right)"
+                drawn.append(inner)
+            pieces.append(_fill(item.template.latex, drawn))
         else:
             pending.append(item)
     flush()
@@ -270,6 +285,34 @@ def _is_atom(text: str) -> bool:
     return False
 
 
+
+#: A template whose pattern ends in a slot has nothing closing it, so what
+#: follows runs straight into that slot. `a/b` and `a^b` do; `sqrt(a)` and
+#: `(a)` do not, because the bracket already ends them.
+_OPEN_END = re.compile(r"@\d+@\s*$")
+
+_TRAILING_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _merges_left(before: str, text: str) -> bool:
+    """True when writing *text* after *before* would form one longer name.
+
+    `n` followed by `1/2` reads as the single name `n1` over 2. A trailing
+    *number* is safe - `2` before `x^2` is a product, because no name may
+    begin with a digit and the parser reads the juxtaposition as one.
+    """
+    if not before or not text:
+        return False
+    if not re.match(r"[A-Za-z0-9_]", text[0]):
+        return False
+    return bool(_TRAILING_NAME.search(before))
+
+
+def _binds_right(after: str) -> bool:
+    """True when *after* would be pulled into an open edge beside it."""
+    return bool(after) and bool(re.match(r"[A-Za-z0-9_.(]", after[0]))
+
+
 def to_text(row: Row) -> str:
     """Compile to the ASCII the parser accepts.
 
@@ -288,10 +331,27 @@ def to_text(row: Row) -> str:
                 if index in item.template.wrap and not _is_atom(text):
                     text = f"({text})"
                 parts.append(text)
-            out.append(_fill(item.template.text, parts))
+            out.append((_fill(item.template.text, parts), item.template))
         else:
-            out.append(item)
-    return "".join(out)
+            out.append((item, None))
+
+    # Second pass, now that every neighbour is known. Shapes are joined by
+    # writing them next to each other, so one with an open edge picks up
+    # whatever is beside it: `1/n` drawn next to a root of S compiled to
+    # `1/nsqrt(S)`, where `nsqrt` is one name and the answer came back as
+    # S*q*r*s*t/n. Brackets go only where that can actually happen - a
+    # quadratic stays `2x^2-5x-3`, which is the whole point of compiling to
+    # text a person can still read.
+    written: list = []
+    for index, (text, template) in enumerate(out):
+        if template is not None and not _is_atom(text):
+            after = out[index + 1][0] if index + 1 < len(out) else ""
+            open_end = bool(_OPEN_END.search(template.text))
+            if (_merges_left("".join(written), text)
+                    or (open_end and _binds_right(after))):
+                text = f"({text})"
+        written.append(text)
+    return "".join(written)
 
 
 @dataclass
@@ -532,6 +592,8 @@ def _hex_to_rgb(colour: str):
 
 def render(latex: str, fontsize: int, colour: str = "#111111", dpi: int = DPI):
     """Rasterise ``latex``. Returns (PhotoImage, width, height, baseline)."""
+    if images_are_stale(__name__):
+        _IMAGE_CACHE.clear()
     key = (latex, fontsize, colour, dpi)
     hit = _IMAGE_CACHE.get(key)
     if hit is not None:

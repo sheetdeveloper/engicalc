@@ -60,6 +60,10 @@ SAFE_CONSTANTS = {
 _PARSER_INTERNALS = {
     "Symbol": sp.Symbol, "Integer": sp.Integer, "Float": sp.Float,
     "Rational": sp.Rational, "Function": sp.Function, "Eq": sp.Eq,
+    # Written when a name with a digit in it is split into a product, which
+    # is how `2x` works. Without it `T2 - T1` raised NameError rather than
+    # parsing - the commonest pair of names in thermodynamics.
+    "Number": sp.Number,
     # Written by core/odes.py when it turns y' into a derivative. Safe: it
     # builds an expression, it does not evaluate anything.
     "Derivative": sp.Derivative,
@@ -68,6 +72,57 @@ _PARSER_INTERNALS = {
 }
 
 GLOBAL_DICT = {**SAFE_FUNCTIONS, **SAFE_CONSTANTS, **_PARSER_INTERNALS}
+
+
+#: Names SymPy would read as constants, but which engineers use as variables
+#: at least as often: E for Young's modulus, I for second moment of area, e
+#: for eccentricity. Left as symbols when a name is declared from free text.
+AMBIGUOUS_CONSTANTS = {"E", "I", "e", "j"}
+
+_NAME = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
+
+
+def symbols_in(text: str, skip=()) -> dict:
+    """Every bare name in *text* declared as a plain symbol.
+
+    Without this, implicit multiplication tears multi-letter names apart -
+    `Re` becomes R times e, `dp` becomes d times p - and the equation is then
+    quietly about different quantities than the one that was typed. Function
+    names and the unambiguous constants (pi, oo) are left alone; E, I and e
+    are not, because they are variables far more often than they are Euler's
+    number or the square root of minus one.
+    """
+    reserved = set(SAFE_FUNCTIONS) | set(_PARSER_INTERNALS) | set(skip)
+    constants = set(SAFE_CONSTANTS) - AMBIGUOUS_CONSTANTS
+    found = {}
+    # Preprocessed first, so a typed sigma is found under the name the
+    # parser will actually see.
+    for name in set(_NAME.findall(_preprocess(text or ""))):
+        if name in reserved or name in constants:
+            continue
+        found[name] = sp.Symbol(name)
+    return found
+
+#: Greek names and their letters. The one place either is written down:
+#: display.py reads it to draw a name, and UNICODE_MAP below is built by
+#: reversing it so that anything shown can also be typed back in.
+GREEK_NAMES = {
+    "alpha": "\u03b1", "beta": "\u03b2", "gamma": "\u03b3",
+    "delta": "\u03b4", "epsilon": "\u03b5", "zeta": "\u03b6",
+    "eta": "\u03b7", "theta": "\u03b8", "iota": "\u03b9",
+    "kappa": "\u03ba", "lambda": "\u03bb", "lambda_": "\u03bb",
+    "mu": "\u03bc", "nu": "\u03bd", "xi": "\u03be", "pi": "\u03c0",
+    "rho": "\u03c1", "sigma": "\u03c3", "tau": "\u03c4",
+    "upsilon": "\u03c5", "phi": "\u03c6", "chi": "\u03c7",
+    "psi": "\u03c8", "omega": "\u03c9",
+    "Alpha": "\u0391", "Beta": "\u0392", "Gamma": "\u0393",
+    "Delta": "\u0394", "Theta": "\u0398", "Lambda": "\u039b",
+    "Xi": "\u039e", "Pi": "\u03a0", "Sigma": "\u03a3", "Phi": "\u03a6",
+    "Psi": "\u03a8", "Omega": "\u03a9",
+}
+
+#: The letters a name may be spelled with, once Greek is allowed.
+NAME_PATTERN = r"[A-Za-z_\u0370-\u03ff][A-Za-z0-9_\u0370-\u03ff]*"
 
 # Unicode conveniences -> ASCII the parser understands.
 UNICODE_MAP = {
@@ -78,7 +133,34 @@ UNICODE_MAP = {
     "ν": "nu", "ξ": "xi", "ρ": "rho", "σ": "sigma", "τ": "tau", "φ": "phi",
     "ϕ": "phi", "χ": "chi", "ψ": "psi", "ω": "omega", "Δ": "Delta",
     "Ω": "Omega", "Σ": "Sigma", "Φ": "Phi", "²": "^2", "³": "^3", "½": "(1/2)",
+    # U+2206 INCREMENT, not U+0394 GREEK CAPITAL LETTER DELTA. The two look
+    # alike and mean different things: this one is a difference, so it reads
+    # back as the d it was written with, and a variable genuinely called
+    # Delta keeps the Greek letter and reads back as Delta.
+    "\u2206": "d",
 }
+
+# Every Greek letter reads back as its name, so a letter put into a cell can
+# be typed, parsed and re-read unchanged. The entries written by hand above
+# take priority: lambda_ keeps clear of the Python keyword, and pi has to
+# stay the constant rather than become a symbol called pi.
+for _name, _letter in GREEK_NAMES.items():
+    UNICODE_MAP.setdefault(_letter, _name)
+
+
+
+def canonical_name(name: str) -> str:
+    """The ASCII spelling of a name that may have been typed in Greek.
+
+    ``rho`` and its letter are the same quantity, and anything keying off a
+    name - a sheet resolving what its rows call each other - has to agree
+    with the parser about that or the two spellings become two variables.
+    """
+    text = str(name or "").strip()
+    for letter, ascii_name in UNICODE_MAP.items():
+        if letter in text:
+            text = text.replace(letter, ascii_name)
+    return text
 
 
 class ParseError(ValueError):

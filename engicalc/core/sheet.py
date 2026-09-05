@@ -30,8 +30,10 @@ import sympy as sp
 
 from . import units as unit_tools
 from .display import fmt, fmt_number
-from .parsing import ParseError, parse_input
+from .parsing import ParseError, canonical_name, parse_input
 
+#: Checked against the canonical spelling, which is always
+#: ASCII however the name was typed.
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 SHEET_DIR = os.path.join(os.path.expanduser("~"), ".engicalc", "sheets")
@@ -113,16 +115,22 @@ class Sheet:
             if not step.name:
                 result.error = "This line has no name."
                 continue
-            if not NAME.match(step.name):
+            # A row named with a symbol and a row named with the word are
+            # the same quantity, so both spellings resolve to one name before
+            # anything is keyed off it - or checked, which is why the check
+            # comes after: the canonical spelling is always plain ASCII, so
+            # every symbol the app can draw passes without widening this.
+            name = canonical_name(step.name)
+            if not NAME.match(name):
                 result.error = (f"{step.name!r} is not a usable name - letters, "
                                 "digits and underscores, not starting with a "
                                 "digit.")
                 continue
-            if step.name in seen:
+            if name in seen:
                 result.error = (f"{step.name} is defined twice. Later lines "
                                 "would not know which one they meant.")
                 continue
-            seen.add(step.name)
+            seen.add(name)
             if not step.expression:
                 result.error = "This line has no expression."
                 continue
@@ -138,7 +146,7 @@ class Sheet:
 
             result.value = value
             result.note = note
-            known[step.name] = value
+            known[name] = value
 
         return results
 
@@ -154,7 +162,16 @@ class Sheet:
             converted, note = unit_tools.to_declared(text, step.unit)
             return sp.nsimplify(converted, rational=False), note
 
-        parsed = parse_input(text)
+        # A sheet knows what its rows are called, so it says so. Otherwise
+        # the parser splits the name into a product - T1 becomes T times 1,
+        # which is T, and Re becomes R times e - and the sheet quietly works
+        # out something other than what it says.
+        declared = {name: sp.Symbol(name) for name in known}
+        for other in self.steps:
+            declared.setdefault(canonical_name(other.name),
+                                sp.Symbol(canonical_name(other.name)))
+        declared.pop("", None)
+        parsed = parse_input(text, extra_symbols=declared)
         expression = parsed.expr
         if isinstance(expression, sp.Eq):
             expression = expression.rhs
@@ -162,8 +179,8 @@ class Sheet:
         unknown = sorted(s.name for s in expression.free_symbols
                          if s.name not in known)
         if unknown:
-            later = [n for n in unknown if any(s.name == n
-                                               for s in self.steps)]
+            later = [n for n in unknown
+                     if any(canonical_name(s.name) == n for s in self.steps)]
             hint = (" They are defined further down; a sheet reads downwards."
                     if later else "")
             raise ParseError(
