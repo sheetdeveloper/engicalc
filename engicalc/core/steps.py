@@ -267,8 +267,12 @@ def integral_steps(expr: sp.Expr, var: sp.Symbol, lower=None, upper=None) -> lis
     fa = sp.simplify(anti.subs(var, lower))
     answer = sp.simplify(fb - fa)
     try:
-        bar = (r"\left. " + sp.latex(anti) + r" \right|_{"
-               + sp.latex(lower) + "}^{" + sp.latex(upper) + "} = "
+        # The limits are nested a level deeper than an ordinary script, so
+        # they draw at about half the body size rather than 70% of it.
+        # mathtext has no \scriptstyle to ask for that directly.
+        bar = (r"\left. " + sp.latex(anti) + r" \right|"
+               + "_{{}_{" + sp.latex(lower) + "}}"
+               + "^{{}^{" + sp.latex(upper) + "}} = "
                + sp.latex(fb) + " - " + sp.latex(fa) + " = " + sp.latex(answer))
     except Exception:  # noqa: BLE001 - fall back to the plain wording
         bar = ""

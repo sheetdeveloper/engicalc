@@ -67,6 +67,14 @@ _GREEK_SET = set((
 _FUNCTION_NAMES = frozenset(SAFE_FUNCTIONS)
 
 
+# mathtext has no \scriptstyle to ask with, so a limit is made smaller by
+# living inside an empty group's own script: _{{}_{a}} rather than _{a}.
+# That takes it from 70% of the body to about half - the size an exponent on
+# an exponent gets, which is what an integral limit should look like.
+SMALL_SUB = "_{{}_{%s}}"
+SMALL_SUP = "^{{}^{%s}}"
+
+
 # --------------------------------------------------------------------------
 # Templates
 # --------------------------------------------------------------------------
@@ -115,7 +123,9 @@ TEMPLATES: dict[str, Template] = {t.key: t for t in [
     Template("paren", r"\left(@0@\right)", "(@0@)", ("expression",)),
 
     # -- calculus: stand for the whole input -------------------------------
-    Template("defint", r"\int_{@0@}^{@1@}@2@\,d@3@", "@2@",
+    # The limits are nested one level deeper than an ordinary script, which
+    # halves them - see SMALL_SCRIPT below.
+    Template("defint", r"\int_{{}_{@0@}}^{{}^{@1@}}@2@\,d@3@", "@2@",
              ("lower limit", "upper limit", "integrand", "variable"),
              operation="integral", main=2,
              extras=(("lower", 0), ("upper", 1), ("variable", 3))),
