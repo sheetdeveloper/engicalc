@@ -130,6 +130,17 @@ def split_quantity(text: str) -> tuple:
     raw = (text or "").strip()
     if not raw:
         return raw, ""
+
+    # A complete number is never a value with a unit stuck to it. Without
+    # this, "200e9" - Young's modulus, and how anyone writes it - splits
+    # into 200 with a unit of "e9", and the conversion then fails saying
+    # e9 and Pa measure different things.
+    try:
+        float(raw)
+        return raw, ""
+    except ValueError:
+        pass
+
     match = _VALUE_AND_UNIT.match(raw)
     if not match:
         return raw, ""

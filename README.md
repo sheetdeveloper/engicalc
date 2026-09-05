@@ -166,6 +166,20 @@ and you still get an answer, with a warning saying it is a guess from outside
 where the numbers came from. Reading past the end of a steam table silently
 is how people get hurt.
 
+### Sheet
+
+Real work is never one calculation. It is a diameter, then an area from that
+diameter, then a velocity, then a Reynolds number - and if the diameter
+changes, everything after it should follow.
+
+A sheet is a list of named steps worked down the page. Each step can use any
+name defined above it, and nothing may use a name defined below it. Change
+the bore from 50 mm to 100 mm, press Calculate, and every line beneath moves.
+Sheets save and reopen as files.
+
+A step that fails is reported and the ones after it carry on, because one
+broken line in the middle should not blank the page.
+
 ### Matrices
 
 Built around **A x = b** - solving several equations at once, which is what
@@ -259,6 +273,8 @@ Three exports:
       plotting/plot.py     all four curve types, root marking, sweeps
       core/interpolate.py  reading between the rows of a table
       core/matrices.py     A x = b, determinant, eigenvalues and the rest
+      core/sheet.py        chained steps, each using the ones above
+      core/units.py        mm and m cannot be quietly mixed
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
       ui/
@@ -272,7 +288,7 @@ Three exports:
         reference_window.py  searchable symbol and syntax reference
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 114 tests
+    tests/test_engicalc.py 150 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -330,7 +346,7 @@ them.
 
 ## Tests
 
-114 tests covering the parser (including that it refuses `__import__`), the
+150 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator

@@ -53,6 +53,10 @@ If you add a feature, produce one of these rather than a new shape.
     core/matrices.py      A x = b and the operations around it. Refuses a
                           singular system rather than fudging it, and flags an
                           ill-conditioned one.
+    core/sheet.py         a calculation sheet: named steps evaluated top to
+                          bottom, each able to use the ones above it.
+    core/units.py         unit parsing and conversion. A value may carry its
+                          own unit; a bare number means the declared one.
     core/display.py       SymPy -> readable text (** becomes ^, Eq becomes =).
                           Cosmetic only, never parsed back.
     core/excel_printer.py SymPy -> Excel formula strings. See the rules below.
@@ -133,6 +137,13 @@ while the frozen one dies on startup - which is why the spec collects the
 package rather than listing modules. A windowed frozen build fails *silently*
 here: no window, no error, process still alive. `build_exe.bat debug` gives a
 console build that prints the traceback.
+
+**Names are ASCII; symbols are a display concern.** A variable is called
+`sigma` or `dT` everywhere it is typed, parsed or stored - changing that would
+break the parser and the formula data. It is drawn as σ and ΔT at the point of
+display: `display.latex` supplies `symbol_names` to SymPy for typeset output,
+and `display.unicode_symbol` does the same for a plain label. `delta` is
+deliberately not a difference - in this library it is a deflection, δ.
 
 **Term order.** SymPy reorders as it evaluates, so `F = m*a` prints as `F = a m`.
 Anything shown to the user goes through `parsing.parse_for_display`

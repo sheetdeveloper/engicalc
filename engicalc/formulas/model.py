@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import sympy as sp
 
+from ..core.display import latex as _display_latex
 from ..core.parsing import parse_for_display, parse_input
 
 
@@ -64,9 +65,9 @@ class Formula:
             try:
                 local = {v.symbol: sp.Symbol(v.symbol) for v in self.variables}
                 expr = parse_for_display(self.equation, local)
-                self._latex = sp.latex(expr, order="none")
+                self._latex = _display_latex(expr, order="none")
             except Exception:  # noqa: BLE001
-                self._latex = sp.latex(self.eq)
+                self._latex = _display_latex(self.eq)
         return self._latex
 
     @property

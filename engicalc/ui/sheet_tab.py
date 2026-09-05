@@ -1,0 +1,243 @@
+"""A calculation sheet: several steps in order, each able to use the last.
+
+Laid out as a table because that is what a calculation sheet is - a column of
+names, a column of what each one is worked out from, and a column of answers.
+Change a number near the top and press Calculate; everything below it follows.
+"""
+
+from __future__ import annotations
+
+import os
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+from ..core.sheet import SHEET_DIR, Sheet, blocks_for
+from . import mathrender
+from .widgets import MONO, ScrollFrame
+
+EXAMPLE = [
+    ("d", "50 mm", "m", "pipe bore"),
+    ("Q", "0.0035", "m^3/s", "volume flow"),
+    ("rho", "998", "kg/m^3", "water at 20 C"),
+    ("mu", "0.001", "Pa*s", "dynamic viscosity"),
+    ("A", "pi*d^2/4", "m^2", "cross-sectional area"),
+    ("v", "Q/A", "m/s", "mean velocity"),
+    ("Re", "rho*v*d/mu", "-", "turbulent above ~4000"),
+]
+
+HEADINGS = ("Name", "Is", "Unit", "Note", "Answer")
+WIDTHS = (10, 26, 10, 22)
+
+
+class SheetTab(ttk.Frame):
+    def __init__(self, master, app):
+        super().__init__(master, padding=10)
+        self.app = app
+        self.sheet = Sheet()
+        self.results: list = []
+        self.rows: list = []          # (name, expression, unit, note, answer)
+        self.path: str | None = None
+        self._build()
+        self._load_example()
+
+    # -- layout -----------------------------------------------------------
+    def _build(self) -> None:
+        heading = ttk.Frame(self)
+        heading.pack(fill="x")
+        ttk.Label(heading, text="Work down the page, one step at a time",
+                  style="Title.TLabel").pack(side="left")
+        ttk.Label(heading, style="Hint.TLabel",
+                  text="each step can use any name defined above it").pack(
+                      side="left", padx=(10, 0))
+
+        title_row = ttk.Frame(self)
+        title_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(title_row, text="Sheet").pack(side="left")
+        self.title_var = tk.StringVar(value="Calculation sheet")
+        ttk.Entry(title_row, textvariable=self.title_var, width=40).pack(
+            side="left", padx=(4, 12))
+        ttk.Button(title_row, text="New", command=self.new).pack(side="left")
+        ttk.Button(title_row, text="Open...", command=self.open).pack(
+            side="left", padx=4)
+        ttk.Button(title_row, text="Save as...", command=self.save_as).pack(
+            side="left")
+
+        # Packed before the scrolling table, so it keeps its height.
+        # See TestActionRows.
+        actions = ttk.Frame(self)
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
+        self.status = ttk.Label(actions, text="Ready", style="Hint.TLabel")
+        self.status.pack(side="left")
+        ttk.Button(actions, text="Copy as picture",
+                   command=self.copy_picture).pack(side="right")
+        ttk.Button(actions, text="Add a step",
+                   command=self.add_row).pack(side="right", padx=6)
+        ttk.Button(actions, text="Calculate", style="Accent.TButton",
+                   command=self.calculate).pack(side="right")
+
+        header = ttk.Frame(self)
+        header.pack(fill="x", pady=(8, 0))
+        for index, text in enumerate(HEADINGS):
+            width = WIDTHS[index] if index < len(WIDTHS) else 24
+            ttk.Label(header, text=text, width=width,
+                      font=("Segoe UI", 9, "bold")).pack(side="left", padx=2)
+
+        self.table = ScrollFrame(self, height=360)
+        self.table.pack(fill="both", expand=True)
+
+    # -- rows -------------------------------------------------------------
+    def _add_widgets(self, name="", expression="", unit="", note="") -> None:
+        body = self.table.body
+        row = ttk.Frame(body)
+        row.pack(fill="x", pady=1)
+        variables = []
+        for value, width in ((name, WIDTHS[0]), (expression, WIDTHS[1]),
+                             (unit, WIDTHS[2]), (note, WIDTHS[3])):
+            var = tk.StringVar(value=value)
+            entry = ttk.Entry(row, textvariable=var, width=width, font=MONO)
+            entry.pack(side="left", padx=2)
+            entry.bind("<Return>", lambda e: self.calculate())
+            variables.append(var)
+        answer = ttk.Label(row, text="", width=26, anchor="w", font=MONO)
+        answer.pack(side="left", padx=2)
+        ttk.Button(row, text="x", width=2,
+                   command=lambda r=row: self.remove_row(r)).pack(side="right")
+        ttk.Button(row, text="v", width=2,
+                   command=lambda r=row: self.move_row(r, 1)).pack(side="right")
+        ttk.Button(row, text="^", width=2,
+                   command=lambda r=row: self.move_row(r, -1)).pack(side="right")
+        self.rows.append((row, variables, answer))
+
+    def add_row(self) -> None:
+        self._add_widgets()
+        self.status.configure(text="Added a step")
+
+    def remove_row(self, row) -> None:
+        for index, (frame, _vars, _answer) in enumerate(self.rows):
+            if frame is row:
+                frame.destroy()
+                del self.rows[index]
+                break
+        self.calculate()
+
+    def move_row(self, row, delta: int) -> None:
+        for index, (frame, _vars, _answer) in enumerate(self.rows):
+            if frame is row:
+                target = index + delta
+                if 0 <= target < len(self.rows):
+                    self.rows[index], self.rows[target] = \
+                        self.rows[target], self.rows[index]
+                    for frame_again, _v, _a in self.rows:
+                        frame_again.pack_forget()
+                    for frame_again, _v, _a in self.rows:
+                        frame_again.pack(fill="x", pady=1)
+                break
+        self.calculate()
+
+    def _clear_rows(self) -> None:
+        for frame, _vars, _answer in self.rows:
+            frame.destroy()
+        self.rows.clear()
+
+    def _load_example(self) -> None:
+        self.title_var.set("Water in a 50 mm pipe")
+        for name, expression, unit, note in EXAMPLE:
+            self._add_widgets(name, expression, unit, note)
+        self.calculate()
+
+    # -- computing --------------------------------------------------------
+    def _collect(self) -> Sheet:
+        sheet = Sheet(self.title_var.get().strip() or "Calculation sheet")
+        for _frame, variables, _answer in self.rows:
+            name, expression, unit, note = (v.get() for v in variables)
+            if not name.strip() and not expression.strip():
+                continue
+            sheet.add(name, expression, unit, note)
+        return sheet
+
+    def calculate(self) -> None:
+        self.sheet = self._collect()
+        self.results = self.sheet.evaluate()
+
+        by_name = {id(step): result
+                   for step, result in zip(self.sheet.steps, self.results)}
+        index = 0
+        problems = 0
+        for _frame, variables, answer in self.rows:
+            if not variables[0].get().strip() and not variables[1].get().strip():
+                answer.configure(text="")
+                continue
+            if index >= len(self.results):
+                break
+            result = self.results[index]
+            index += 1
+            if result.ok:
+                answer.configure(text=result.text().split(" = ", 1)[-1],
+                                 foreground="#1f4e79")
+            else:
+                answer.configure(text=result.error[:40], foreground="#b00020")
+                problems += 1
+
+        self.status.configure(
+            text=f"{len(self.results)} steps, {problems} need attention"
+            if problems else f"{len(self.results)} steps, all worked out")
+
+    # -- files ------------------------------------------------------------
+    def new(self) -> None:
+        self._clear_rows()
+        self.title_var.set("Calculation sheet")
+        self.path = None
+        for _ in range(3):
+            self._add_widgets()
+        self.status.configure(text="New sheet")
+
+    def open(self) -> None:
+        path = filedialog.askopenfilename(
+            initialdir=SHEET_DIR if os.path.isdir(SHEET_DIR) else None,
+            filetypes=[("EngiCalc sheet", "*.json"), ("All files", "*")])
+        if not path:
+            return
+        try:
+            sheet = Sheet.load(path)
+        except Exception as exc:                      # noqa: BLE001
+            messagebox.showerror("Could not open that sheet", str(exc))
+            return
+        self._clear_rows()
+        self.title_var.set(sheet.title)
+        for step in sheet.steps:
+            self._add_widgets(step.name, step.expression, step.unit, step.note)
+        self.path = path
+        self.calculate()
+        self.status.configure(text=f"Opened {os.path.basename(path)}")
+
+    def save_as(self) -> None:
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json", initialdir=SHEET_DIR,
+            initialfile=(self.title_var.get().strip() or "sheet") + ".json",
+            filetypes=[("EngiCalc sheet", "*.json")])
+        if not path:
+            return
+        try:
+            self._collect().save(path)
+        except Exception as exc:                      # noqa: BLE001
+            messagebox.showerror("Could not save", str(exc))
+            return
+        self.path = path
+        self.status.configure(text=f"Saved {os.path.basename(path)}")
+
+    # -- output -----------------------------------------------------------
+    def copy_picture(self) -> None:
+        if not self.results:
+            self.calculate()
+        from . import clipboard
+        try:
+            image = mathrender.render_calculation(
+                blocks_for(self.sheet, self.results))
+            clipboard.copy_image(image, None)
+        except clipboard.ClipboardError as exc:
+            messagebox.showerror("Could not copy", str(exc))
+            return
+        except Exception as exc:                      # noqa: BLE001
+            messagebox.showerror("Could not draw the sheet", str(exc))
+            return
+        self.status.configure(text="Copied - paste it straight into Word")

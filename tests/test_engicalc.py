@@ -1465,3 +1465,208 @@ class TestEvaluationBar(unittest.TestCase):
         self.assertNotIn(r"\left.", text)
         self.assertNotIn(r"\right|", text)
         self.assertIn("F(b) - F(a)", text)
+
+
+# --------------------------------------------------------------------------
+# Difference symbols, and calculation sheets
+# --------------------------------------------------------------------------
+class TestDeltaSymbols(unittest.TestCase):
+    """dT means a change in temperature, and is written ΔT."""
+
+    def test_a_difference_is_drawn_as_delta(self):
+        from engicalc.core.display import latex
+
+        for name, expected in [("dT", r"\Delta T"), ("dL", r"\Delta L"),
+                               ("dU", r"\Delta U"), ("dS", r"\Delta S")]:
+            with self.subTest(name=name):
+                self.assertIn(expected, latex(sp.Symbol(name)))
+
+    def test_a_numbered_difference_keeps_its_subscript(self):
+        from engicalc.core.display import latex
+
+        self.assertIn(r"\Delta T_{1}", latex(sp.Symbol("dT1")))
+
+    def test_delta_the_deflection_stays_lowercase(self):
+        """In this library `delta` is a maximum deflection - the lowercase
+        letter, and not a difference at all."""
+        from engicalc.core.display import latex
+
+        drawn = latex(sp.Symbol("delta"))
+        self.assertIn(r"\delta", drawn)
+        self.assertNotIn(r"\Delta", drawn)
+
+    def test_ordinary_names_are_untouched(self):
+        from engicalc.core.display import latex
+
+        for name in ["d", "dx", "density", "day", "D"]:
+            with self.subTest(name=name):
+                self.assertNotIn(r"\Delta", latex(sp.Symbol(name)))
+
+    def test_the_library_draws_them(self):
+        formula = get_library().get("strength_of_materials.thermal_stress")
+        if formula is None:
+            self.skipTest("formula not present")
+        self.assertIn(r"\Delta T", formula.display_latex)
+
+
+class TestCalculationSheet(unittest.TestCase):
+    """Several steps in order, each able to use the ones above it."""
+
+    def _pipe_sheet(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet("Water in a pipe")
+        sheet.add("d", "50 mm", "m")
+        sheet.add("Q", "0.0035", "m^3/s")
+        sheet.add("rho", "998", "kg/m^3")
+        sheet.add("mu", "0.001", "Pa*s")
+        sheet.add("A", "pi*d^2/4", "m^2")
+        sheet.add("v", "Q/A", "m/s")
+        sheet.add("Re", "rho*v*d/mu", "-")
+        return sheet
+
+    def _values(self, results):
+        return {r.step.name: r.value for r in results if r.ok}
+
+    def test_a_chain_carries_each_answer_into_the_next(self):
+        values = self._values(self._pipe_sheet().evaluate())
+        self.assertAlmostEqual(float(values["d"]), 0.05, places=9)
+        self.assertAlmostEqual(float(values["A"]), math.pi * 0.05 ** 2 / 4,
+                               places=12)
+        self.assertAlmostEqual(float(values["Re"]), 88948.5146, places=3)
+
+    def test_changing_an_input_moves_everything_below_it(self):
+        """The whole point: change the bore, do not retype the rest."""
+        sheet = self._pipe_sheet()
+        before = float(self._values(sheet.evaluate())["Re"])
+        sheet.steps[0].expression = "100 mm"
+        after = float(self._values(sheet.evaluate())["Re"])
+        # Re = rho*Q*d/(mu*A) and A goes as d^2, so Re goes as 1/d
+        self.assertAlmostEqual(after, before / 2, places=3)
+
+    def test_a_step_may_not_use_a_name_defined_below_it(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("y", "2*x")
+        sheet.add("x", "3")
+        results = sheet.evaluate()
+        self.assertFalse(results[0].ok)
+        self.assertIn("reads downwards", results[0].error)
+        self.assertTrue(results[1].ok)
+
+    def test_a_name_defined_twice_is_refused(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("x", "1")
+        sheet.add("x", "2")
+        results = sheet.evaluate()
+        self.assertTrue(results[0].ok)
+        self.assertIn("twice", results[1].error)
+
+    def test_one_broken_line_does_not_blank_the_rest(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("a", "2")
+        sheet.add("b", "a/0*")          # nonsense
+        sheet.add("c", "a*10")
+        results = sheet.evaluate()
+        self.assertTrue(results[0].ok)
+        self.assertFalse(results[1].ok)
+        self.assertTrue(results[2].ok)
+        self.assertEqual(float(results[2].value), 20.0)
+
+    def test_a_step_converts_a_value_given_in_another_unit(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("d", "50 mm", "m")
+        result = sheet.evaluate()[0]
+        self.assertAlmostEqual(float(result.value), 0.05, places=9)
+        self.assertIn("50 mm", result.note)
+
+    def test_a_bad_name_is_explained(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("2x", "1")
+        self.assertIn("not a usable name", sheet.evaluate()[0].error)
+
+    def test_a_sheet_survives_being_saved_and_reopened(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = self._pipe_sheet()
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "sheet.json")
+            sheet.save(path)
+            reopened = Sheet.load(path)
+        self.assertEqual(reopened.title, sheet.title)
+        self.assertEqual([s.name for s in reopened.steps],
+                         [s.name for s in sheet.steps])
+        self.assertAlmostEqual(
+            float(self._values(reopened.evaluate())["Re"]), 88948.5146,
+            places=3)
+
+
+class TestScientificNotation(unittest.TestCase):
+    """200e9 is how anyone writes Young's modulus, and it is not a value
+    with a unit of "e9" stuck to it."""
+
+    def test_a_number_in_exponent_form_carries_no_unit(self):
+        from engicalc.core.units import split_quantity
+
+        for text in ["200e9", "12e-6", "1.5e3", "-3.2E-4", "2e9"]:
+            with self.subTest(text=text):
+                value, unit = split_quantity(text)
+                self.assertEqual(unit, "")
+                self.assertEqual(value, text)
+
+    def test_a_unit_after_an_exponent_still_splits(self):
+        from engicalc.core.units import split_quantity
+
+        self.assertEqual(split_quantity("200e9 Pa"), ("200e9", "Pa"))
+        self.assertEqual(split_quantity("1e3 Pa"), ("1e3", "Pa"))
+
+    def test_youngs_modulus_solves_either_way(self):
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = next(f for f in get_library().all()
+                       if "hermal stress" in f.name)
+        plain = solve_formula(formula, "sigma",
+                              {"E": "200e9", "alpha": "12e-6", "dT": "60"})
+        with_unit = solve_formula(formula, "sigma",
+                                  {"E": "200 GPa", "alpha": "12e-6",
+                                   "dT": "60"})
+        self.assertAlmostEqual(plain.value, 1.44e8, delta=1.0)
+        self.assertAlmostEqual(with_unit.value, plain.value, delta=1.0)
+
+
+class TestSymbolsAsRead(unittest.TestCase):
+    def test_names_are_shown_as_the_symbols_they_stand_for(self):
+        from engicalc.core.display import unicode_symbol
+
+        cases = {"sigma": "σ", "alpha": "α", "rho": "ρ", "mu": "μ",
+                 "omega": "ω", "dT": "ΔT", "dT1": "ΔT₁", "T1": "T₁",
+                 "L0": "L₀", "delta": "δ", "lambda_": "λ", "E": "E",
+                 "Re": "Re", "k": "k"}
+        for name, expected in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(unicode_symbol(name), expected)
+
+    def test_a_worded_subscript_keeps_its_underscore(self):
+        """Unicode has no full subscript alphabet, so tau_max would run
+        together as taumax."""
+        from engicalc.core.display import unicode_symbol
+
+        self.assertEqual(unicode_symbol("tau_max"), "τ_max")
+        self.assertEqual(unicode_symbol("I_xx"), "I_xx")
+
+    def test_every_library_symbol_survives_the_mapping(self):
+        from engicalc.core.display import unicode_symbol
+
+        for formula in get_library().all():
+            for variable in formula.variables:
+                with self.subTest(symbol=variable.symbol):
+                    self.assertTrue(unicode_symbol(variable.symbol))

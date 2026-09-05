@@ -53,10 +53,16 @@ def sanitise(latex: str) -> str:
 
 
 def to_latex(expr) -> str:
-    """LaTeX for any SymPy object, including equations and relations."""
+    """LaTeX for any SymPy object, including equations and relations.
+
+    Goes through `core.display.latex` so a variable named dT is drawn as the
+    ΔT it means, rather than as two letters.
+    """
     if isinstance(expr, str):
         return expr
-    return sp.latex(expr)
+    from ..core.display import latex as _latex
+
+    return _latex(expr)
 
 
 def render_png(latex: str, fontsize: int = 14, colour: str = "#111111",

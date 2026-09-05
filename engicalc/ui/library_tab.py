@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import sympy as sp
 
+from ..core.display import unicode_symbol
 from ..core.parsing import parse_input
 from ..export.excel import export_formula
 from ..formulas.library import solve_formula
@@ -196,7 +197,10 @@ class LibraryTab(ttk.Frame):
 
         for index, var in enumerate(self.formula.variables, start=1):
             is_target = var.symbol == target
-            ttk.Label(body, text=var.symbol, font=MONO).grid(
+            # Read as it is written: rho is a Greek letter, dT is a change
+            # in T. The name stays ASCII everywhere it is typed or parsed.
+            ttk.Label(body, text=unicode_symbol(var.symbol),
+                      font=("Segoe UI", 10)).grid(
                 row=index, column=0, sticky="w", padx=4, pady=1)
             ttk.Label(body, text=var.description).grid(
                 row=index, column=1, sticky="w", padx=4)
