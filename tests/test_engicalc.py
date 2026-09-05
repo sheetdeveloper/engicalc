@@ -1270,3 +1270,133 @@ class TestActionRows(unittest.TestCase):
                                 for b in clipped))
         finally:
             app.destroy()
+
+
+# --------------------------------------------------------------------------
+# Units
+# --------------------------------------------------------------------------
+class TestUnits(unittest.TestCase):
+    """Typing 50 into a field that wants metres, meaning 50 mm, is the most
+    common way an engineering answer goes wrong."""
+
+    def _convert(self, value, source, target):
+        from engicalc.core.units import convert
+        return float(convert(value, source, target))
+
+    def test_conversions_against_known_factors(self):
+        cases = [
+            (50, "mm", "m", 0.05), (2.5, "in", "mm", 63.5),
+            (1, "bar", "kPa", 100.0), (3, "ft", "m", 0.9144),
+            (1, "kWh", "MJ", 3.6), (1, "W*h", "J", 3600.0),
+            (1, "tonne", "kg", 1000.0), (1, "L", "m^3", 0.001),
+        ]
+        for value, source, target, expected in cases:
+            with self.subTest(f"{value}{source}->{target}"):
+                self.assertAlmostEqual(self._convert(value, source, target),
+                                       expected, places=6)
+
+    def test_energy_compares_across_differently_written_units(self):
+        """kWh reads as power*time and MJ as energy - the same dimension
+        written two ways, which a naive ratio test calls incompatible."""
+        from engicalc.core.units import compatible
+
+        self.assertTrue(compatible("kWh", "MJ"))
+        self.assertTrue(compatible("W*h", "J"))
+        self.assertTrue(compatible("N*m", "J"))
+
+    def test_different_dimensions_are_refused(self):
+        from engicalc.core.units import UnitError, compatible, convert
+
+        self.assertFalse(compatible("kg", "m"))
+        with self.assertRaises(UnitError):
+            convert(50, "kg", "m")
+
+    def test_in_is_inches_but_min_is_still_minutes(self):
+        """`in` is a Python keyword so it has to be rewritten before parsing,
+        and doing that without word boundaries turns min into minch."""
+        from engicalc.core.units import convert, parse_unit
+
+        self.assertAlmostEqual(self._convert(1, "in", "mm"), 25.4, places=9)
+        self.assertAlmostEqual(self._convert(2, "min", "s"), 120.0, places=9)
+        self.assertIsNotNone(parse_unit("m/min"))
+
+    def test_a_function_name_is_not_a_unit(self):
+        """sin sympifies to the sine function, which has no free symbols and
+        so slipped through the old check."""
+        from engicalc.core.units import UnitError, parse_unit
+
+        for text in ["sin", "cos", "banana", "xyz"]:
+            with self.subTest(text=text):
+                with self.assertRaises(UnitError):
+                    parse_unit(text)
+
+    def test_every_unit_in_the_library_parses(self):
+        """If a declared unit cannot be parsed, that variable silently loses
+        unit checking."""
+        from engicalc.core.units import UnitError, is_dimensionless, parse_unit
+
+        failed = []
+        for formula in get_library().all():
+            for variable in formula.variables:
+                if is_dimensionless(variable.unit):
+                    continue
+                try:
+                    parse_unit(variable.unit)
+                except UnitError:
+                    failed.append(f"{formula.key}.{variable.symbol}"
+                                  f" ({variable.unit})")
+        self.assertEqual([], failed, f"{len(failed)} units do not parse")
+
+    def test_celsius_refuses_to_guess(self):
+        """20 C is 293.15 K, but a rise of 20 C is a rise of 20 K. Guessing
+        wrong is a 273 kelvin error that looks entirely plausible."""
+        from engicalc.core.units import UnitError, convert
+
+        with self.assertRaises(UnitError):
+            convert(20, "degC", "K")
+        self.assertAlmostEqual(float(convert(20, "degC", "K", absolute=True)),
+                               293.15, places=6)
+        self.assertAlmostEqual(float(convert(20, "degC", "K", absolute=False)),
+                               20.0, places=6)
+
+    def test_a_formula_accepts_a_value_with_its_unit(self):
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = get_library().get("fluid_mechanics.reynolds")
+        inputs = {"rho": "998", "v": "1.8", "mu": "0.001"}
+        expected = solve_formula(formula, "Re", dict(inputs, D="0.05")).value
+        for spelling in ("50 mm", "5 cm", "0.05 m"):
+            with self.subTest(D=spelling):
+                got = solve_formula(formula, "Re", dict(inputs, D=spelling))
+                self.assertAlmostEqual(got.value, expected, places=6)
+        # a conversion that actually changed the number says so; one that
+        # did not - 0.05 m into metres - has nothing to report
+        converted = solve_formula(formula, "Re", dict(inputs, D="50 mm"))
+        self.assertTrue(any("50 mm" in w for w in converted.warnings))
+        same = solve_formula(formula, "Re", dict(inputs, D="0.05 m"))
+        self.assertEqual([], same.warnings)
+
+    def test_a_formula_refuses_the_wrong_kind_of_unit(self):
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = get_library().get("fluid_mechanics.reynolds")
+        with self.assertRaises(ValueError):
+            solve_formula(formula, "Re", {"rho": "998", "v": "1.8",
+                                          "D": "50 kg", "mu": "0.001"})
+
+    def test_a_bare_number_still_means_the_declared_unit(self):
+        """The behaviour every existing calculation depends on."""
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = get_library().get("thermodynamics.sensible_heat")
+        solution = solve_formula(formula, "Q", {"m": "2.5", "c": "4186",
+                                                "T2": "80", "T1": "20"})
+        self.assertAlmostEqual(solution.value, 627900.0, places=3)
+
+    def test_a_wildly_wrong_magnitude_is_flagged_where_data_allows(self):
+        from engicalc.core.units import looks_wrong
+
+        self.assertIn("Check the units", looks_wrong(50, "0.05"))
+        self.assertEqual("", looks_wrong(0.05, "0.05"))
+        self.assertEqual("", looks_wrong(0.08, "0.05"))
+        self.assertEqual("", looks_wrong(50, ""))      # nothing to compare to

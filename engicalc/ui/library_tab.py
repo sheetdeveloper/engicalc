@@ -72,6 +72,12 @@ class LibraryTab(ttk.Frame):
         solve_row = ttk.Frame(right)
         solve_row.pack(fill="x")
         ttk.Label(solve_row, text="Solve for").pack(side="left")
+        # Values may carry their own unit, so say so - nobody types "50 mm"
+        # into a box that has only ever wanted a bare number.
+        ttk.Label(right, style="Hint.TLabel", justify="left",
+                  text="A value can bring its own unit - type 50 mm into a "
+                       "field that wants metres and it converts.").pack(
+                           anchor="w", pady=(2, 0))
         self.target_var = tk.StringVar()
         self.target_box = ttk.Combobox(solve_row, textvariable=self.target_var,
                                        width=12, state="readonly")

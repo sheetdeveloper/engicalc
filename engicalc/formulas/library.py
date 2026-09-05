@@ -186,10 +186,7 @@ def solve_formula(formula: Formula, target: str,
     for name, raw in values.items():
         if name == target:
             continue
-        try:
-            subs[sp.Symbol(name)] = parse_number(raw)
-        except Exception as exc:  # noqa: BLE001
-            raise ValueError(f"Could not read the value for {name}: {exc}") from exc
+        subs[sp.Symbol(name)] = _read_value(formula, name, raw, warnings)
 
     substituted = expr.subs(subs)
     value = None
@@ -204,6 +201,37 @@ def solve_formula(formula: Formula, target: str,
 
     return FormulaSolution(formula, target, sp.simplify(expr), value,
                            {str(k): sp.sstr(v) for k, v in subs.items()}, warnings)
+
+
+def _read_value(formula: Formula, name: str, raw: str, warnings: list):
+    """Read one typed value against the unit the formula declares for it.
+
+    ``50 mm`` in a field that wants metres becomes 0.05 and says so. A bare
+    number is taken to be in the declared unit, which is what it always used
+    to mean. A value in the wrong kind of unit is an error rather than a
+    silent thousandfold mistake.
+    """
+    from ..core import units as unit_tools
+
+    variable = formula.variable(name)
+    declared = variable.unit if variable else ""
+    try:
+        value, note = unit_tools.to_declared(str(raw), declared)
+    except unit_tools.UnitError as exc:
+        raise ValueError(f"{name}: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Could not read the value for {name}: {exc}") from exc
+
+    if note:
+        warnings.append(f"{name}: {note}")
+    elif variable is not None:
+        # No unit was given, so nothing has been checked by conversion. The
+        # typical value is the only other thing that knows what the number
+        # ought to look like.
+        odd = unit_tools.looks_wrong(value, variable.typical)
+        if odd:
+            warnings.append(f"{name}: {odd}")
+    return value
 
 
 def _timed(func, *args, timeout: float = 6.0):
