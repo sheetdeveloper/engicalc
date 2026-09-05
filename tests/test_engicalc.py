@@ -943,3 +943,138 @@ class TestPadLayout(unittest.TestCase):
                     self.assertGreaterEqual(balanced, 1)
                     self.assertEqual(-(-count // balanced),
                                      -(-count // columns))
+
+
+# --------------------------------------------------------------------------
+# Interpolation
+# --------------------------------------------------------------------------
+class TestInterpolation(unittest.TestCase):
+    """Reading between the rows of a table - a steam table, a pump curve."""
+
+    # saturation pressure of water, kPa, against temperature in C
+    STEAM = """Temp\tPressure
+80\t47.39
+85\t57.87
+90\t70.14
+95\t84.55
+100\t101.42"""
+
+    def setUp(self):
+        from engicalc.core.interpolate import parse_table
+        self.table = parse_table(self.STEAM)
+
+    def test_a_header_row_is_skipped_not_rejected(self):
+        """Pasting the header along with the numbers is the normal thing to
+        do, so it must not be an error."""
+        self.assertEqual(len(self.table), 5)
+        self.assertEqual(self.table.xs[0], 80.0)
+
+    def test_excel_csv_and_spaces_all_parse(self):
+        from engicalc.core.interpolate import parse_table
+
+        for text in ["1\t2\n3\t4", "1,2\n3,4", "1  2\n3  4", "1 2\n3 4"]:
+            with self.subTest(text=text):
+                table = parse_table(text)
+                self.assertEqual(table.xs, [1.0, 3.0])
+                self.assertEqual(table.ys, [2.0, 4.0])
+
+    def test_rows_out_of_order_are_sorted(self):
+        from engicalc.core.interpolate import parse_table
+
+        table = parse_table("10,100\n5,50\n7,70")
+        self.assertEqual(table.xs, [5.0, 7.0, 10.0])
+        self.assertEqual(table.ys, [50.0, 70.0, 100.0])
+
+    def test_linear_matches_the_arithmetic_done_by_hand(self):
+        from engicalc.core.interpolate import interpolate
+
+        # 70.14 + (92-90) * (84.55-70.14)/(95-90) = 75.904
+        result = interpolate(self.table, 92, "linear")
+        self.assertAlmostEqual(result.numeric[0], 75.904, places=9)
+
+    def test_a_value_on_a_row_returns_that_row(self):
+        from engicalc.core.interpolate import interpolate
+
+        for x, y in zip(self.table.xs, self.table.ys):
+            with self.subTest(x=x):
+                self.assertAlmostEqual(
+                    interpolate(self.table, x, "linear").numeric[0], y,
+                    places=9)
+
+    def test_extrapolation_is_warned_about(self):
+        """Reading past the end of a steam table is a guess, and a silent
+        one is dangerous."""
+        from engicalc.core.interpolate import interpolate
+
+        inside = interpolate(self.table, 92, "linear")
+        self.assertEqual(inside.warnings, [])
+        for beyond in (130, 20):
+            with self.subTest(x=beyond):
+                result = interpolate(self.table, beyond, "linear")
+                self.assertTrue(result.warnings)
+                self.assertIn("extrapolation", result.warnings[0].lower())
+
+    def test_the_working_names_the_two_rows_used(self):
+        """A hand check starts by asking which rows it came from."""
+        from engicalc.core.interpolate import interpolate
+
+        working = interpolate(self.table, 92, "linear").steps_text()
+        self.assertIn("90", working)
+        self.assertIn("70.14", working)
+        self.assertIn("95", working)
+        self.assertIn("84.55", working)
+
+    def test_polynomial_through_three_points_is_exact(self):
+        from engicalc.core.interpolate import interpolate, parse_table
+
+        # y = x^2 exactly, so a degree 2 fit must reproduce it
+        table = parse_table("1,1\n2,4\n3,9\n4,16")
+        result = interpolate(table, 2.5, "polynomial", degree=2)
+        self.assertAlmostEqual(result.numeric[0], 6.25, places=6)
+
+    def test_polynomial_degree_is_capped_by_the_data(self):
+        from engicalc.core.interpolate import interpolate, parse_table
+
+        table = parse_table("1,1\n2,4\n3,9")
+        result = interpolate(table, 2.5, "polynomial", degree=9)
+        self.assertTrue(any("degree" in w for w in result.warnings))
+        self.assertIsNotNone(result.numeric[0])
+
+    def test_reverse_finds_the_x_for_a_given_y(self):
+        from engicalc.core.interpolate import reverse
+
+        # 85 + (60-57.87)/(70.14-57.87) * 5 = 85.868...
+        result = reverse(self.table, 60)
+        self.assertAlmostEqual(result.numeric[0], 85.8679706, places=5)
+
+    def test_reverse_reports_every_crossing_of_a_curve_that_turns(self):
+        """A parabola crosses the same y twice - picking one quietly would
+        be wrong."""
+        from engicalc.core.interpolate import parse_table, reverse
+
+        table = parse_table("0,0\n1,1\n2,0\n3,-1")
+        result = reverse(table, 0.5)
+        self.assertEqual(len(result.numeric), 2)
+        self.assertTrue(any("more than one" in w for w in result.warnings))
+
+    def test_duplicate_x_is_rejected(self):
+        from engicalc.core.interpolate import parse_table
+
+        with self.assertRaises(ParseError):
+            parse_table("1,2\n1,3")
+
+    def test_one_point_is_rejected(self):
+        from engicalc.core.interpolate import parse_table
+
+        with self.assertRaises(ParseError):
+            parse_table("1,2")
+
+    def test_the_result_is_a_calcresult_the_rest_of_the_app_understands(self):
+        from engicalc.core.engine import CalcResult
+        from engicalc.core.interpolate import interpolate
+
+        result = interpolate(self.table, 92, "linear")
+        self.assertIsInstance(result, CalcResult)
+        self.assertTrue(result.result_text)
+        self.assertTrue(result.steps)
+        self.assertTrue(result.plottable)

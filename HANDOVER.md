@@ -23,7 +23,7 @@ dependencies: sympy, matplotlib, numpy, openpyxl. Tkinter and sqlite3 ship with
 Python.
 
 **Scale:** ~7,700 lines of Python across 44 modules. 212 formulas, 804 variable
-slots, 79 tests.
+slots, 99 tests.
 
 ---
 
@@ -33,7 +33,7 @@ slots, 79 tests.
 
 | Area | How it was checked |
 |---|---|
-| Solver, calculus, systems | 79 automated tests, all passing |
+| Solver, calculus, systems | 99 automated tests, all passing |
 | All 212 formulas | Every one parses; declared variables match the equation exactly (enforced by test) |
 | Rearrangement | 800 of 804 possible rearrangements resolve symbolically; the other 4 fall through to a numeric solver |
 | Excel export | Generated workbooks recalculated in LibreOffice: **0 formula errors**. Values checked by hand |
@@ -44,6 +44,7 @@ slots, 79 tests.
 | **The graph tab on Windows** | The flagged risk, now checked: matplotlib's Tk backend draws, two curves at once, roots marked and labelled, pan/zoom toolbar present |
 | **The frozen build** | `build_exe.bat` run end to end on Windows. `dist\EngiCalc.exe` launches, loads the library, renders the typeset bar and the pad. Driven through `--cli` on the console build, the frozen engine solves, integrates (3.2 for the worked case), takes limits, and rearranges a library formula |
 | **Inequalities** | `<=`, `>=`, `<`, `>` and `!=` solve to a range, checked against the pad's own worked examples, an absolute value, a sign flip across a denominator (`1/x < 1`), an empty solution and a plain numeric comparison |
+| **Interpolation** | Linear checked against the arithmetic done by hand, a value on a row returning that row, an exact polynomial fit, reverse lookup, a curve that turns being reported as two answers, and extrapolation warning rather than answering quietly |
 | **The installer** | `build_installer.bat` compiled `Output\EngiCalc_Setup.exe` (57.7 MB) with Inno Setup 6 |
 
 ### Not verified
@@ -201,7 +202,7 @@ Roughly by value per unit of effort.
 ## 6. How to verify a change
 
 ```
-run_engicalc.bat test          # 79 tests, about 25 seconds
+run_engicalc.bat test          # 99 tests, about 25 seconds
 run_engicalc.bat               # then actually look at the window
 ```
 
@@ -238,6 +239,8 @@ engicalc/
   export/excel.py      the three workbook builders
   ui/
     app.py             window shell, cross-tab plumbing
+    interpolate_tab.py the table reader
+    clipboard.py       a picture on the clipboard, for Word
     mathrender.py      LaTeX -> PNG -> Tk, with fallback
     mathfield.py       the editable typeset equation bar
     pad.py             the symbol list (drives pad, reference, docs, shapes)

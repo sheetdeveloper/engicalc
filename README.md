@@ -37,7 +37,7 @@ python3-tk`.
 
 ---
 
-## The four tabs
+## The tabs
 
 ### Calculator
 
@@ -133,6 +133,22 @@ annuity interest rate - are solved numerically instead, and say so.
 **Add my own formula** stores your own equations in
 `~/.engicalc/user_formulas.json`, and they behave exactly like the built-in ones.
 
+### Interpolate
+
+Reading a value between the rows of a table - a steam table, a pump curve, a
+materials chart. Paste two columns straight out of Excel, say which x you
+want, and it gives you the answer with the working: which two rows it used,
+the straight-line formula, the numbers substituted in, and the gradient over
+that interval. That working is the part that gets marked.
+
+Also does the reverse (given y, find x), a least-squares polynomial fit when
+a straight line will not do, and nearest-row lookup.
+
+**Extrapolation is called out.** Ask for a value beyond the ends of the data
+and you still get an answer, with a warning saying it is a guess from outside
+where the numbers came from. Reading past the end of a steam table silently
+is how people get hurt.
+
 ### History
 
 Every calculation you save goes into a SQLite database at
@@ -204,6 +220,7 @@ Three exports:
         library.py         load, search, rearrange, user formulas
         data/              one module per branch - this is where to add formulas
       plotting/plot.py     all four curve types, root marking, sweeps
+      core/interpolate.py  reading between the rows of a table
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
       ui/
@@ -211,11 +228,12 @@ Three exports:
         mathrender.py      LaTeX -> PNG -> Tk, with a plain-text fallback
         pad.py             the symbol list: buttons, help and syntax in one place
         mathfield.py       the editable typeset equation bar
+        clipboard.py       put a picture on the clipboard, for Word
         symbol_pad.py      the pad widget
         reference_window.py  searchable symbol and syntax reference
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 79 tests
+    tests/test_engicalc.py 99 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -273,7 +291,7 @@ them.
 
 ## Tests
 
-79 tests covering the parser (including that it refuses `__import__`), the
+99 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator

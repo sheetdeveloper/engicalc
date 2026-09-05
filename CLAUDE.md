@@ -47,6 +47,9 @@ If you add a feature, produce one of these rather than a new shape.
                           never wrap one in Eq(expr, 0).
     core/steps.py         worked solutions. Defensive by design: unknown cases
                           return fewer steps, never raise.
+    core/interpolate.py   reading between the rows of a table. Parses a pasted
+                          two-column table, interpolates, and returns a
+                          CalcResult like everything else.
     core/display.py       SymPy -> readable text (** becomes ^, Eq becomes =).
                           Cosmetic only, never parsed back.
     core/excel_printer.py SymPy -> Excel formula strings. See the rules below.
@@ -64,6 +67,8 @@ If you add a feature, produce one of these rather than a new shape.
                           compiles back to the ASCII the parser already takes,
                           and `structured_row` goes the other way, turning
                           typed text into the same tree.
+    ui/clipboard.py       CF_DIB on the Windows clipboard, so a worked
+                          calculation can be pasted into Word as a picture.
     ui/pad.py             the symbol list. Buttons, the reference window and the
                           syntax docs are all generated from PAD, so they cannot
                           drift apart - add a symbol here and it appears in all
