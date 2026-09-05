@@ -41,7 +41,7 @@ from matplotlib.font_manager import FontProperties
 
 from ..core.display import latex_name
 from ..core.parsing import SAFE_FUNCTIONS
-from .widgets import images_are_stale
+from .widgets import LINE, images_are_stale
 
 DPI = 130
 # A hollow box reads as "type here"; mathtext has no \square or \Box, but it
@@ -659,7 +659,7 @@ class MathField(tk.Canvas):
                  fontsize: int = 17, colour: str = "#111111",
                  background: str = "#ffffff", height: int = 62, **kwargs):
         super().__init__(master, height=height, background=background,
-                         highlightthickness=1, highlightbackground="#c8c8d0",
+                         highlightthickness=1, highlightbackground=LINE,
                          highlightcolor="#4a76c8", takefocus=True, **kwargs)
         self.fontsize = fontsize
         self.colour = colour

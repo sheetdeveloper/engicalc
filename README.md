@@ -38,6 +38,8 @@ the area it measures shaded underneath and the working beside it.*
 | **Equations solved together** - in any order, with the count before the answer | **Units** - and the same value in everything else that measures it |
 | ![All working](docs/screenshots/working.png) | ![Trendlines](docs/screenshots/statistics.png) |
 | **All working** - the rule stated, then applied | **Trendlines** - six shapes, scored so they compare |
+| ![Steam](docs/screenshots/steam.png) | ![Moist air](docs/screenshots/moistair.png) |
+| **Steam tables** computed from IAPWS-IF97 | **Moist air** - the psychrometric chart, read off exactly |
 
 ---
 
@@ -260,6 +262,41 @@ error. The residuals are drawn because R squared says how much of the
 variation the curve accounts for, not whether it was the right shape to
 fit - a pattern in the residuals means it was not.
 
+### Properties
+
+Fluid properties, computed rather than looked up.
+
+**Water and steam** comes from IAPWS-IF97 - the international standard, the
+same formulation used industrially. Nothing is tabulated, so there is no row
+to interpolate between and no edge to read off. Three ways of asking, because
+those are the three ways a question is put: on the saturation line, inside
+the dome at a known dryness, or at a pressure and temperature that fix the
+state outright. `h_fg` is shown beside the saturated pair, since it is what
+most questions are after and the one number a printed table makes you work
+out yourself.
+
+The basis for trusting it is in the tests: **all twenty-four verification
+values published with the standard match to better than one part in 10^8**.
+Two further checks do not depend on the coefficients at all - the saturation
+equation lands on the triple point and the critical point, which are defined
+rather than fitted values, and the internal energy and entropy of saturated
+liquid at the triple point come out as zero without anything setting them to
+zero. Regions 3 and 5 are not implemented, and a state in either raises
+rather than being answered from the wrong equations.
+
+**Moist air** is the psychrometric chart. The dry bulb never fixes the state
+on its own, so it asks for one measure of the moisture as well - relative
+humidity, humidity ratio, wet bulb or dew point, whichever you have - and
+everything else follows. It shares one saturation pressure with the steam
+tables rather than carrying a correlation of its own, so the two cannot
+disagree in the fourth figure.
+
+Below freezing the vapour deposits as frost rather than condensing, which is
+a different curve and not one this has. Where that happens the dew point and
+wet bulb are left out with the reason on screen; everything that does not
+depend on that curve is still exactly right.
+
+
 ### Sheet
 
 Real work is never one calculation. It is a diameter, then an area from that
@@ -378,6 +415,8 @@ Three exports:
       core/units.py        mm and m cannot be quietly mixed
       core/system.py       equations solved together, in any order
       core/fitting.py      six trendline shapes, scored so they compare
+      core/steam.py        water and steam, from IAPWS-IF97
+      core/psychrometrics.py  moist air, on top of that saturation pressure
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
       ui/
@@ -390,10 +429,12 @@ Three exports:
         symbol_pad.py      the pad widget
         reference_window.py  searchable symbol and syntax reference
         calculator_pane.py the Calculator's sub-tabs
+        properties_pane.py steam and moist air together
+        steam_tab.py       moistair_tab.py
         simultaneous_tab.py  units_tab.py
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 268 tests
+    tests/test_engicalc.py 290 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 

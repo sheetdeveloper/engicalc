@@ -2625,6 +2625,113 @@ class TestSteamAgainstTheStandard(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# Moist air
+# --------------------------------------------------------------------------
+class TestPsychrometrics(unittest.TestCase):
+    """The chart, and the ways of arriving at a point on it."""
+
+    def test_it_matches_the_chart(self):
+        from engicalc.core.psychrometrics import state
+
+        # Read off a psychrometric chart at sea level.
+        for dry, humidity, ratio, enthalpy in [
+                (20, 0.50, 0.00726, 38.6),
+                (25, 0.60, 0.01190, 55.5),
+                (30, 0.40, 0.01060, 57.3),
+                (35, 0.70, 0.02516, 99.8)]:
+            with self.subTest(dry=dry, rh=humidity):
+                air = state(dry, relative_humidity=humidity)
+                self.assertAlmostEqual(air.humidity_ratio, ratio, places=4)
+                self.assertAlmostEqual(air.enthalpy, enthalpy, places=0)
+
+    def test_every_way_in_describes_the_same_air(self):
+        from engicalc.core.psychrometrics import state
+
+        # Relative humidity, humidity ratio, dew point and wet bulb are four
+        # measures of one thing, so they must land on the same point.
+        reference = state(20, relative_humidity=0.5)
+        for label, given in [
+                ("humidity ratio", {"ratio": reference.humidity_ratio}),
+                ("dew point", {"dew_point_at": reference.dew_point}),
+                ("wet bulb", {"wet_bulb": reference.wet_bulb})]:
+            with self.subTest(given=label):
+                air = state(20, **given)
+                self.assertAlmostEqual(air.humidity_ratio,
+                                       reference.humidity_ratio, places=6)
+                self.assertAlmostEqual(air.enthalpy, reference.enthalpy,
+                                       places=4)
+
+    def test_saturated_air_has_its_three_temperatures_together(self):
+        from engicalc.core.psychrometrics import state
+
+        # At 100% the dry bulb, wet bulb and dew point are the same
+        # temperature. Nothing forces that; it comes out.
+        air = state(20, relative_humidity=1.0)
+        self.assertAlmostEqual(air.dew_point, 20.0, places=3)
+        self.assertAlmostEqual(air.wet_bulb, 20.0, places=3)
+
+    def test_it_shares_one_saturation_pressure_with_the_steam_tables(self):
+        from engicalc.core.psychrometrics import saturation_vapour_pressure
+        from engicalc.core.steam import saturation_pressure
+
+        # Two correlations that disagree in the fourth figure would be two
+        # different answers to the same question.
+        for celsius in (10, 20, 50, 100):
+            with self.subTest(celsius=celsius):
+                self.assertAlmostEqual(
+                    saturation_vapour_pressure(celsius),
+                    saturation_pressure(celsius + 273.15) * 1000.0, places=12)
+
+    def test_a_frost_point_is_not_reported_as_a_dew_point(self):
+        from engicalc.core.psychrometrics import state
+
+        # Cool dry air saturates below zero, where the vapour deposits as
+        # frost - a different curve, and not one this has.
+        air = state(0, relative_humidity=0.6)
+        self.assertNotEqual(air.dew_point, air.dew_point)      # nan
+        self.assertIn("frost", air.note)
+        # Everything that does not depend on that curve is still right.
+        self.assertAlmostEqual(air.humidity_ratio, 0.002259, places=6)
+        self.assertGreater(air.enthalpy, 0)
+
+    def test_a_wet_bulb_below_freezing_is_not_reported_as_freezing(self):
+        from engicalc.core.psychrometrics import state
+
+        # The search cannot go below 0 C, and returning its own lower bound
+        # would read as saturated air, which this is not.
+        air = state(0, relative_humidity=0.6)
+        self.assertNotEqual(air.wet_bulb, air.wet_bulb)        # nan
+
+    def test_the_state_has_to_be_pinned_down_exactly_once(self):
+        from engicalc.core.psychrometrics import PsychrometricError, state
+
+        with self.assertRaises(PsychrometricError):
+            state(20)                                   # nothing given
+        with self.assertRaises(PsychrometricError):
+            state(20, relative_humidity=0.5, ratio=0.007)      # two given
+
+    def test_air_it_cannot_describe_is_refused(self):
+        from engicalc.core.psychrometrics import PsychrometricError, state
+
+        with self.assertRaises(PsychrometricError):
+            state(-5, relative_humidity=0.5)            # over ice
+        with self.assertRaises(PsychrometricError):
+            state(20, relative_humidity=1.4)            # more than saturated
+        with self.assertRaises(PsychrometricError):
+            state(20, dew_point_at=25)                  # dew above dry bulb
+
+    def test_altitude_changes_the_answer(self):
+        from engicalc.core.psychrometrics import state
+
+        # Thinner air holds more vapour per kilogram of dry air at the same
+        # relative humidity, which is why the pressure is a field.
+        sea = state(20, 101.325, relative_humidity=0.5)
+        high = state(20, 84.6, relative_humidity=0.5)
+        self.assertGreater(high.humidity_ratio, sea.humidity_ratio)
+        self.assertAlmostEqual(high.dew_point, sea.dew_point, places=6)
+
+
+# --------------------------------------------------------------------------
 # Units
 # --------------------------------------------------------------------------
 class TestUnits(unittest.TestCase):

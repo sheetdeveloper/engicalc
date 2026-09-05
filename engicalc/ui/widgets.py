@@ -7,8 +7,22 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-BG = "#f7f7f9"
+#: The page behind everything. Quiet, so the white cards on it read as
+#: content rather than as another panel.
+BG = "#f1f3f6"
+#: Content sits on this.
+SURFACE = "#ffffff"
+#: Hairlines. A one pixel line separates things as well as a bevel does and
+#: takes up a tenth of the room.
+LINE = "#dcdfe5"
+#: The accent, used on the control that does the work and on the heading
+#: that says what a panel is - and nowhere else, so it keeps meaning that.
 ACCENT = "#1f4e79"
+ACCENT_LIGHT = "#2b6ca8"
+ACCENT_SOFT = "#e8f0f9"
+#: Text.
+INK = "#1b1d21"
+MUTED = "#6b7280"
 
 _CACHE_ROOTS: dict = {}
 
@@ -33,38 +47,131 @@ MONO_BIG = ("Consolas", 12)
 
 
 def apply_theme(root: tk.Tk) -> None:
+    """Style every widget class the app uses, from the palette above."""
     style = ttk.Style(root)
+    # clam is the one that lets most of this be set at all; the native
+    # themes ignore half of it.
     for candidate in ("clam", "vista", "aqua", "default"):
         if candidate in style.theme_names():
             style.theme_use(candidate)
             break
+
+    style.configure(".", background=BG, foreground=INK,
+                    font=("Segoe UI", 9))
     style.configure("TFrame", background=BG)
-    style.configure("TLabel", background=BG)
-    style.configure("TLabelframe", background=BG)
+    style.configure("TLabel", background=BG, foreground=INK)
+    style.configure("TCheckbutton", background=BG, foreground=INK)
+    style.configure("TRadiobutton", background=BG, foreground=INK)
+    style.map("TCheckbutton", background=[("active", BG)])
+    style.map("TRadiobutton", background=[("active", BG)])
+
+    # -- panels ----------------------------------------------------------
+    # A hairline round the card and the title in the accent, rather than a
+    # groove that eats four pixels on every side.
+    style.configure("TLabelframe", background=BG, relief="solid",
+                    borderwidth=1, bordercolor=LINE)
     style.configure("TLabelframe.Label", background=BG, foreground=ACCENT,
-                    font=("Segoe UI", 10, "bold"))
+                    font=("Segoe UI", 9, "bold"))
     style.configure("Title.TLabel", font=("Segoe UI", 13, "bold"),
                     foreground=ACCENT, background=BG)
-    style.configure("Hint.TLabel", font=("Segoe UI", 8), foreground="#666666",
+    style.configure("Hint.TLabel", font=("Segoe UI", 8), foreground=MUTED,
                     background=BG)
-    style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"))
 
-    # The symbol pad. White keys with a hairline border read as a keyboard;
-    # the theme's default grey-on-grey buttons at this size just look like
-    # empty boxes. Padding is small because the glyph inside is the label -
-    # there is no text needing room around it.
-    style.configure("Pad.TButton", padding=(1, 2), relief="flat",
-                    background="#ffffff", bordercolor="#d4d4dc",
-                    lightcolor="#ffffff", darkcolor="#ffffff",
+    # -- the tab strip ---------------------------------------------------
+    # Ten tabs need room to be told apart, and the selected one needs to
+    # look like the page it opens rather than like its neighbours.
+    style.configure("TNotebook", background=BG, borderwidth=0,
+                    tabmargins=(2, 4, 2, 0))
+    style.configure("TNotebook.Tab", background=BG, foreground=MUTED,
+                    padding=(14, 7), borderwidth=0,
+                    font=("Segoe UI", 9))
+    style.map("TNotebook.Tab",
+              background=[("selected", SURFACE), ("active", ACCENT_SOFT)],
+              foreground=[("selected", ACCENT), ("active", ACCENT)],
+              font=[("selected", ("Segoe UI", 9, "bold"))],
+              expand=[("selected", (0, 0, 0, 0))])
+
+    # -- buttons ---------------------------------------------------------
+    style.configure("TButton", background=SURFACE, foreground=INK,
+                    bordercolor=LINE, lightcolor=SURFACE, darkcolor=SURFACE,
+                    relief="solid", borderwidth=1, padding=(12, 5),
+                    focusthickness=0, focuscolor="")
+    style.map("TButton",
+              background=[("pressed", "#e4e8ee"), ("active", ACCENT_SOFT)],
+              bordercolor=[("active", ACCENT_LIGHT)],
+              foreground=[("active", ACCENT)])
+
+    # The one that does the work is filled, so it is obvious which it is.
+    style.configure("Accent.TButton", font=("Segoe UI", 9, "bold"),
+                    background=ACCENT, foreground="#ffffff",
+                    bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
+                    relief="solid", borderwidth=1, padding=(14, 5))
+    style.map("Accent.TButton",
+              background=[("pressed", "#17395a"), ("active", ACCENT_LIGHT)],
+              bordercolor=[("active", ACCENT_LIGHT)],
+              foreground=[("active", "#ffffff")])
+
+    style.configure("TMenubutton", background=SURFACE, foreground=INK,
+                    bordercolor=LINE, relief="solid", borderwidth=1,
+                    padding=(12, 5))
+    style.map("TMenubutton",
+              background=[("active", ACCENT_SOFT)],
+              foreground=[("active", ACCENT)])
+
+    # -- fields ----------------------------------------------------------
+    for name in ("TEntry", "TCombobox", "TSpinbox"):
+        style.configure(name, fieldbackground=SURFACE, background=SURFACE,
+                        foreground=INK, bordercolor=LINE, lightcolor=LINE,
+                        darkcolor=LINE, insertcolor=INK,
+                        relief="solid", borderwidth=1, padding=(5, 3),
+                        arrowcolor=MUTED)
+        style.map(name,
+                  bordercolor=[("focus", ACCENT_LIGHT)],
+                  lightcolor=[("focus", ACCENT_LIGHT)],
+                  darkcolor=[("focus", ACCENT_LIGHT)])
+    style.map("TCombobox", fieldbackground=[("readonly", SURFACE)],
+              arrowcolor=[("active", ACCENT)])
+
+    # -- the symbol pad --------------------------------------------------
+    # White keys with a hairline read as a keyboard; the theme's grey-on-grey
+    # buttons at this size look like empty boxes. Padding is small because
+    # the glyph is the label - there is no text needing room around it.
+    style.configure("Pad.TButton", padding=(1, 2), relief="solid",
+                    borderwidth=1, background=SURFACE, bordercolor=LINE,
+                    lightcolor=SURFACE, darkcolor=SURFACE,
                     focusthickness=0, focuscolor="")
     style.map("Pad.TButton",
-              background=[("pressed", "#d7e4f6"), ("active", "#eef3fc")],
-              bordercolor=[("active", "#8fb2e0")],
-              relief=[("pressed", "flat"), ("active", "flat")])
+              background=[("pressed", "#d7e4f6"), ("active", ACCENT_SOFT)],
+              bordercolor=[("active", ACCENT_LIGHT)],
+              relief=[("pressed", "solid"), ("active", "solid")])
     style.configure("PadGroup.TLabel", font=("Segoe UI", 8, "bold"),
-                    foreground="#7a7a86", background=BG)
+                    foreground=MUTED, background=BG)
 
-    style.configure("Treeview", rowheight=22)
+    # -- lists and scrollbars ---------------------------------------------
+    style.configure("Treeview", rowheight=24, background=SURFACE,
+                    fieldbackground=SURFACE, foreground=INK,
+                    bordercolor=LINE, borderwidth=1, relief="solid")
+    style.configure("Treeview.Heading", background=BG, foreground=ACCENT,
+                    font=("Segoe UI", 9, "bold"), relief="flat",
+                    padding=(6, 4))
+    style.map("Treeview.Heading", background=[("active", ACCENT_SOFT)])
+    style.map("Treeview",
+              background=[("selected", ACCENT_SOFT)],
+              foreground=[("selected", ACCENT)])
+
+    style.configure("Vertical.TScrollbar", background=BG, troughcolor=BG,
+                    bordercolor=BG, arrowcolor=MUTED, relief="flat",
+                    borderwidth=0)
+    style.configure("Horizontal.TScrollbar", background=BG, troughcolor=BG,
+                    bordercolor=BG, arrowcolor=MUTED, relief="flat",
+                    borderwidth=0)
+    for orientation in ("Vertical.TScrollbar", "Horizontal.TScrollbar"):
+        style.map(orientation,
+                  background=[("active", "#c3c8d1"), ("!active", "#d5d9e0")])
+
+    style.configure("TPanedwindow", background=BG)
+    style.configure("Sash", sashthickness=6, gripcount=0)
+
     root.configure(background=BG)
 
 

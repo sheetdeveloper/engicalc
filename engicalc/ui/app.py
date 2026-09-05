@@ -18,7 +18,7 @@ from .history_tab import HistoryTab
 from .interpolate_tab import InterpolateTab
 from .matrix_tab import MatrixTab
 from .sheet_tab import SheetTab
-from .steam_tab import SteamTab
+from .properties_pane import PropertiesPane
 from .statistics_tab import StatisticsTab
 from .library_tab import LibraryTab
 from .reference_window import ReferenceWindow
@@ -195,7 +195,9 @@ class EngiCalcApp(tk.Tk):
         self.interpolate_tab = InterpolateTab(self.notebook, self)
         self.matrix_tab = MatrixTab(self.notebook, self)
         self.sheet_tab = SheetTab(self.notebook, self)
-        self.steam_tab = SteamTab(self.notebook, self)
+        self.properties_pane = PropertiesPane(self.notebook, self)
+        self.steam_tab = self.properties_pane.steam
+        self.moist_air_tab = self.properties_pane.moist_air
         self.statistics_tab = StatisticsTab(self.notebook, self)
         self.history_tab = HistoryTab(self.notebook, self)
 
@@ -206,7 +208,7 @@ class EngiCalcApp(tk.Tk):
         self.notebook.add(self.interpolate_tab, text="  Interpolate  ")
         self.notebook.add(self.matrix_tab, text="  Matrices  ")
         self.notebook.add(self.sheet_tab, text="  Sheet  ")
-        self.notebook.add(self.steam_tab, text="  Steam  ")
+        self.notebook.add(self.properties_pane, text="  Properties  ")
         self.notebook.add(self.statistics_tab, text="  Data  ")
         self.notebook.add(self.history_tab, text="  History  ")
 
@@ -300,7 +302,8 @@ class EngiCalcApp(tk.Tk):
             "system": (self.simultaneous_tab, self.calculator_pane),
             "convert": (self.units_tab, self.calculator_pane),
             "sheet": (self.sheet_tab, None),
-            "steam": (self.steam_tab, None),
+            "steam": (self.steam_tab, self.properties_pane),
+            "moistair": (self.moist_air_tab, self.properties_pane),
             "statistics": (self.statistics_tab, None),
         }
 
