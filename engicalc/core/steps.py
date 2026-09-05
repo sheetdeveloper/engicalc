@@ -20,6 +20,14 @@ class Step:
     title: str
     detail: str = ""
     expr: sp.Basic | None = None
+    # Hand-written LaTeX, for notation SymPy has no object for - the
+    # evaluation bar in a definite integral, say. Preferred over `expr` when
+    # the step is drawn; `expr` and `detail` still carry the plain-text form.
+    latex: str = ""
+
+    def drawn(self):
+        """What to typeset for this step."""
+        return self.latex or self.expr
 
     def text(self) -> str:
         parts = [self.title]
@@ -244,16 +252,33 @@ def integral_steps(expr: sp.Expr, var: sp.Symbol, lower=None, upper=None) -> lis
             steps.append(Step(f"  integral of {_pretty(term)}",
                               expr=sp.integrate(term, var)))
     anti = sp.integrate(expr, var)
-    steps.append(Step("Antiderivative F(x)", expr=anti,
-                      detail="Add the constant of integration C."))
-    if lower is not None and upper is not None:
-        steps.append(Step("Definite integral: evaluate F(b) - F(a)",
-                          detail=f"a = {_pretty(lower)},  b = {_pretty(upper)}"))
-        fb = sp.simplify(anti.subs(var, upper))
-        fa = sp.simplify(anti.subs(var, lower))
-        steps.append(Step("F(b)", expr=fb))
-        steps.append(Step("F(a)", expr=fa))
-        steps.append(Step("Result", expr=sp.simplify(fb - fa)))
+    if lower is None or upper is None:
+        steps.append(Step("Antiderivative F(x)", expr=anti,
+                          detail="Add the constant of integration C."))
+        return steps
+
+    steps.append(Step("Antiderivative F(x)", expr=anti))
+
+    # Written the way it is written by hand: the antiderivative inside a
+    # tall bar carrying the limits, then the subtraction, then the answer,
+    # all on one line. Three separate steps for F(b), F(a) and the result
+    # is not how anyone sets this out.
+    fb = sp.simplify(anti.subs(var, upper))
+    fa = sp.simplify(anti.subs(var, lower))
+    answer = sp.simplify(fb - fa)
+    try:
+        bar = (r"\left. " + sp.latex(anti) + r" \right|_{"
+               + sp.latex(lower) + "}^{" + sp.latex(upper) + "} = "
+               + sp.latex(fb) + " - " + sp.latex(fa) + " = " + sp.latex(answer))
+    except Exception:  # noqa: BLE001 - fall back to the plain wording
+        bar = ""
+    steps.append(Step(
+        "Evaluate between the limits",
+        latex=bar,
+        expr=None if bar else answer,
+        detail=f"[ F(x) ] from {_pretty(lower)} to {_pretty(upper)}"
+               f"  =  F(b) - F(a)  =  {_pretty(fb)} - {_pretty(fa)}"))
+    steps.append(Step("Result", expr=answer))
     return steps
 
 

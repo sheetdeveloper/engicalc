@@ -1400,3 +1400,68 @@ class TestUnits(unittest.TestCase):
         self.assertEqual("", looks_wrong(0.05, "0.05"))
         self.assertEqual("", looks_wrong(0.08, "0.05"))
         self.assertEqual("", looks_wrong(50, ""))      # nothing to compare to
+
+
+class TestEvaluationBar(unittest.TestCase):
+    """A definite integral is written with the antiderivative inside a tall
+    bar carrying the limits, not as three separate steps for F(b) and F(a)."""
+
+    def _bar(self, integrand, lower="1", upper="2"):
+        result = calculate(integrand, "integral", "x",
+                           lower=lower, upper=upper)
+        return next((s.latex for s in result.steps if s.latex), "")
+
+    def test_the_working_uses_the_evaluation_bar(self):
+        bar = self._bar("2x", "-1.6", "2.4")
+        self.assertIn(r"\left.", bar)
+        self.assertIn(r"\right|", bar)
+        self.assertIn("-1.6", bar)
+        self.assertIn("2.4", bar)
+
+    def test_it_renders(self):
+        """mathtext has no \vphantom and no \Bigg, so the exact spelling
+        matters - most ways of writing this do not parse."""
+        import matplotlib
+        matplotlib.use("Agg")
+        from matplotlib import mathtext
+        from matplotlib.font_manager import FontProperties
+
+        parser = mathtext.MathTextParser("path")
+        for integrand in ["2x", "x^2", "1/x^2", "sqrt(x)", "sin(x)"]:
+            with self.subTest(integrand=integrand):
+                bar = self._bar(integrand)
+                self.assertTrue(bar, "no evaluation bar was produced")
+                parser.parse(f"${bar}$", dpi=100,
+                             prop=FontProperties(size=16))
+
+    def test_the_bar_grows_with_the_antiderivative(self):
+        """It is a delimiter, so it sizes to what it encloses - a fraction
+        makes it taller than a squared term does."""
+        import matplotlib
+        matplotlib.use("Agg")
+        from matplotlib import mathtext
+        from matplotlib.font_manager import FontProperties
+
+        parser = mathtext.MathTextParser("path")
+
+        def height(integrand):
+            _w, h, d, _g, _r = parser.parse(
+                f"${self._bar(integrand)}$", dpi=100,
+                prop=FontProperties(size=18))
+            return h + d
+
+        self.assertGreater(height("x^2"), height("2x"))
+
+    def test_an_indefinite_integral_has_no_bar(self):
+        result = calculate("2x", "integral", "x")
+        self.assertFalse(any(s.latex for s in result.steps))
+        self.assertTrue(any("constant of integration" in (s.detail or "")
+                            for s in result.steps))
+
+    def test_plain_text_mode_stays_readable(self):
+        """The bar is LaTeX; the text view must not show raw markup."""
+        text = calculate("2x", "integral", "x",
+                         lower="-1.6", upper="2.4").steps_text()
+        self.assertNotIn(r"\left.", text)
+        self.assertNotIn(r"\right|", text)
+        self.assertIn("F(b) - F(a)", text)

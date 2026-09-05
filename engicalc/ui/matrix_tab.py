@@ -229,7 +229,7 @@ class MatrixTab(ttk.Frame):
         blocks = [("Matrix", None, self.result.input_text),
                   ("Answer", None, self.result.result_text)]
         blocks += [("Note", None, w) for w in self.result.warnings]
-        blocks += [(s.title, s.expr, s.detail) for s in self.result.steps]
+        blocks += [(s.title, s.drawn(), s.detail) for s in self.result.steps]
         return blocks
 
     def copy_picture(self) -> None:

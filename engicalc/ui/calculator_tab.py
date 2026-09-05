@@ -412,7 +412,7 @@ class CalculatorTab(ttk.Frame):
                                 "(no steps for this operation)")
         else:
             self.steps_math.pack(fill="both", expand=True)
-            blocks = [(step.title, step.expr, step.detail)
+            blocks = [(step.title, step.drawn(), step.detail)
                       for step in self.result.steps]
             self.steps_math.render(blocks or
                                    [("", None, "(no steps for this operation)")])
@@ -452,7 +452,7 @@ class CalculatorTab(ttk.Frame):
         if self.result.steps:
             blocks.append(("Working", None, None))
             for step in self.result.steps:
-                blocks.append((step.title, step.expr, step.detail))
+                blocks.append((step.title, step.drawn(), step.detail))
         return blocks
 
     def _picture(self):
