@@ -5,7 +5,14 @@ solving and graphing, minus the AI and the subscription, plus the two things it
 doesn't do: a searchable library of engineering formulas that rearrange for any
 variable, and export to a **live, formula-driven** Excel workbook.
 
-Everything runs locally. No account, no internet connection, nothing uploaded.
+Everything runs locally. No account, nothing uploaded.
+
+The one thing that can reach the internet is the update check, and it is
+**off unless you ask for it**: *Help → Check for updates* asks GitHub whether
+a newer release exists, and *Options → Check for updates at startup* does the
+same each time the app opens. Either way it only ever **tells** you - it
+never downloads or installs anything, it opens the release page and you
+decide. Leave both alone and the app makes no network calls at all.
 
 New to this codebase? Read **HANDOVER.md** first - it covers what is built, what
 was verified and how, what was not, and what to do next. **CLAUDE.md** covers how
@@ -308,6 +315,7 @@ Three exports:
       core/statistics.py   describing readings, and the line through them
       core/odes.py         differential equations in prime notation
       formulas/data/hvac.py  ductwork, fans and sheet metal
+      core/updates.py      is there a newer release - telling, never installing
       core/units.py        mm and m cannot be quietly mixed
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
@@ -322,7 +330,7 @@ Three exports:
         reference_window.py  searchable symbol and syntax reference
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 190 tests
+    tests/test_engicalc.py 198 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -380,7 +388,7 @@ them.
 
 ## Tests
 
-190 tests covering the parser (including that it refuses `__import__`), the
+198 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator

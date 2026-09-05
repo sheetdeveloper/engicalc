@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import os
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from .. import __version__
 from ..formulas.library import get_library
 from ..plotting.plot import spec_from_result
 from ..storage.history import DEFAULT_DB, History
@@ -18,7 +21,7 @@ from .sheet_tab import SheetTab
 from .statistics_tab import StatisticsTab
 from .library_tab import LibraryTab
 from .reference_window import ReferenceWindow
-from .widgets import apply_theme
+from .widgets import AsyncRunner, apply_theme
 
 ABOUT = """EngiCalc
 
@@ -33,6 +36,29 @@ assumption line on any library formula before relying on it for design work.
 """
 
 
+
+SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".engicalc",
+                             "settings.json")
+
+
+def _remembered_check_setting() -> bool:
+    """Whether update checking was switched on. Off if never answered."""
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as handle:
+            return bool(json.load(handle).get("check_at_start", False))
+    except Exception:                                     # noqa: BLE001
+        return False
+
+
+def _remember_check_setting(value: bool) -> None:
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as handle:
+            json.dump({"check_at_start": bool(value)}, handle)
+    except Exception:                                     # noqa: BLE001
+        pass                      # a setting that will not save is not fatal
+
+
 class EngiCalcApp(tk.Tk):
     def __init__(self, db_path: str = DEFAULT_DB):
         super().__init__()
@@ -45,9 +71,17 @@ class EngiCalcApp(tk.Tk):
         self.history = History(db_path)
         self.project = tk.StringVar(value="")
         self.autosave = tk.BooleanVar(value=False)
+        # Off unless asked for. The app promises nothing leaves the machine,
+        # and a check is a request to GitHub carrying an IP address - small,
+        # but not the promise. Remembered once somebody turns it on.
+        self.check_at_start = tk.BooleanVar(value=_remembered_check_setting())
+        self.check_at_start.trace_add(
+            "write", lambda *a: _remember_check_setting(
+                self.check_at_start.get()))
 
         self._build_menu()
         self._build_body()
+        self._maybe_check_at_start()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     # -- construction -----------------------------------------------------
@@ -65,15 +99,61 @@ class EngiCalcApp(tk.Tk):
         view = tk.Menu(menu, tearoff=0)
         view.add_checkbutton(label="Auto-save every result",
                              variable=self.autosave)
+        view.add_checkbutton(label="Check for updates at startup",
+                             variable=self.check_at_start)
         menu.add_cascade(label="Options", menu=view)
 
         help_menu = tk.Menu(menu, tearoff=0)
         help_menu.add_command(label="Symbols and syntax reference...",
                               command=self.show_reference)
         help_menu.add_command(label="Quick syntax card", command=self.show_syntax)
+        help_menu.add_command(label="Check for updates...",
+                              command=self.check_for_updates)
         help_menu.add_command(label="About", command=self.show_about)
         menu.add_cascade(label="Help", menu=help_menu)
         self.configure(menu=menu)
+
+    # -- updates ----------------------------------------------------------
+    def check_for_updates(self, quietly: bool = False) -> None:
+        """Ask GitHub whether there is a newer release, and say so.
+
+        Never downloads and never installs - it opens the release page and a
+        person decides. `quietly` is for the automatic check at startup,
+        which says nothing when there is nothing to say.
+        """
+        from ..core import updates
+
+        def look():
+            return updates.check(__version__)
+
+        def tell(found):
+            if found is None:
+                if not quietly:
+                    messagebox.showinfo(
+                        "No update",
+                        f"Version {__version__} is the latest there is.")
+                return
+            wanted = messagebox.askyesno(
+                "An update is available",
+                f"{found.summary} is out; this is {__version__}.\n\n"
+                "Open the download page? Nothing is downloaded or installed "
+                "by the app itself.")
+            if wanted:
+                import webbrowser
+                webbrowser.open(updates.RELEASES_PAGE)
+
+        def failed(_exc):
+            if not quietly:
+                messagebox.showinfo(
+                    "Could not check",
+                    "No answer from GitHub just now. Nothing is wrong with "
+                    "your copy - try again later.")
+
+        AsyncRunner(self).run(look, tell, failed)
+
+    def _maybe_check_at_start(self) -> None:
+        if self.check_at_start.get():
+            self.after(2000, lambda: self.check_for_updates(quietly=True))
 
     def _build_body(self) -> None:
         header = ttk.Frame(self, padding=(10, 8, 10, 0))

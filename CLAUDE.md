@@ -53,6 +53,9 @@ If you add a feature, produce one of these rather than a new shape.
     core/matrices.py      A x = b and the operations around it. Refuses a
                           singular system rather than fudging it, and flags an
                           ill-conditioned one.
+    core/updates.py       the update check. Tells, never installs, and the
+                          download address is a constant here rather than
+                          anything the reply carries.
     core/odes.py          differential equations. Declares every bare name
                           as a symbol (or E and I are Euler's number and the
                           imaginary unit), and integrates y^(n) = g(x) itself

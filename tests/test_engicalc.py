@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import random
@@ -2136,3 +2137,80 @@ class TestHvacAndSheetMetal(unittest.TestCase):
                 with self.subTest(formula=formula.key, solve_for=variable.symbol):
                     solution = solve_formula(formula, variable.symbol, {})
                     self.assertIsNotNone(solution.expression)
+
+
+class TestUpdateCheck(unittest.TestCase):
+    """Telling somebody a newer version exists - and nothing more."""
+
+    def test_versions_compare_as_versions_not_strings(self):
+        from engicalc.core.updates import is_newer
+
+        self.assertTrue(is_newer("1.2.0", "1.1.0"))
+        self.assertTrue(is_newer("v1.2.0", "1.1.0"))
+        self.assertFalse(is_newer("1.1.0", "1.1.0"))
+        self.assertFalse(is_newer("1.0.9", "1.1.0"))
+        # 1.10.0 is after 1.9.0, which a string comparison gets backwards
+        self.assertTrue(is_newer("1.10.0", "1.9.0"))
+
+    def test_a_release_beats_its_own_pre_release(self):
+        """"1.2.0" is a prefix of "1.2.0-beta.1", so a string comparison
+        both offers the beta as an upgrade and refuses the release."""
+        from engicalc.core.updates import is_newer
+
+        self.assertTrue(is_newer("1.2.0", "1.2.0-beta.1"))
+        self.assertFalse(is_newer("1.2.0-beta.1", "1.2.0"))
+        self.assertTrue(is_newer("1.2.0-beta.10", "1.2.0-beta.9"))
+
+    def test_a_version_it_cannot_read_is_never_recommended(self):
+        from engicalc.core.updates import is_newer, parse_version
+
+        self.assertIsNone(parse_version("banana"))
+        self.assertFalse(is_newer("banana", "1.0.0"))
+        self.assertFalse(is_newer("1.0.0", "banana"))
+
+    def test_drafts_and_pre_releases_are_not_offered(self):
+        from engicalc.core.updates import read_release
+
+        for extra in ({"draft": True}, {"prerelease": True}):
+            with self.subTest(extra=extra):
+                payload = json.dumps(dict({"tag_name": "v9.9.9"},
+                                          **extra)).encode()
+                self.assertIsNone(read_release(payload))
+
+    def test_a_bad_reply_is_simply_nothing(self):
+        from engicalc.core.updates import read_release
+
+        for payload in [b"", b"not json", b"[]", b"{}",
+                        json.dumps({"tag_name": "banana"}).encode()]:
+            with self.subTest(payload=payload[:20]):
+                self.assertIsNone(read_release(payload))
+
+    def test_nothing_in_the_reply_decides_where_anybody_is_sent(self):
+        """The reply's own URLs are ignored: a party that can answer the
+        request would otherwise choose the file presented as the update."""
+        from engicalc.core.updates import RELEASES_PAGE, Update, read_release
+
+        payload = json.dumps({
+            "tag_name": "v9.9.9",
+            "html_url": "https://evil.example/nope",
+            "assets": [{"browser_download_url": "https://evil.example/x.exe"}],
+        }).encode()
+        found = read_release(payload)
+        self.assertIsNotNone(found)
+        self.assertNotIn("url", Update.__dataclass_fields__)
+        self.assertNotIn("evil", str(found))
+        self.assertTrue(RELEASES_PAGE.startswith(
+            "https://github.com/sheetdeveloper/engicalc"))
+
+    def test_it_is_quiet_when_it_cannot_answer(self):
+        """No network, a bad host, a 404 - all mean nothing to offer, and
+        none of them is worth interrupting somebody over."""
+        from engicalc.core.updates import check
+
+        self.assertIsNone(
+            check("1.0.0", "https://no-such-host.invalid/x", timeout=2))
+
+    def test_the_same_version_is_not_news(self):
+        from engicalc.core.updates import Update, is_newer
+
+        self.assertFalse(is_newer(Update("1.1.0").version, "1.1.0"))
