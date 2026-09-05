@@ -59,6 +59,21 @@ class LibraryTab(ttk.Frame):
         self.title_label = ttk.Label(right, text="Pick a formula",
                                      style="Title.TLabel")
         self.title_label.pack(anchor="w")
+        # Packed before the panels that expand, so it always gets its
+        # full height. Pack allocates in packing order, and a row
+        # packed after an expanding widget is last in line for space.
+        # See TestActionRows.
+        actions = ttk.Frame(right)
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
+        ttk.Button(actions, text="Save to history",
+                   command=self.save).pack(side="left")
+        ttk.Button(actions, text="Export to Excel",
+                   command=self.export).pack(side="left", padx=6)
+        ttk.Button(actions, text="Sensitivity plot",
+                   command=self.plot_sweep).pack(side="left")
+        ttk.Button(actions, text="Add my own formula",
+                   command=self.add_formula_dialog).pack(side="right")
+
         equation_box = ttk.Frame(right, relief="solid", borderwidth=1)
         equation_box.pack(fill="x", pady=(4, 4))
         self.equation_math = mathrender.MathLabel(equation_box, fontsize=19,
@@ -72,12 +87,6 @@ class LibraryTab(ttk.Frame):
         solve_row = ttk.Frame(right)
         solve_row.pack(fill="x")
         ttk.Label(solve_row, text="Solve for").pack(side="left")
-        # Values may carry their own unit, so say so - nobody types "50 mm"
-        # into a box that has only ever wanted a bare number.
-        ttk.Label(right, style="Hint.TLabel", justify="left",
-                  text="A value can bring its own unit - type 50 mm into a "
-                       "field that wants metres and it converts.").pack(
-                           anchor="w", pady=(2, 0))
         self.target_var = tk.StringVar()
         self.target_box = ttk.Combobox(solve_row, textvariable=self.target_var,
                                        width=12, state="readonly")
@@ -88,6 +97,13 @@ class LibraryTab(ttk.Frame):
         ttk.Button(solve_row, text="Use defaults",
                    command=self.fill_defaults).pack(side="left", padx=6)
 
+        # Values may carry their own unit, so say so - nobody types "50 mm"
+        # into a box that has only ever wanted a bare number.
+        ttk.Label(right, style="Hint.TLabel", justify="left",
+                  text="A value can bring its own unit - type 50 mm into a "
+                       "field that wants metres and it converts.").pack(
+                           anchor="w", pady=(2, 0))
+
         self.inputs = ScrollFrame(right, height=210)
         self.inputs.pack(fill="both", expand=True, pady=8)
 
@@ -96,21 +112,6 @@ class LibraryTab(ttk.Frame):
         self.result_math = mathrender.MathList(result_frame, fontsize=17)
         self.result_math.configure(height=120)
         self.result_math.pack(fill="both", expand=True)
-
-        # Anchored to the bottom so it always gets its full height.
-        # Packed after an expanding pane it is last in line for space
-        # and gets sliced to a few pixels - the buttons are there but
-        # show as blank slivers. See TestActionRows.
-        actions = ttk.Frame(right)
-        actions.pack(side="bottom", fill="x", pady=(8, 0))
-        ttk.Button(actions, text="Save to history",
-                   command=self.save).pack(side="left")
-        ttk.Button(actions, text="Export to Excel",
-                   command=self.export).pack(side="left", padx=6)
-        ttk.Button(actions, text="Sensitivity plot",
-                   command=self.plot_sweep).pack(side="left")
-        ttk.Button(actions, text="Add my own formula",
-                   command=self.add_formula_dialog).pack(side="right")
 
         sweep_row = ttk.Frame(right)
         sweep_row.pack(fill="x", pady=(6, 0))
