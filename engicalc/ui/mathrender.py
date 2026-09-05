@@ -20,7 +20,7 @@ from tkinter import ttk
 import sympy as sp
 from matplotlib.figure import Figure
 
-from .widgets import images_are_stale
+from .widgets import LINE, images_are_stale
 
 # mathtext understands a subset of LaTeX. These rewrites cover what SymPy
 # actually emits for the expressions this app produces.
@@ -224,8 +224,13 @@ class MathList(ttk.Frame):
                  **kwargs):
         super().__init__(master, **kwargs)
         self.fontsize = fontsize
-        self.canvas = tk.Canvas(self, background=background, highlightthickness=0,
-                                borderwidth=1, relief="solid")
+        # A canvas is not a ttk widget, so it does not pick the theme up; it
+        # is given the same hairline the cards use rather than relief
+        # "solid", which draws black.
+        self.canvas = tk.Canvas(self, background=background, borderwidth=0,
+                                highlightthickness=1,
+                                highlightbackground=LINE,
+                                highlightcolor=LINE)
         self.scroll = ttk.Scrollbar(self, orient="vertical",
                                     command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scroll.set)

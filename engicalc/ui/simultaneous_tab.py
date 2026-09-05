@@ -22,12 +22,17 @@ from tkinter import filedialog, messagebox, ttk
 
 import sympy as sp
 
-from ..core.display import fmt
-from ..core.parsing import ParseError
-from ..core.system import parse_set, solve_set
+from ..core.display import fmt, fmt_number
+from ..core.parsing import ParseError, parse_number
+from ..core.system import (free_names, parse_set, solve_set, spread,
+                           sweep, sweep_table)
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
 from ..export.excel import export_table
-from . import clipboard, mathrender
-from .widgets import AsyncRunner, MONO, ReadOnlyText
+from . import clipboard, mathfield, mathrender
+from .symbol_pad import SymbolPad
+from .widgets import AsyncRunner, MONO, ReadOnlyText, ScrollFrame
 
 #: Sets worth starting from. The duct is the case the solver exists for -
 #: nothing in it can be worked out without something else in it.
@@ -56,12 +61,40 @@ EXAMPLES = [
 ]
 
 
+
+class _CommentRow(ttk.Frame):
+    """A note in the equations, kept and shown but never solved.
+
+    It carries the same `get_text` the equation rows do, so everything that
+    walks the rows - reading them out, putting the text box in step - does
+    not need to know which kind it is looking at.
+    """
+
+    def __init__(self, master, text: str, on_change):
+        super().__init__(master)
+        self.value = tk.StringVar(value=text.strip())
+        entry = ttk.Entry(self, textvariable=self.value, font=MONO,
+                          foreground="#6b7280")
+        entry.pack(fill="x")
+        self.value.trace_add("write", lambda *a: on_change())
+
+    def get_text(self) -> str:
+        return self.value.get()
+
+    def set_text(self, text: str) -> None:
+        self.value.set(text)
+
+    def clear(self) -> None:
+        self.value.set("")
+
+
 class SimultaneousTab(ttk.Frame):
     def __init__(self, master, app):
         super().__init__(master, padding=10)
         self.app = app
         self.runner = AsyncRunner(self)
         self.result = None
+        self._syncing = False
         self._build()
         self.set_text(EXAMPLES[1][1])
 
@@ -83,20 +116,21 @@ class SimultaneousTab(ttk.Frame):
         panes.pack(fill="both", expand=True, pady=(6, 0))
 
         left = ttk.Labelframe(panes, text="Equations", padding=6)
-        self.text = tk.Text(left, height=12, width=38, font=MONO, undo=True,
-                            wrap="none")
-        self.text.pack(fill="both", expand=True)
-        self.text.bind("<KeyRelease>", lambda e: self._recount())
-        self.text.bind("<Control-Return>", lambda e: (self.solve(), "break"))
 
-        # The count, before anything is solved. This is the diagnostic worth
-        # having: it says what to do, which no answer could.
-        self.count = ttk.Label(left, text="", style="Hint.TLabel",
-                               wraplength=300, justify="left")
-        self.count.pack(fill="x", pady=(6, 0))
+        # The same field the calculator uses, one per equation. Pressing the
+        # fraction key here puts a fraction here too, rather than the app
+        # asking for maths two different ways on two different tabs.
+        self.pad = SymbolPad(left, self._insert_item)
+        self.pad.pack(fill="x", pady=(0, 6))
 
+        self.fields = []
+
+        # Everything with a height of its own goes in before the rows, which
+        # take whatever is left. Packed the other way round, the picker below
+        # is last in line for space and its buttons render as slivers - the
+        # same rule as the action rows. See TestActionRows.
         picker = ttk.Frame(left)
-        picker.pack(fill="x", pady=(6, 0))
+        picker.pack(side="bottom", fill="x", pady=(6, 0))
         ttk.Label(picker, text="Start from").pack(side="left")
         self.example = ttk.Combobox(
             picker, state="readonly", width=22,
@@ -104,10 +138,39 @@ class SimultaneousTab(ttk.Frame):
         self.example.pack(side="left", padx=4)
         self.example.bind("<<ComboboxSelected>>", self._load_example)
         ttk.Button(picker, text="Clear", command=self.clear).pack(side="left")
+
+        # The text box stays: pasting five lines at once is still the
+        # quickest way to start. The two are kept in step, either can drive.
+        text_row = ttk.Frame(left)
+        text_row.pack(side="bottom", fill="x", pady=(6, 0))
+        ttk.Label(text_row, text="as text", style="Hint.TLabel").pack(
+            side="left")
+        self.text = tk.Text(text_row, height=4, width=34, font=MONO,
+                            undo=True, wrap="none")
+        self.text.pack(fill="x", expand=True, pady=(2, 0))
+        self.text.bind("<KeyRelease>", lambda e: self._text_edited())
+        self.text.bind("<Control-Return>", lambda e: (self.solve(), "break"))
+
+        # The count, before anything is solved. This is the diagnostic worth
+        # having: it says what to do, which no answer could.
+        self.count = ttk.Label(left, text="", style="Hint.TLabel",
+                               wraplength=300, justify="left")
+        self.count.pack(side="bottom", fill="x", pady=(6, 0))
+
+        self.field_area = ScrollFrame(left, height=150)
+        self.field_area.pack(fill="both", expand=True)
+
         panes.add(left, weight=3)
 
-        right = ttk.Labelframe(panes, text="Answer", padding=6)
-        split = ttk.PanedWindow(right, orient="vertical")
+        right = ttk.Notebook(panes)
+        self.right_tabs = right
+        answer_page = ttk.Frame(right, padding=6)
+        right.add(answer_page, text="  Answer  ")
+        self.study_page = ttk.Frame(right, padding=6)
+        right.add(self.study_page, text="  Study  ")
+        self._build_study()
+
+        split = ttk.PanedWindow(answer_page, orient="vertical")
         split.pack(fill="both", expand=True)
 
         answer = ttk.Frame(split)
@@ -146,17 +209,307 @@ class SimultaneousTab(ttk.Frame):
         ttk.Button(actions, text="Copy as picture",
                    command=self.copy_picture).pack(side="right", padx=6)
 
+    # -- the study page -----------------------------------------------------
+    def _build_study(self) -> None:
+        """A column of values for one name, and what the set gives for each."""
+        page = self.study_page
+
+        controls = ttk.Frame(page)
+        controls.pack(fill="x")
+        # Packed first and to the right, so it keeps its place when the row
+        # runs out of width - packed last it was pushed off the edge of the
+        # pane and only a sliver of it showed.
+        ttk.Button(controls, text="Run", style="Accent.TButton",
+                   command=self.run_study).pack(side="right")
+        ttk.Label(controls, text="Sweep").pack(side="left")
+        self.sweep_name = tk.StringVar()
+        self.sweep_box = ttk.Combobox(controls, width=8, state="readonly",
+                                      textvariable=self.sweep_name)
+        self.sweep_box.pack(side="left", padx=4)
+        self.sweep_from = tk.StringVar(value="0.1")
+        self.sweep_to = tk.StringVar(value="0.3")
+        self.sweep_steps = tk.StringVar(value="9")
+        for label, variable, width in (("from", self.sweep_from, 8),
+                                       ("to", self.sweep_to, 8),
+                                       ("in", self.sweep_steps, 4)):
+            ttk.Label(controls, text=label).pack(side="left", padx=(8, 2))
+            ttk.Entry(controls, textvariable=variable, width=width,
+                      font=MONO).pack(side="left")
+        ttk.Label(controls, text="steps", style="Hint.TLabel").pack(
+            side="left", padx=(2, 8))
+
+        self.study_note = ttk.Label(page, text="", style="Hint.TLabel",
+                                    wraplength=520, justify="left")
+        self.study_note.pack(fill="x", pady=(6, 0))
+
+        plot_row = ttk.Frame(page)
+        plot_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(plot_row, text="Plot").pack(side="left")
+        self.study_y = tk.StringVar()
+        self.study_y_box = ttk.Combobox(plot_row, width=10, state="readonly",
+                                        textvariable=self.study_y)
+        self.study_y_box.pack(side="left", padx=4)
+        self.study_y_box.bind("<<ComboboxSelected>>",
+                              lambda e: self._draw_study())
+        ttk.Button(plot_row, text="Export...",
+                   command=self.export_study).pack(side="right")
+
+        self.figure = Figure(figsize=(4.4, 2.6), dpi=100)
+        self.figure.patch.set_facecolor("white")
+        self.axes = self.figure.add_subplot(111)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=page)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True,
+                                         pady=(6, 0))
+
+        self.study_table = ScrollFrame(page, height=150)
+        self.study_table.pack(fill="both", expand=True, pady=(6, 0))
+        self.study_rows = []
+        self.study_headings = []
+
+    def _offer_sweep_names(self) -> None:
+        """Fill the picker with the names the equations take as input."""
+        try:
+            names = free_names(self.get_text())
+        except Exception:                             # noqa: BLE001
+            names = []
+        self.sweep_box.configure(values=names)
+        if names and self.sweep_name.get() not in names:
+            self.sweep_name.set(names[0])
+        if not names:
+            self.study_note.configure(
+                text="Every name here is worked out by the equations, so "
+                     "there is nothing to sweep. Take one equation out - the "
+                     "one that fixes the value you want to vary - and the "
+                     "name it fixed becomes the input.")
+
+    def run_study(self) -> None:
+        name = self.sweep_name.get().strip()
+        if not name:
+            self._offer_sweep_names()
+            name = self.sweep_name.get().strip()
+        if not name:
+            return
+        try:
+            start = float(parse_number(self.sweep_from.get()))
+            stop = float(parse_number(self.sweep_to.get()))
+            steps = int(float(parse_number(self.sweep_steps.get())))
+        except (TypeError, ValueError):
+            self.study_note.configure(text="The range needs three numbers.")
+            return
+        if steps < 1 or steps > 200:
+            self.study_note.configure(
+                text="Between 1 and 200 steps - each one is a full solve.")
+            return
+
+        # Bring the page forward: a study started from the answer page would
+        # otherwise finish somewhere nobody is looking.
+        self.right_tabs.select(self.study_page)
+        self.study_note.configure(text=f"Solving {steps} times...")
+        self.update_idletasks()
+        rows = sweep(self.get_text(), name, spread(start, stop, steps))
+        outputs = sorted({key for row in rows if row.ok
+                          for key in map(str, row.result.results[0])
+                          if key != name})
+        self.study_headings, self.study_rows = sweep_table(rows, outputs)
+        self.study_headings[0] = name
+
+        self.study_y_box.configure(values=outputs)
+        if outputs and self.study_y.get() not in outputs:
+            self.study_y.set(outputs[-1])
+        worked = sum(1 for row in rows if row.ok)
+        self.study_note.configure(
+            text=f"{worked} of {len(rows)} solved."
+                 + ("" if worked == len(rows) else
+                    " The rest are in the table with what went wrong."))
+        self._fill_study()
+        self._draw_study()
+
+    def _fill_study(self) -> None:
+        self.study_table.clear()
+        body = self.study_table.body
+        for column, heading in enumerate(self.study_headings):
+            ttk.Label(body, text=heading, width=13, anchor="e",
+                      font=("Segoe UI", 9, "bold")).grid(
+                          row=0, column=column, sticky="e", padx=4)
+        for index, row in enumerate(self.study_rows, start=1):
+            for column, value in enumerate(row):
+                text = (fmt_number(value, 6)
+                        if isinstance(value, (int, float)) else str(value))
+                ttk.Label(body, text=text, width=13, anchor="e",
+                          font=MONO).grid(row=index, column=column,
+                                          sticky="e", padx=4)
+
+    def _draw_study(self) -> None:
+        axes = self.axes
+        axes.clear()
+        wanted = self.study_y.get()
+        if wanted and wanted in self.study_headings:
+            column = self.study_headings.index(wanted)
+            points = [(row[0], row[column]) for row in self.study_rows
+                      if isinstance(row[column], (int, float))]
+            if points:
+                axes.plot([x for x, _y in points], [y for _x, y in points],
+                          "o-", color="#1f4e79", markersize=4, linewidth=1.4)
+                axes.set_xlabel(self.study_headings[0], fontsize=8)
+                axes.set_ylabel(wanted, fontsize=8)
+        axes.grid(True, alpha=0.3, linestyle=":")
+        axes.tick_params(labelsize=7)
+        self.figure.tight_layout()
+        self.canvas.draw_idle()
+
+    def export_study(self) -> None:
+        if not self.study_rows:
+            messagebox.showinfo("Nothing to export", "Run a study first.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile="study.xlsx")
+        if not path:
+            return
+        try:
+            export_table(self.study_headings, self.study_rows, path,
+                         title="Parametric study", sheet="Study")
+            self.status.configure(text="Study exported")
+        except Exception as exc:                       # noqa: BLE001
+            messagebox.showerror("Export failed", str(exc))
+
+    # -- the typeset rows ---------------------------------------------------
+    def _add_field(self, text: str = "", after=None):
+        """One more row, optionally just below *after*.
+
+        A line starting with `#` is a note rather than an equation, so it
+        gets a plain single-line box: three lines of explanation in
+        full-height typeset fields pushed the equations they explain off the
+        bottom of the pane.
+        """
+        holder = ttk.Frame(self.field_area.body)
+        if text.strip().startswith("#"):
+            field = _CommentRow(holder, text, self._fields_edited)
+        else:
+            field = mathfield.MathField(
+                holder, fontsize=15, height=44,
+                on_change=self._fields_edited,
+                on_submit=lambda f=None: self._return_in(field))
+        field.pack(side="left", fill="x", expand=True)
+        ttk.Button(holder, text="x", width=2,
+                   command=lambda: self._remove_field(field)).pack(
+                       side="left", padx=(4, 0))
+        if text and not isinstance(field, _CommentRow):
+            field.set_text(text)
+
+        index = len(self.fields) if after is None else \
+            self.fields.index(after) + 1
+        self.fields.insert(index, field)
+        self._repack_fields()
+        return field
+
+    def _repack_fields(self) -> None:
+        for field in self.fields:
+            field.master.pack_forget()
+        for field in self.fields:
+            field.master.pack(fill="x", pady=1)
+
+    def _remove_field(self, field) -> None:
+        if len(self.fields) <= 1:
+            field.clear()
+            return
+        index = self.fields.index(field)
+        self.fields.remove(field)
+        field.master.destroy()
+        self._fields_edited()
+        if self.fields:
+            self.fields[max(0, index - 1)].focus_set()
+
+    def _return_in(self, field) -> None:
+        """Enter opens the next row rather than solving.
+
+        A set is written a line at a time, so the key that ends a line should
+        start the next one. Ctrl+Enter solves, which is what the text box has
+        always done.
+        """
+        new = self._add_field(after=field)
+        new.focus_set()
+
+    def _insert_item(self, item) -> None:
+        """Send a pad press to whichever row was last being edited."""
+        field = self._focused_field()
+        if field is None:
+            return
+        template = getattr(item, "template", "")
+        if template:
+            field.insert_template(template)
+            field.focus_set()
+            return
+        # A set has no single operation to select, so a pad key that only
+        # changes one - the integral sign, say - has nothing to do here.
+        text = item.inserted_text() if hasattr(item, "inserted_text") else ""
+        if text:
+            field.insert_text(text)
+        field.focus_set()
+
+    def _focused_field(self):
+        """The equation row a pad press should go to, never a note."""
+        focused = self.focus_get()
+        for field in self.fields:
+            if focused is field and not isinstance(field, _CommentRow):
+                return field
+        equations = [f for f in self.fields
+                     if not isinstance(f, _CommentRow)]
+        return equations[-1] if equations else None
+
+    def _fields_edited(self) -> None:
+        """The rows changed, so put the text box in step and recount."""
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            text = "\n".join(f.get_text() for f in self.fields
+                              if f.get_text().strip())
+            self.text.delete("1.0", "end")
+            self.text.insert("1.0", text)
+        finally:
+            self._syncing = False
+        self._recount()
+
+    def _text_edited(self) -> None:
+        """The text box changed, so rebuild the rows from it."""
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            self._rebuild_fields(self.text.get("1.0", "end"))
+        finally:
+            self._syncing = False
+        self._recount()
+
+    def _rebuild_fields(self, text: str) -> None:
+        lines = [line for line in (text or "").splitlines() if line.strip()]
+        for field in self.fields:
+            field.master.destroy()
+        self.fields = []
+        for line in lines or [""]:
+            self._add_field(line)
+
     # -- the text -----------------------------------------------------------
     def get_text(self) -> str:
-        return self.text.get("1.0", "end").strip()
+        """The equations, as the lines the solver reads."""
+        from_fields = "\n".join(f.get_text() for f in self.fields
+                                 if f.get_text().strip())
+        return from_fields or self.text.get("1.0", "end").strip()
 
     def set_text(self, text: str) -> None:
-        self.text.delete("1.0", "end")
-        self.text.insert("1.0", text)
+        self._syncing = True
+        try:
+            self.text.delete("1.0", "end")
+            self.text.insert("1.0", text)
+            self._rebuild_fields(text)
+        finally:
+            self._syncing = False
         self._recount()
 
     def clear(self) -> None:
         self.set_text("")
+        self.fields[0].focus_set() if self.fields else None
         self.result = None
         self.result_math.clear()
         self.steps_math.clear()
@@ -206,6 +559,7 @@ class SimultaneousTab(ttk.Frame):
         else:
             summary += "\nEnough to solve."
         self.count.configure(text=summary)
+        self._offer_sweep_names()
 
     # -- solving ------------------------------------------------------------
     def solve(self) -> None:

@@ -2460,6 +2460,484 @@ class TestReopenFromHistory(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# Water and steam
+# --------------------------------------------------------------------------
+class TestSteamAgainstTheStandard(unittest.TestCase):
+    """The verification values published with IAPWS-IF97.
+
+    This is the whole basis for trusting the module. The coefficients are
+    long and the formulation is easy to get subtly wrong, and a subtly wrong
+    property is worse than none at all because it gets believed. If these
+    fail, the module is wrong and must not be used until they pass.
+    """
+
+    #: T (K), p (MPa), v (m3/kg), h (kJ/kg), u (kJ/kg), s (kJ/kg K)
+    REGION_1 = [
+        (300, 3, 0.100215168e-2, 0.115331273e3, 0.112324818e3, 0.392294792),
+        (300, 80, 0.971180894e-3, 0.184142828e3, 0.106448356e3, 0.368563852),
+        (500, 3, 0.120241800e-2, 0.975542239e3, 0.971934985e3, 0.258041912e1),
+    ]
+    REGION_2 = [
+        (300, 0.0035, 0.394913866e2, 0.254991145e4, 0.241169160e4,
+         0.852238967e1),
+        (700, 0.0035, 0.923015898e2, 0.333568375e4, 0.301262819e4,
+         0.101749996e2),
+        (700, 30, 0.542946619e-2, 0.263149474e4, 0.246861076e4,
+         0.517540298e1),
+    ]
+
+    def _check(self, computed, expected):
+        for key, want in zip(("v", "h", "u", "s"), expected):
+            with self.subTest(property=key):
+                self.assertAlmostEqual(computed[key] / want, 1.0, places=8)
+
+    def test_region_1_matches_the_published_values(self):
+        from engicalc.core.steam import _region1
+
+        for T, pressure, *expected in self.REGION_1:
+            with self.subTest(T=T, p=pressure):
+                self._check(_region1(pressure, T), expected)
+
+    def test_region_2_matches_the_published_values(self):
+        from engicalc.core.steam import _region2
+
+        for T, pressure, *expected in self.REGION_2:
+            with self.subTest(T=T, p=pressure):
+                self._check(_region2(pressure, T), expected)
+
+    def test_the_saturation_line_hits_its_fixed_points(self):
+        from engicalc.core import steam
+
+        # The triple point and the critical point are defined values, not
+        # fitted ones, so landing on them is a real check.
+        self.assertAlmostEqual(steam.saturation_pressure(273.16),
+                               611.657e-6, places=9)
+        self.assertAlmostEqual(steam.saturation_pressure(steam.T_CRITICAL),
+                               steam.P_CRITICAL, places=6)
+
+    def test_the_reference_state_falls_out_of_the_equations(self):
+        from engicalc.core.steam import saturated
+
+        # IF-97 defines the internal energy and entropy of saturated liquid
+        # at the triple point as zero. Nothing here sets that; it emerges,
+        # which is what makes it worth checking.
+        #
+        # It emerges to about a part in 1e8 rather than exactly, because
+        # IF-97 is a fast fit to IAPWS-95 rather than a restatement of it,
+        # and does not reproduce its own reference state to the last bit.
+        # The tolerance is that of the standard, not of this code - a real
+        # error in the coefficients would be orders of magnitude larger, and
+        # the published verification values above are the authoritative
+        # check either way.
+        liquid, _vapour = saturated(T=273.16)
+        self.assertAlmostEqual(liquid.u, 0.0, delta=1e-6)
+        self.assertAlmostEqual(liquid.s, 0.0, delta=1e-6)
+
+    def test_saturation_temperature_and_pressure_are_inverses(self):
+        from engicalc.core.steam import (saturation_pressure,
+                                         saturation_temperature)
+
+        for celsius in (0.01, 50, 100, 200, 300, 370):
+            with self.subTest(celsius=celsius):
+                T = celsius + 273.15
+                self.assertAlmostEqual(
+                    saturation_temperature(saturation_pressure(T)), T,
+                    places=6)
+
+    def test_the_familiar_numbers_come_out_right(self):
+        from engicalc.core.steam import saturated
+
+        # The ones a student would notice if they were wrong.
+        liquid, vapour = saturated(T=373.15)
+        self.assertAlmostEqual(liquid.p * 1000, 101.42, places=1)
+        self.assertAlmostEqual(liquid.h, 419.10, places=1)
+        self.assertAlmostEqual(vapour.h, 2675.57, places=1)
+        self.assertAlmostEqual(vapour.h - liquid.h, 2256.47, places=1)
+
+    def test_wet_steam_is_the_weighted_average_it_should_be(self):
+        from engicalc.core.steam import saturated, wet
+
+        liquid, vapour = saturated(p=0.2)
+        mixture = wet(0.8, p=0.2)
+        # h = hf + x*hfg, done once here instead of by hand off two rows.
+        self.assertAlmostEqual(mixture.h,
+                               liquid.h + 0.8 * (vapour.h - liquid.h),
+                               places=9)
+        self.assertAlmostEqual(mixture.s,
+                               liquid.s + 0.8 * (vapour.s - liquid.s),
+                               places=9)
+
+    def test_the_ends_of_the_dome_are_the_saturated_states(self):
+        from engicalc.core.steam import saturated, wet
+
+        liquid, vapour = saturated(p=0.2)
+        self.assertAlmostEqual(wet(0.0, p=0.2).h, liquid.h, places=9)
+        self.assertAlmostEqual(wet(1.0, p=0.2).h, vapour.h, places=9)
+
+    def test_a_quality_outside_the_dome_is_refused(self):
+        from engicalc.core.steam import SteamError, wet
+
+        # Above 1 usually means the steam is superheated, which needs a
+        # temperature as well as a pressure - so say that rather than
+        # extrapolating the weighting past the vapour line.
+        with self.assertRaises(SteamError):
+            wet(1.4, p=0.2)
+        with self.assertRaises(SteamError):
+            wet(-0.1, p=0.2)
+
+    def test_a_known_table_row_comes_out_right(self):
+        from engicalc.core.steam import saturated
+
+        # 200 kPa, as printed in every set of steam tables.
+        liquid, vapour = saturated(p=0.2)
+        self.assertAlmostEqual(liquid.T - 273.15, 120.21, places=1)
+        self.assertAlmostEqual(liquid.h, 504.7, places=0)
+        self.assertAlmostEqual(vapour.h, 2706.2, places=0)
+
+    def test_a_state_lands_in_the_right_region(self):
+        from engicalc.core.steam import region_of
+
+        self.assertEqual(region_of(3.0, 300.0), 1)        # liquid water
+        self.assertEqual(region_of(0.0035, 300.0), 2)     # steam
+        self.assertEqual(region_of(30.0, 700.0), 2)
+
+    def test_a_region_that_is_not_implemented_says_so(self):
+        from engicalc.core.steam import SteamError, region_of, state
+
+        # A number from region 3 computed with region 1's equations looks
+        # entirely plausible and is simply wrong, so it is refused.
+        with self.assertRaises(SteamError):
+            region_of(25.0, 650.0)                        # near critical
+        with self.assertRaises(SteamError):
+            state(1.0, 1200.0)                            # above the standard
+        with self.assertRaises(SteamError):
+            state(1.0, 250.0)                             # ice
+
+    def test_the_saturation_line_stops_where_it_stops(self):
+        from engicalc.core.steam import SteamError, saturated
+
+        with self.assertRaises(SteamError):
+            saturated(T=700.0)                  # past the critical point
+        with self.assertRaises(SteamError):
+            saturated(T=373.15, p=0.1)          # both fixed at once
+        with self.assertRaises(SteamError):
+            saturated()                         # neither
+
+
+# --------------------------------------------------------------------------
+# Moist air
+# --------------------------------------------------------------------------
+class TestPsychrometrics(unittest.TestCase):
+    """The chart, and the ways of arriving at a point on it."""
+
+    def test_it_matches_the_chart(self):
+        from engicalc.core.psychrometrics import state
+
+        # Read off a psychrometric chart at sea level.
+        for dry, humidity, ratio, enthalpy in [
+                (20, 0.50, 0.00726, 38.6),
+                (25, 0.60, 0.01190, 55.5),
+                (30, 0.40, 0.01060, 57.3),
+                (35, 0.70, 0.02516, 99.8)]:
+            with self.subTest(dry=dry, rh=humidity):
+                air = state(dry, relative_humidity=humidity)
+                self.assertAlmostEqual(air.humidity_ratio, ratio, places=4)
+                self.assertAlmostEqual(air.enthalpy, enthalpy, places=0)
+
+    def test_every_way_in_describes_the_same_air(self):
+        from engicalc.core.psychrometrics import state
+
+        # Relative humidity, humidity ratio, dew point and wet bulb are four
+        # measures of one thing, so they must land on the same point.
+        reference = state(20, relative_humidity=0.5)
+        for label, given in [
+                ("humidity ratio", {"ratio": reference.humidity_ratio}),
+                ("dew point", {"dew_point_at": reference.dew_point}),
+                ("wet bulb", {"wet_bulb": reference.wet_bulb})]:
+            with self.subTest(given=label):
+                air = state(20, **given)
+                self.assertAlmostEqual(air.humidity_ratio,
+                                       reference.humidity_ratio, places=6)
+                self.assertAlmostEqual(air.enthalpy, reference.enthalpy,
+                                       places=4)
+
+    def test_saturated_air_has_its_three_temperatures_together(self):
+        from engicalc.core.psychrometrics import state
+
+        # At 100% the dry bulb, wet bulb and dew point are the same
+        # temperature. Nothing forces that; it comes out.
+        air = state(20, relative_humidity=1.0)
+        self.assertAlmostEqual(air.dew_point, 20.0, places=3)
+        self.assertAlmostEqual(air.wet_bulb, 20.0, places=3)
+
+    def test_it_shares_one_saturation_pressure_with_the_steam_tables(self):
+        from engicalc.core.psychrometrics import saturation_vapour_pressure
+        from engicalc.core.steam import saturation_pressure
+
+        # Two correlations that disagree in the fourth figure would be two
+        # different answers to the same question.
+        for celsius in (10, 20, 50, 100):
+            with self.subTest(celsius=celsius):
+                self.assertAlmostEqual(
+                    saturation_vapour_pressure(celsius),
+                    saturation_pressure(celsius + 273.15) * 1000.0, places=12)
+
+    def test_a_frost_point_is_not_reported_as_a_dew_point(self):
+        from engicalc.core.psychrometrics import state
+
+        # Cool dry air saturates below zero, where the vapour deposits as
+        # frost - a different curve, and not one this has.
+        air = state(0, relative_humidity=0.6)
+        self.assertNotEqual(air.dew_point, air.dew_point)      # nan
+        self.assertIn("frost", air.note)
+        # Everything that does not depend on that curve is still right.
+        self.assertAlmostEqual(air.humidity_ratio, 0.002259, places=6)
+        self.assertGreater(air.enthalpy, 0)
+
+    def test_a_wet_bulb_below_freezing_is_not_reported_as_freezing(self):
+        from engicalc.core.psychrometrics import state
+
+        # The search cannot go below 0 C, and returning its own lower bound
+        # would read as saturated air, which this is not.
+        air = state(0, relative_humidity=0.6)
+        self.assertNotEqual(air.wet_bulb, air.wet_bulb)        # nan
+
+    def test_the_state_has_to_be_pinned_down_exactly_once(self):
+        from engicalc.core.psychrometrics import PsychrometricError, state
+
+        with self.assertRaises(PsychrometricError):
+            state(20)                                   # nothing given
+        with self.assertRaises(PsychrometricError):
+            state(20, relative_humidity=0.5, ratio=0.007)      # two given
+
+    def test_air_it_cannot_describe_is_refused(self):
+        from engicalc.core.psychrometrics import PsychrometricError, state
+
+        with self.assertRaises(PsychrometricError):
+            state(-5, relative_humidity=0.5)            # over ice
+        with self.assertRaises(PsychrometricError):
+            state(20, relative_humidity=1.4)            # more than saturated
+        with self.assertRaises(PsychrometricError):
+            state(20, dew_point_at=25)                  # dew above dry bulb
+
+    def test_altitude_changes_the_answer(self):
+        from engicalc.core.psychrometrics import state
+
+        # Thinner air holds more vapour per kilogram of dry air at the same
+        # relative humidity, which is why the pressure is a field.
+        sea = state(20, 101.325, relative_humidity=0.5)
+        high = state(20, 84.6, relative_humidity=0.5)
+        self.assertGreater(high.humidity_ratio, sea.humidity_ratio)
+        self.assertAlmostEqual(high.dew_point, sea.dew_point, places=6)
+
+
+# --------------------------------------------------------------------------
+# How numbers are written
+# --------------------------------------------------------------------------
+class TestNumberFormat(unittest.TestCase):
+    """One setting, consulted by every place that writes a number."""
+
+    def setUp(self):
+        from engicalc.core.display import AS_ASKED, set_number_format
+
+        # Whatever a test sets, put it back: this is module state and a
+        # leaked setting would show up as a puzzling failure somewhere else.
+        self.addCleanup(set_number_format, figures=AS_ASKED, notation="auto")
+
+    def test_it_changes_nothing_until_it_is_changed(self):
+        from engicalc.core.display import fmt_number
+
+        # Every call site was written against its own choice of figures, so
+        # the default has to be exactly that.
+        self.assertEqual(fmt_number(565884.2421, 7), "565884.2")
+        self.assertEqual(fmt_number(1.5, 7), "1.5")
+        self.assertEqual(fmt_number(4000, 7), "4000")
+
+    def test_decimal_places_are_places_not_figures(self):
+        from engicalc.core.display import fmt_number, set_number_format
+
+        # Four decimal places on 565884.2421 is 565884.2421. Four
+        # significant figures is 565900. Asking for one and getting the
+        # other is what makes a setting worse than no setting.
+        set_number_format(figures=4, notation="fixed")
+        self.assertEqual(fmt_number(565884.2421, 7), "565884.2421")
+        self.assertEqual(fmt_number(1.5, 7), "1.5000")
+        set_number_format(figures=2)
+        self.assertEqual(fmt_number(738.821919, 7), "738.82")
+
+    def test_engineering_puts_the_exponent_in_threes(self):
+        from engicalc.core.display import fmt_number, set_number_format
+
+        # 566e3 and 5.66e5 are the same number, but only one reads as kilo.
+        set_number_format(figures=6, notation="engineering")
+        self.assertEqual(fmt_number(565884.2421, 7), "565.884e3")
+        self.assertEqual(fmt_number(0.000123456, 7), "123.456e-6")
+        for value in (1.0, 12.0, 123.0, 1234.0, 12345.0, 1234567.0):
+            with self.subTest(value=value):
+                text = fmt_number(value, 7)
+                if "e" in text:
+                    self.assertEqual(int(text.split("e")[1]) % 3, 0)
+
+    def test_scientific_is_one_figure_before_the_point(self):
+        from engicalc.core.display import fmt_number, set_number_format
+
+        set_number_format(figures=4, notation="scientific")
+        self.assertEqual(fmt_number(565884.2421, 7), "5.659e+05")
+
+    def test_the_setting_can_be_put_back(self):
+        from engicalc.core.display import AS_ASKED, fmt_number, \
+            set_number_format
+
+        set_number_format(figures=3, notation="fixed")
+        # Setting one must leave the other alone...
+        set_number_format(notation="engineering")
+        self.assertEqual(fmt_number(1.5, 7), "1.5")
+        # ...and asking for the default figures must actually reset them,
+        # even while a notation is also being set.
+        set_number_format(figures=AS_ASKED, notation="auto")
+        self.assertEqual(fmt_number(565884.2421, 7), "565884.2")
+
+    def test_an_exponent_is_typeset_as_an_exponent(self):
+        import sympy as sp
+
+        from engicalc.core.display import latex, set_number_format
+
+        # The point of the typeset panels is that they show notation rather
+        # than the way notation has to be typed.
+        x = sp.Symbol("x")
+        set_number_format(figures=4, notation="scientific")
+        self.assertIn(r"\times 10^{5}", latex(sp.Eq(x, sp.Float("565884.24"))))
+        set_number_format(figures=6, notation="engineering")
+        self.assertIn(r"\times 10^{-6}",
+                      latex(sp.Eq(x, sp.Float("0.000123456"))))
+
+    def test_the_typeset_form_renders(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        import sympy as sp
+        from matplotlib import mathtext
+        from matplotlib.font_manager import FontProperties
+
+        from engicalc.core.display import latex, set_number_format
+
+        parser = mathtext.MathTextParser("path")
+        x = sp.Symbol("x")
+        for notation in ("scientific", "engineering", "fixed", "auto"):
+            set_number_format(figures=4, notation=notation)
+            for value in ("565884.2421", "0.000123456", "1.5"):
+                with self.subTest(notation=notation, value=value):
+                    drawn = latex(sp.Eq(x, sp.Float(value)))
+                    parser.parse(f"${drawn}$", dpi=100,
+                                 prop=FontProperties(size=14))
+
+    def test_a_bare_power_of_ten_loses_its_one(self):
+        from engicalc.core.display import number_to_latex
+
+        # "1 x 10^5" is how nobody writes it.
+        self.assertEqual(number_to_latex("1e5"), "10^{5}")
+        self.assertEqual(number_to_latex("-1e5"), "-10^{5}")
+        self.assertEqual(number_to_latex("2.5e5"), r"2.5 \times 10^{5}")
+        self.assertEqual(number_to_latex("42"), "42")
+
+    def test_a_notation_that_does_not_exist_is_refused(self):
+        from engicalc.core.display import set_number_format
+
+        with self.assertRaises(ValueError):
+            set_number_format(notation="roman numerals")
+
+
+# --------------------------------------------------------------------------
+# A parametric study
+# --------------------------------------------------------------------------
+class TestSweep(unittest.TestCase):
+    """The same set solved down a column of values.
+
+    One number in a calculation is rarely the number - it is the one you
+    were given this time - and duct diameters come in sizes.
+    """
+
+    DUCT = ("A = pi*d^2/4\n"
+            "v = 0.5/A\n"
+            "Re = v*d/7.5e-6\n"
+            "f = 0.3164/Re^0.25\n"
+            "dp = f*(20/d)*1.2*v^2/2")
+
+    def test_only_what_the_equations_take_as_input_is_offered(self):
+        from engicalc.core.system import free_names
+
+        # Every other name is worked out by an equation. Fixing one of those
+        # would be over-determining the set in a roundabout way.
+        self.assertEqual(free_names(self.DUCT), ["d"])
+
+    def test_a_determined_set_has_nothing_to_sweep(self):
+        from engicalc.core.system import free_names
+
+        self.assertEqual(free_names("x + y = 10\nx - y = 2"), [])
+
+    def test_it_solves_once_for_each_value(self):
+        from engicalc.core.system import spread, sweep
+
+        rows = sweep(self.DUCT, "d", spread(0.1, 0.3, 5))
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(all(row.ok for row in rows))
+        self.assertAlmostEqual(rows[0].value, 0.1)
+        self.assertAlmostEqual(rows[-1].value, 0.3)
+
+    def test_the_answers_move_the_way_the_physics_does(self):
+        from engicalc.core.system import spread, sweep
+
+        # A wider duct is a slower one and a much lower pressure drop.
+        rows = sweep(self.DUCT, "d", spread(0.1, 0.3, 5))
+        drops = [row.get("dp") for row in rows]
+        speeds = [row.get("v") for row in rows]
+        self.assertEqual(drops, sorted(drops, reverse=True))
+        self.assertEqual(speeds, sorted(speeds, reverse=True))
+        self.assertAlmostEqual(rows[1].get("dp"), 738.8, delta=1.0)
+
+    def test_spread_includes_both_ends(self):
+        from engicalc.core.system import spread
+
+        values = spread(0.0, 1.0, 5)
+        self.assertEqual(len(values), 5)
+        self.assertAlmostEqual(values[0], 0.0)
+        self.assertAlmostEqual(values[-1], 1.0)
+        self.assertEqual(spread(2.0, 9.0, 1), [2.0])
+
+    def test_a_value_that_will_not_solve_is_reported_not_dropped(self):
+        from engicalc.core.system import sweep, sweep_table
+
+        # A row that failed still has to appear, or the table quietly has a
+        # gap in it and the shape of the answer looks different.
+        rows = sweep("y = 1/x", "x", [1.0, 0.0, 2.0])
+        self.assertEqual(len(rows), 3)
+        headings, table = sweep_table(rows, ["y"])
+        self.assertEqual(len(table), 3)
+        self.assertEqual(headings[0], "value")
+
+    def test_a_numerical_answer_has_its_imaginary_dust_dropped(self):
+        from engicalc.core.system import solve_set
+
+        # nsolve returned the pressure drop as 738.82 - 4.9e-18*I, which is a
+        # real number with floating point dust on it, and it went to the
+        # answer panel looking like that.
+        result = solve_set(self.DUCT + "\nd = 0.15")
+        for value in result.results[0].values():
+            with self.subTest(value=value):
+                self.assertFalse(value.has(sp.I),
+                                 f"{value} still carries an imaginary part")
+
+    def test_a_genuinely_complex_answer_is_kept(self):
+        from engicalc.core.system import _tidy
+
+        # Dropping the imaginary part of a real answer is tidying; dropping
+        # it from a complex one is losing the answer.
+        kept = _tidy({sp.Symbol("x"): sp.Float(3.0) + 4 * sp.I})
+        self.assertTrue(list(kept.values())[0].has(sp.I))
+        tidied = _tidy({sp.Symbol("x"): sp.Float(3.0) + sp.Float(1e-18) * sp.I})
+        self.assertFalse(list(tidied.values())[0].has(sp.I))
+
+
+# --------------------------------------------------------------------------
 # Units
 # --------------------------------------------------------------------------
 class TestUnits(unittest.TestCase):

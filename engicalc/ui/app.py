@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from .. import __version__
+from ..core import display
 from ..formulas.library import get_library
 from ..plotting.plot import spec_from_result
 from ..storage.history import DEFAULT_DB, History
@@ -18,6 +19,7 @@ from .history_tab import HistoryTab
 from .interpolate_tab import InterpolateTab
 from .matrix_tab import MatrixTab
 from .sheet_tab import SheetTab
+from .properties_pane import PropertiesPane
 from .statistics_tab import StatisticsTab
 from .library_tab import LibraryTab
 from .reference_window import ReferenceWindow
@@ -107,6 +109,26 @@ class EngiCalcApp(tk.Tk):
         view.add_checkbutton(label="Show all working",
                              variable=self.show_working,
                              command=self.refresh_working)
+
+        # How numbers are written, everywhere at once. A preference that
+        # applied to only some tabs would not be one.
+        numbers = tk.Menu(view, tearoff=0)
+        self.notation = tk.StringVar(value="auto")
+        for key, label in display.NOTATIONS.items():
+            numbers.add_radiobutton(label=label, value=key,
+                                    variable=self.notation,
+                                    command=self._number_format_changed)
+        numbers.add_separator()
+        self.figures = tk.StringVar(value=display.AS_ASKED)
+        numbers.add_radiobutton(label="As each screen chooses",
+                                value=display.AS_ASKED, variable=self.figures,
+                                command=self._number_format_changed)
+        for count in range(0, 9):
+            numbers.add_radiobutton(
+                label=f"{count} decimal places / figures", value=str(count),
+                variable=self.figures,
+                command=self._number_format_changed)
+        view.add_cascade(label="Numbers", menu=numbers)
         menu.add_cascade(label="Options", menu=view)
 
         help_menu = tk.Menu(menu, tearoff=0)
@@ -118,6 +140,34 @@ class EngiCalcApp(tk.Tk):
         help_menu.add_command(label="About", command=self.show_about)
         menu.add_cascade(label="Help", menu=help_menu)
         self.configure(menu=menu)
+
+    def _number_format_changed(self) -> None:
+        """Apply the setting, then redraw whatever is already on screen."""
+        display.set_number_format(figures=self.figures.get(),
+                                  notation=self.notation.get())
+        self.refresh_numbers()
+
+    def refresh_numbers(self) -> None:
+        """Ask every tab that shows numbers to write them again.
+
+        A format setting that only took effect on the next calculation would
+        look broken, so each tab is asked to redraw what it already has.
+        """
+        for tab in (self.steam_tab, self.moist_air_tab, self.units_tab,
+                    self.statistics_tab, self.sheet_tab,
+                    self.interpolate_tab, self.matrix_tab):
+            for method in ("compute", "calculate", "convert"):
+                if hasattr(tab, method):
+                    try:
+                        getattr(tab, method)()
+                    except Exception:                 # noqa: BLE001
+                        pass      # a tab with nothing in it has nothing to do
+                    break
+        for tab in (self.calculator_tab, self.simultaneous_tab):
+            try:
+                tab._render_steps()
+            except Exception:                         # noqa: BLE001
+                pass
 
     def refresh_working(self) -> None:
         """Redraw the working wherever it is shown, at the new level."""
@@ -194,6 +244,9 @@ class EngiCalcApp(tk.Tk):
         self.interpolate_tab = InterpolateTab(self.notebook, self)
         self.matrix_tab = MatrixTab(self.notebook, self)
         self.sheet_tab = SheetTab(self.notebook, self)
+        self.properties_pane = PropertiesPane(self.notebook, self)
+        self.steam_tab = self.properties_pane.steam
+        self.moist_air_tab = self.properties_pane.moist_air
         self.statistics_tab = StatisticsTab(self.notebook, self)
         self.history_tab = HistoryTab(self.notebook, self)
 
@@ -204,6 +257,7 @@ class EngiCalcApp(tk.Tk):
         self.notebook.add(self.interpolate_tab, text="  Interpolate  ")
         self.notebook.add(self.matrix_tab, text="  Matrices  ")
         self.notebook.add(self.sheet_tab, text="  Sheet  ")
+        self.notebook.add(self.properties_pane, text="  Properties  ")
         self.notebook.add(self.statistics_tab, text="  Data  ")
         self.notebook.add(self.history_tab, text="  History  ")
 
@@ -297,6 +351,8 @@ class EngiCalcApp(tk.Tk):
             "system": (self.simultaneous_tab, self.calculator_pane),
             "convert": (self.units_tab, self.calculator_pane),
             "sheet": (self.sheet_tab, None),
+            "steam": (self.steam_tab, self.properties_pane),
+            "moistair": (self.moist_air_tab, self.properties_pane),
             "statistics": (self.statistics_tab, None),
         }
 

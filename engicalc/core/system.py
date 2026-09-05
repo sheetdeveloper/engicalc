@@ -113,6 +113,101 @@ def _fractional_power(parsed: Parsed) -> bool:
                 return True
     return False
 
+@dataclass
+class SweepRow:
+    """One value of the swept name, and what the set gave for it."""
+
+    value: float
+    result: object = None
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error and bool(getattr(self.result, "results", None))
+
+    def get(self, name: str):
+        """The value of *name* in this row, or None if it has none."""
+        if not self.ok:
+            return None
+        for symbol, found in self.result.results[0].items():
+            if str(symbol) != name:
+                continue
+            try:
+                return float(sp.N(found))
+            except (TypeError, ValueError):
+                # Genuinely complex, so there is no point on a graph for it.
+                return None
+        return None
+
+
+def free_names(text: str, given: dict | None = None) -> list:
+    """The names a set of equations does not pin down.
+
+    A set with one name free is one that can be swept, which is why this is
+    worth asking separately from solving.
+    """
+    parsed = parse_set(text, given)
+    if parsed.freedom <= 0:
+        # Already pinned down. Fixing anything else would over-determine it,
+        # so there is nothing here to sweep however the equations are shaped.
+        return []
+
+    # A name the equations work *out* is the subject of one of them. What is
+    # left is what they take as input, and that is what there is any point
+    # sweeping.
+    subjects = {equation.lhs.name for equation in parsed.equations
+                if equation.lhs.is_Symbol}
+    inputs = [s.name for s in parsed.unknowns if s.name not in subjects]
+    # If nothing is written as `name = ...` then no name is more an input
+    # than any other, and any of them can be the one that is fixed.
+    return inputs or [s.name for s in parsed.unknowns]
+
+
+def sweep(text: str, variable: str, values, given: dict | None = None) -> list:
+    """Solve the set once for each value of *variable*.
+
+    Each solve starts from the equations as written rather than from the
+    last answer. That is slower, and it is right: a set with more than one
+    solution can jump between them as the swept value moves, and carrying
+    the previous answer forward would smooth over exactly that.
+    """
+    name = (variable or "").strip()
+    if not name:
+        raise ParseError("Say which name to sweep.")
+    rows = []
+    for value in values:
+        line = f"{name} = {value}"
+        try:
+            rows.append(SweepRow(float(value),
+                                 result=solve_set(f"{text}\n{line}", given)))
+        except ParseError as exc:
+            rows.append(SweepRow(float(value), error=str(exc)))
+        except Exception as exc:                      # noqa: BLE001
+            rows.append(SweepRow(float(value), error=str(exc)))
+    return rows
+
+
+def spread(start: float, stop: float, steps: int) -> list:
+    """*steps* values from *start* to *stop*, both ends included."""
+    if steps < 2:
+        return [float(start)]
+    span = (float(stop) - float(start)) / (steps - 1)
+    return [float(start) + span * index for index in range(steps)]
+
+
+def sweep_table(rows: list, names: list) -> tuple:
+    """(headings, rows) for a table of a sweep, ready to show or export."""
+    headings = ["value"] + list(names)
+    out = []
+    for row in rows:
+        if not row.ok:
+            out.append([row.value] + [row.error or "no solution"]
+                       + [""] * (len(names) - 1))
+            continue
+        out.append([row.value] + [row.get(name) for name in names])
+    return headings, out
+
+
 def _residuals(equations: list, answer: dict) -> list:
     """How far each equation is from being satisfied, relative to its size.
 
@@ -138,6 +233,34 @@ def _residuals(equations: list, answer: dict) -> list:
     return out
 
 
+#: How small an imaginary part has to be, next to the real one, to be
+#: rounding rather than an answer.
+IMAGINARY_DUST = 1e-9
+
+
+def _tidy(answer: dict) -> dict:
+    """Drop imaginary parts that are only floating point dust.
+
+    nsolve can return `738.82 - 4.9e-18*I` for a number that is real. That
+    is not a complex answer, it is a real one with dust on it, and it should
+    not reach the screen looking like that. A genuinely complex answer is
+    left alone: a set of equations is allowed to have them, and quietly
+    making one real would be a worse fault than showing the dust.
+    """
+    cleaned = {}
+    for name, value in answer.items():
+        try:
+            number = sp.N(value)
+            real, imaginary = float(sp.re(number)), float(sp.im(number))
+        except (TypeError, ValueError):
+            cleaned[name] = value
+            continue
+        scale = max(abs(real), 1.0)
+        cleaned[name] = sp.Float(real) \
+            if abs(imaginary) < IMAGINARY_DUST * scale else value
+    return cleaned
+
+
 def _numeric(parsed: Parsed, result: CalcResult):
     """Try nsolve from several starting points. None if none of them land."""
     expressions = [e.lhs - e.rhs for e in parsed.equations]
@@ -151,6 +274,7 @@ def _numeric(parsed: Parsed, result: CalcResult):
             zip(parsed.unknowns, found))
         if not answer:
             continue
+        answer = _tidy(answer)
         worst = max(_residuals(parsed.equations, answer), default=0.0)
         if worst <= RESIDUAL_LIMIT:
             result.steps.append(Step(
