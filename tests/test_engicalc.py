@@ -1842,3 +1842,86 @@ class TestMatrixGrid(unittest.TestCase):
         grid.cells[0][0].set("5")
         self.assertEqual(parse_matrix(grid.get_text()).tolist(),
                          [[5, 0], [0, 0]])
+
+
+class TestStatistics(unittest.TestCase):
+    """The numbers every lab report needs, and the line through the data."""
+
+    def test_a_textbook_set_gives_the_textbook_answers(self):
+        from engicalc.core.statistics import describe
+
+        result = describe([2, 4, 4, 4, 5, 5, 7, 9])
+        self.assertAlmostEqual(result.mean, 5.0, places=12)
+        self.assertAlmostEqual(result.population_sd, 2.0, places=12)
+        self.assertAlmostEqual(result.sample_sd, 2.13809, places=5)
+        self.assertAlmostEqual(result.median, 4.5, places=12)
+        self.assertEqual(result.count, 8)
+        self.assertEqual(result.spread, 7)
+
+    def test_sample_and_population_deviations_are_both_reported(self):
+        """Measurements are a sample, so n-1 is the one wanted - but quoting
+        the wrong one is invisible, so both are given."""
+        from engicalc.core.statistics import describe
+
+        result = describe([1, 2, 3, 4])
+        self.assertGreater(result.sample_sd, result.population_sd)
+        labels = [row[0] for row in result.rows()]
+        self.assertIn("standard deviation", labels)
+        self.assertIn("population sd", labels)
+
+    def test_standard_error_shrinks_as_readings_are_added(self):
+        from engicalc.core.statistics import describe
+
+        few = describe([10, 11, 9, 10])
+        many = describe([10, 11, 9, 10] * 16)
+        self.assertLess(many.standard_error, few.standard_error)
+
+    def test_a_perfect_line_is_found_exactly(self):
+        from engicalc.core.statistics import fit_line
+
+        fit = fit_line([1, 2, 3, 4, 5], [3, 5, 7, 9, 11])   # y = 2x + 1
+        self.assertAlmostEqual(fit.slope, 2.0, places=12)
+        self.assertAlmostEqual(fit.intercept, 1.0, places=12)
+        self.assertAlmostEqual(fit.r_squared, 1.0, places=12)
+        self.assertAlmostEqual(fit.worst_residual, 0.0, places=12)
+
+    def test_a_scattered_fit_reports_its_uncertainty(self):
+        from engicalc.core.statistics import fit_line
+
+        fit = fit_line([0, 1, 2, 3, 4, 5], [0.1, 2.1, 3.9, 6.2, 7.8, 10.1])
+        self.assertAlmostEqual(fit.slope, 1.98286, places=4)
+        self.assertGreater(fit.slope_error, 0)
+        self.assertGreater(fit.r_squared, 0.99)
+        self.assertLess(fit.r_squared, 1.0)
+
+    def test_residuals_sum_to_nothing(self):
+        """A least-squares line passes through the middle of the data."""
+        from engicalc.core.statistics import fit_line
+
+        fit = fit_line([0, 1, 2, 3, 4], [1.1, 1.9, 3.2, 3.8, 5.1])
+        self.assertAlmostEqual(sum(fit.residuals), 0.0, places=9)
+
+    def test_a_vertical_scatter_is_refused_with_a_reason(self):
+        from engicalc.core.statistics import fit_line
+
+        with self.assertRaises(ParseError) as caught:
+            fit_line([2, 2, 2], [1, 2, 3])
+        self.assertIn("vertical", str(caught.exception))
+
+    def test_one_column_and_two_columns_both_parse(self):
+        from engicalc.core.statistics import parse_columns
+
+        single = parse_columns("10.2\n10.5\n10.1")
+        self.assertFalse(single.paired)
+        self.assertEqual(len(single.x), 3)
+
+        paired = parse_columns("Load\tExt\n0\t0.0\n10\t0.21")
+        self.assertTrue(paired.paired)
+        self.assertEqual(paired.x, [0.0, 10.0])
+        self.assertEqual(paired.y, [0.0, 0.21])
+
+    def test_ragged_columns_are_refused(self):
+        from engicalc.core.statistics import parse_columns
+
+        with self.assertRaises(ParseError):
+            parse_columns("1\t2\n3\n4\t5")

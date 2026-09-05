@@ -15,6 +15,7 @@ from .history_tab import HistoryTab
 from .interpolate_tab import InterpolateTab
 from .matrix_tab import MatrixTab
 from .sheet_tab import SheetTab
+from .statistics_tab import StatisticsTab
 from .library_tab import LibraryTab
 from .reference_window import ReferenceWindow
 from .widgets import apply_theme
@@ -94,6 +95,7 @@ class EngiCalcApp(tk.Tk):
         self.interpolate_tab = InterpolateTab(self.notebook, self)
         self.matrix_tab = MatrixTab(self.notebook, self)
         self.sheet_tab = SheetTab(self.notebook, self)
+        self.statistics_tab = StatisticsTab(self.notebook, self)
         self.history_tab = HistoryTab(self.notebook, self)
 
         self.notebook.add(self.calculator_tab, text="  Calculator  ")
@@ -103,6 +105,7 @@ class EngiCalcApp(tk.Tk):
         self.notebook.add(self.interpolate_tab, text="  Interpolate  ")
         self.notebook.add(self.matrix_tab, text="  Matrices  ")
         self.notebook.add(self.sheet_tab, text="  Sheet  ")
+        self.notebook.add(self.statistics_tab, text="  Data  ")
         self.notebook.add(self.history_tab, text="  History  ")
 
         self.status = ttk.Label(self, text="Ready", style="Hint.TLabel",

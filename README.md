@@ -166,6 +166,19 @@ and you still get an answer, with a warning saying it is a guess from outside
 where the numbers came from. Reading past the end of a steam table silently
 is how people get hurt.
 
+### Data
+
+The numbers a lab report needs. Paste one column of readings and it gives the
+count, mean, median, standard deviation, standard error and range. Paste two
+and it also fits a straight line through them - slope and intercept with their
+uncertainties, R squared, and the residuals drawn on the plot.
+
+Both the sample and population standard deviations are shown, sample first,
+because measurements are a sample and quoting the wrong one is an invisible
+error. The residuals are there because R squared says how much of the
+variation the line accounts for, not whether a line was the right thing to
+fit - a pattern in the residuals means it was not.
+
 ### Sheet
 
 Real work is never one calculation. It is a diameter, then an area from that
@@ -277,6 +290,7 @@ Three exports:
       core/interpolate.py  reading between the rows of a table
       core/matrices.py     A x = b, determinant, eigenvalues and the rest
       core/sheet.py        chained steps, each using the ones above
+      core/statistics.py   describing readings, and the line through them
       core/units.py        mm and m cannot be quietly mixed
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
@@ -291,7 +305,7 @@ Three exports:
         reference_window.py  searchable symbol and syntax reference
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 159 tests
+    tests/test_engicalc.py 168 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -349,7 +363,7 @@ them.
 
 ## Tests
 
-159 tests covering the parser (including that it refuses `__import__`), the
+168 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator
