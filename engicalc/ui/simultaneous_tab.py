@@ -260,13 +260,17 @@ class SimultaneousTab(ttk.Frame):
             return
         for widget in (self.steps_math, self.steps_text):
             widget.pack_forget()
+        wants_all = self.app.show_working.get()
+        steps = [step for step in self.result.steps
+                 if wants_all or not step.minor]
         if self.steps_mode.get() == "text":
             self.steps_text.pack(fill="both", expand=True)
-            self.steps_text.set(self.result.steps_text() or "(no working)")
+            self.steps_text.set("\n\n".join(s.text() for s in steps)
+                                or "(no working)")
         else:
             self.steps_math.pack(fill="both", expand=True)
             blocks = [(step.title, step.drawn(), step.detail)
-                      for step in self.result.steps]
+                      for step in steps]
             self.steps_math.render(blocks or [("", None, "(no working)")])
 
     def _failed(self, exc: Exception) -> None:

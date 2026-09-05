@@ -17,6 +17,7 @@ from tkinter import ttk
 
 from .calculator_tab import CalculatorTab
 from .simultaneous_tab import SimultaneousTab
+from .units_tab import UnitsTab
 
 
 class CalculatorPane(ttk.Frame):
@@ -29,9 +30,11 @@ class CalculatorPane(ttk.Frame):
 
         self.calculator = CalculatorTab(self.tabs, app)
         self.simultaneous = SimultaneousTab(self.tabs, app)
+        self.units = UnitsTab(self.tabs, app)
 
         self.tabs.add(self.calculator, text="  One equation  ")
         self.tabs.add(self.simultaneous, text="  Solved together  ")
+        self.tabs.add(self.units, text="  Units  ")
 
     def show_calculator(self) -> None:
         """Bring the single-equation pane forward.

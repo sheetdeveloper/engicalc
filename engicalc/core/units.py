@@ -251,6 +251,70 @@ def to_declared(text: str, declared_unit: str,
                        f"{sp.Float(converted, 10)} {declared_unit}")
 
 
+#: Units grouped for a picker, in the order they are worth offering. Every
+#: name here is a key of :data:`UNITS` (or of :data:`CELSIUS`), and every one
+#: of those appears here exactly once - see the tests.
+CATEGORIES: dict = {
+    "Length": ["m", "mm", "cm", "km", "um", "in", "ft", "yd", "mile"],
+    "Area": ["hectare"],
+    "Volume": ["L", "mL", "gal"],
+    "Mass": ["kg", "g", "tonne", "lb"],
+    "Time": ["s", "ms", "min", "h", "day", "year"],
+    "Force": ["N", "kN", "MN"],
+    "Pressure": ["Pa", "kPa", "MPa", "GPa", "bar", "mbar", "atm", "psi"],
+    "Energy": ["J", "kJ", "MJ", "kWh", "cal", "kcal"],
+    "Power": ["W", "kW", "MW", "hp"],
+    "Temperature": ["K", "degC"],
+    "Angle": ["rad", "deg", "rev"],
+    "Frequency": ["Hz", "kHz", "rpm"],
+    "Electrical": ["V", "mV", "kV", "A", "mA", "ohm", "kohm", "F", "uF",
+                   "H", "mH", "C"],
+    "Amount": ["mol", "kmol"],
+}
+
+#: The spellings that are the same unit written another way. Offering all of
+#: them in a picker would be a list of synonyms rather than a list of units.
+ALIASES = {
+    "meter", "metre", "meters", "inch", "inches", "foot", "feet", "micron",
+    "sec", "hr", "t", "lbm", "litre", "mole", "Ohm", "ha",
+}
+
+
+def category_of(unit: str) -> str:
+    """Which group *unit* is offered under, or "" if it is not offered."""
+    for name, members in CATEGORIES.items():
+        if unit in members:
+            return name
+    return ""
+
+
+def same_dimension(unit: str) -> list:
+    """Every offered unit measuring the same thing as *unit*.
+
+    Decided by comparing dimensions rather than by reading the categories,
+    because that is the question actually being asked - what this value can
+    be expressed as. Temperature is the exception the table cannot express:
+    degrees Celsius is a kelvin with an offset, so it is paired by hand.
+    """
+    unit = (unit or "").strip()
+    if unit in CELSIUS or unit == "K":
+        return ["K", "degC"]
+    try:
+        wanted = dimension_of(parse_unit(unit))
+    except Exception:                                 # noqa: BLE001
+        return []
+    out = []
+    for name in [n for members in CATEGORIES.values() for n in members]:
+        if name in CELSIUS or name == "K":
+            continue
+        try:
+            if dimension_of(parse_unit(name)) == wanted:
+                out.append(name)
+        except Exception:                             # noqa: BLE001
+            continue
+    return out
+
+
 def looks_wrong(value, typical: str) -> str:
     """A warning when a value is wildly unlike the typical one, or "".
 

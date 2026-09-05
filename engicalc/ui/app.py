@@ -71,6 +71,9 @@ class EngiCalcApp(tk.Tk):
         self.history = History(db_path)
         self.project = tk.StringVar(value="")
         self.autosave = tk.BooleanVar(value=False)
+        # Every step is generated either way; this decides how many are
+        # shown. See core.steps.Step.minor.
+        self.show_working = tk.BooleanVar(value=False)
         # Off unless asked for. The app promises nothing leaves the machine,
         # and a check is a request to GitHub carrying an IP address - small,
         # but not the promise. Remembered once somebody turns it on.
@@ -101,6 +104,9 @@ class EngiCalcApp(tk.Tk):
                              variable=self.autosave)
         view.add_checkbutton(label="Check for updates at startup",
                              variable=self.check_at_start)
+        view.add_checkbutton(label="Show all working",
+                             variable=self.show_working,
+                             command=self.refresh_working)
         menu.add_cascade(label="Options", menu=view)
 
         help_menu = tk.Menu(menu, tearoff=0)
@@ -112,6 +118,14 @@ class EngiCalcApp(tk.Tk):
         help_menu.add_command(label="About", command=self.show_about)
         menu.add_cascade(label="Help", menu=help_menu)
         self.configure(menu=menu)
+
+    def refresh_working(self) -> None:
+        """Redraw the working wherever it is shown, at the new level."""
+        for tab in (self.calculator_tab, self.simultaneous_tab):
+            try:
+                tab._render_steps()
+            except Exception:                         # noqa: BLE001
+                pass          # a tab with nothing worked out yet has none
 
     # -- updates ----------------------------------------------------------
     def check_for_updates(self, quietly: bool = False) -> None:
@@ -173,6 +187,7 @@ class EngiCalcApp(tk.Tk):
         self.calculator_pane = CalculatorPane(self.notebook, self)
         self.calculator_tab = self.calculator_pane.calculator
         self.simultaneous_tab = self.calculator_pane.simultaneous
+        self.units_tab = self.calculator_pane.units
         self.graph_tab = GraphTab(self.notebook, self)
         self.library_tab = LibraryTab(self.notebook, self)
         self.cards_tab = CardsTab(self.notebook, self)

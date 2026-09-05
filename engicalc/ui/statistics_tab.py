@@ -12,11 +12,14 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import numpy as np
+import sympy as sp
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from ..core.display import fmt_number
 from ..core.engine import CalcResult
+from ..core.fitting import best as best_curve
+from ..core.fitting import comparison_rows, fit_all, fit_curve
 from ..core.parsing import ParseError
 from ..core.statistics import describe, fit_line, parse_columns
 from ..core.steps import Step
@@ -34,6 +37,24 @@ EXAMPLE = """Load   Extension
 60     1.18"""
 
 
+#: What the trendline selector offers. "Best fit" is first because the point
+#: of fitting six shapes is to be told which one describes the readings, not
+#: to have to try them one at a time.
+TREND_CHOICES = [
+    ("Best fit - compares all six", "best"),
+    ("Linear", "linear"),
+    ("Quadratic", "quadratic"),
+    ("Cubic", "cubic"),
+    ("Exponential", "exponential"),
+    ("Logarithmic", "logarithmic"),
+    ("Power", "power"),
+]
+
+#: The polynomials are fitted by order, so they answer to a different name
+#: than the one on the menu.
+CURVE_KEYS = {"linear": "poly1", "quadratic": "poly2", "cubic": "poly3"}
+
+
 class StatisticsTab(ttk.Frame):
     def __init__(self, master, app):
         super().__init__(master, padding=10)
@@ -41,6 +62,8 @@ class StatisticsTab(ttk.Frame):
         self.columns = None
         self.description = None
         self.fit = None
+        self.curves = []
+        self.curve = None
         self._build()
         self.compute()
 
@@ -92,12 +115,20 @@ class StatisticsTab(ttk.Frame):
         self.summary_body = ScrollFrame(self.summary, height=210)
         self.summary_body.pack(fill="both", expand=True)
 
-        self.fit_frame = ttk.Labelframe(right, text="Line of best fit",
-                                        padding=6)
+        self.fit_frame = ttk.Labelframe(right, text="Trendline", padding=6)
+        picker = ttk.Frame(self.fit_frame)
+        picker.pack(fill="x")
+        ttk.Label(picker, text="Shape").pack(side="left")
+        self.trend = tk.StringVar(value=TREND_CHOICES[0][0])
+        self.trend_box = ttk.Combobox(
+            picker, state="readonly", width=26, textvariable=self.trend,
+            values=[label for label, _key in TREND_CHOICES])
+        self.trend_box.pack(side="left", padx=4)
+        self.trend_box.bind("<<ComboboxSelected>>", lambda e: self._show())
         self.fit_math = mathrender.MathLabel(self.fit_frame, fontsize=18,
                                              height=48)
-        self.fit_math.pack(fill="x")
-        self.fit_body = ScrollFrame(self.fit_frame, height=120)
+        self.fit_math.pack(fill="x", pady=(4, 0))
+        self.fit_body = ScrollFrame(self.fit_frame, height=150)
         self.fit_body.pack(fill="both", expand=True)
 
         plot_frame = ttk.Labelframe(right, text="The data", padding=4)
@@ -157,11 +188,18 @@ class StatisticsTab(ttk.Frame):
 
         self.description = describe(self.columns.x)
         self.fit = None
+        self.curves = []
         if self.columns.paired:
             try:
                 self.fit = fit_line(self.columns.x, self.columns.y)
             except ParseError as exc:
                 self.status.configure(text=str(exc))
+            try:
+                # All six, every time. Fitting is cheap and the comparison is
+                # the thing worth having.
+                self.curves = fit_all(self.columns.x, self.columns.y)
+            except ParseError:
+                self.curves = []
 
         self._show()
 
@@ -194,24 +232,55 @@ class StatisticsTab(ttk.Frame):
             rows = self.description.rows()
         self._rows_into(self.summary_body, rows)
 
-        if self.fit is not None:
-            self.fit_frame.pack(fill="x", pady=(6, 0),
-                                after=self.summary)
-            self._rows_into(self.fit_body, self.fit.rows())
-            try:
-                self.fit_math.show(self.fit.as_text().replace("*", ""),
-                                   self.fit.as_text())
-            except Exception:                         # noqa: BLE001
-                self.fit_math.show(None, self.fit.as_text())
+        self.curve = self._chosen_curve()
+        if self.curves:
+            self.fit_frame.pack(fill="x", pady=(6, 0), after=self.summary)
+            self._rows_into(self.fit_body, self._trend_rows())
+            self._show_equation()
         else:
             self.fit_frame.pack_forget()
 
         self._draw()
         count = self.description.count
-        self.status.configure(
-            text=f"{count} readings" + (
-                f", R squared {fmt_number(self.fit.r_squared, 5)}"
-                if self.fit else ""))
+        note = ""
+        if self.curve is not None and self.curve.ok:
+            note = (f", {self.curve.name.lower()}, "
+                    f"R squared {fmt_number(self.curve.r_squared, 5)}")
+        self.status.configure(text=f"{count} readings{note}")
+
+    def _chosen_curve(self):
+        """The shape the selector asks for, or the best-scoring one."""
+        if not self.curves:
+            return None
+        wanted = dict(TREND_CHOICES).get(self.trend.get(), "best")
+        if wanted == "best":
+            return best_curve(self.curves)
+        key = CURVE_KEYS.get(wanted, wanted)
+        for curve in self.curves:
+            if curve.key == key:
+                return curve
+        return None
+
+    def _trend_rows(self) -> list:
+        """Every shape with its score, the chosen one marked."""
+        rows = []
+        for curve, (name, score, note) in zip(self.curves,
+                                              comparison_rows(self.curves)):
+            mark = "   <- shown" if curve is self.curve else ""
+            rows.append((name, score, note + mark))
+        return rows
+
+    def _show_equation(self) -> None:
+        curve = self.curve
+        if curve is None or not curve.ok:
+            self.fit_math.show(None, curve.refused if curve else "")
+            return
+        try:
+            self.fit_math.show(
+                sp.latex(sp.Eq(sp.Symbol("y"), curve.shown())),
+                curve.as_text())
+        except Exception:                             # noqa: BLE001
+            self.fit_math.show(None, curve.as_text())
 
     def _draw(self) -> None:
         axes = self.axes
@@ -222,15 +291,18 @@ class StatisticsTab(ttk.Frame):
         if self.columns.paired:
             axes.plot(self.columns.x, self.columns.y, "o", color="#1f77b4",
                       markersize=5, label="readings")
-            if self.fit is not None:
-                span = np.linspace(min(self.columns.x), max(self.columns.x), 50)
-                axes.plot(span, self.fit.slope * span + self.fit.intercept,
-                          "-", color="#d62728", linewidth=1.5,
-                          label=f"fit, R²={fmt_number(self.fit.r_squared, 4)}")
+            curve = self.curve
+            if curve is not None and curve.ok:
+                span = np.linspace(min(self.columns.x), max(self.columns.x),
+                                   200)
+                axes.plot(span, curve.predict(span), "-", color="#d62728",
+                          linewidth=1.5,
+                          label=f"{curve.name}, "
+                                f"R²={fmt_number(curve.r_squared, 4)}")
                 # The residuals, drawn where they happen. A high R squared
-                # with a pattern in these means a line was the wrong shape.
+                # with a pattern in these means the shape is wrong.
                 for x, y, residual in zip(self.columns.x, self.columns.y,
-                                          self.fit.residuals):
+                                          curve.residuals):
                     axes.plot([x, x], [y - residual, y], color="#999999",
                               linewidth=0.8, zorder=1)
         else:
@@ -264,11 +336,24 @@ class StatisticsTab(ttk.Frame):
                         f"{fmt_number(value, 6)}   {note}".strip())
                        for label, value, note
                        in describe(self.columns.y).rows()]
-        if self.fit is not None:
-            blocks.append(("Line of best fit", None, self.fit.as_text()))
+        if self.curve is not None and self.curve.ok:
+            blocks.append(("Trendline", None,
+                           f"{self.curve.name}: {self.curve.as_text()}"))
+            blocks.append((None, None,
+                           f"R squared {fmt_number(self.curve.r_squared, 6)}"))
+        if self.fit is not None and self.curve is not None \
+                and self.curve.key == "poly1":
+            # The uncertainties only mean anything for the straight line,
+            # which is the only shape they were worked out for.
             blocks += [(label, None,
                         f"{fmt_number(value, 6)}   {note}".strip())
                        for label, value, note in self.fit.rows()]
+        if len(self.curves) > 1:
+            blocks.append(("Shapes compared", None, ""))
+            blocks += [(None, None,
+                        f"{name}   {fmt_number(score, 6) if score != '' else ''}"
+                        f"   {note}".strip())
+                       for name, score, note in comparison_rows(self.curves)]
         return blocks
 
     # -- getting it out ----------------------------------------------------
@@ -281,10 +366,19 @@ class StatisticsTab(ttk.Frame):
             rows.append(["Second column", "", ""])
             rows += [[label, value, note]
                      for label, value, note in describe(self.columns.y).rows()]
-        if self.fit is not None:
-            rows.append(["Line of best fit", "", self.fit.as_text()])
+        if self.curve is not None and self.curve.ok:
+            rows.append(["Trendline", "",
+                         f"{self.curve.name}: {self.curve.as_text()}"])
+            rows.append(["R squared", self.curve.r_squared,
+                         "measured on the readings, not their logs"])
+        if self.fit is not None and self.curve is not None \
+                and self.curve.key == "poly1":
             rows += [[label, value, note] for label, value, note
                      in self.fit.rows()]
+        if len(self.curves) > 1:
+            rows.append(["Shapes compared", "", "by R squared, best first"])
+            rows += [[name, score, note]
+                     for name, score, note in comparison_rows(self.curves)]
         return rows
 
     def _as_result(self) -> CalcResult:

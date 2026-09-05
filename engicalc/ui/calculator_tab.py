@@ -18,7 +18,8 @@ from matplotlib.figure import Figure
 
 from ..core.display import fmt
 from ..core.engine import OPERATIONS, calculate
-from ..core.parsing import parse_for_display
+from ..core.parsing import (names_read_as_products,
+                            parse_for_display)
 from ..export.excel import export_expression
 from ..plotting.plot import draw as draw_plot, spec_from_result
 from . import clipboard, mathfield, mathrender
@@ -175,6 +176,10 @@ class CalculatorTab(ttk.Frame):
         ttk.Radiobutton(header, text="plain text", value="text",
                         variable=self.steps_mode,
                         command=self._render_steps).pack(side="right", padx=6)
+        ttk.Checkbutton(header, text="all working",
+                        variable=self.app.show_working,
+                        command=self.app.refresh_working).pack(side="right",
+                                                               padx=(0, 14))
         self.steps_holder = ttk.Frame(right)
         self.steps_holder.pack(fill="both", expand=True, pady=(4, 0))
         self.steps_math = mathrender.MathList(self.steps_holder, fontsize=15)
@@ -406,21 +411,42 @@ class CalculatorTab(ttk.Frame):
 
         for warning in result.warnings:
             blocks.append(("Note", None, warning))
+
+        # Said once, beside the answer. Nothing is wrong - juxtaposition is
+        # multiplication here and `xy` has always meant x times y - but it
+        # is worth knowing that `Re` was read as two things rather than one.
+        split = names_read_as_products(result.input_text, result.expression)
+        if split:
+            names = ", ".join(split)
+            spelled = ", ".join(f"{run[0]}_{run[1:]}" for run in split)
+            blocks.append((
+                "Read as a product", None,
+                f"{names} - a run of letters is multiplied here, so this is "
+                f"not one name. Write it {spelled} to keep it together."))
         return blocks
+
+    def _shown_steps(self) -> list:
+        """The steps to draw, at the level of working being asked for."""
+        if self.result is None:
+            return []
+        wants_all = self.app.show_working.get()
+        return [step for step in self.result.steps
+                if wants_all or not step.minor]
 
     def _render_steps(self) -> None:
         if self.result is None:
             return
         for widget in (self.steps_math, self.steps_text):
             widget.pack_forget()
+        steps = self._shown_steps()
         if self.steps_mode.get() == "text":
             self.steps_text.pack(fill="both", expand=True)
-            self.steps_text.set(self.result.steps_text() or
+            self.steps_text.set("\n\n".join(s.text() for s in steps) or
                                 "(no steps for this operation)")
         else:
             self.steps_math.pack(fill="both", expand=True)
             blocks = [(step.title, step.drawn(), step.detail)
-                      for step in self.result.steps]
+                      for step in steps]
             self.steps_math.render(blocks or
                                    [("", None, "(no steps for this operation)")])
 
