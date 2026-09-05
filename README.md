@@ -98,8 +98,15 @@ discriminant, the factorisation or quadratic formula, then each answer
 substituted back in to verify it.
 
 Operations: solve, roots, simplify, expand, factor, evaluate, derivative,
-integral (indefinite or definite), limit, series, and simultaneous systems
-(separate the equations with `;`).
+integral (indefinite or definite), limit, series, simultaneous systems
+(separate the equations with `;`), and differential equations.
+
+**Differential equations** are written in prime notation, as they are on
+paper: `y' = -(y - 20)/5` for a cooling curve, `y'' + 4y = 0` for a vibrating
+mass, `y'' = -w*x/(E*I)` for a beam. Initial conditions go in the conditions
+box as `y(0) = 90, y'(0) = 0`. Without them the answer keeps its arbitrary
+constants and is a family of curves rather than the one your apparatus
+actually followed, and it says so.
 
 Inequalities work too - `x^2 <= 9`, `1/x < 1`, `abs(x - 3) <= 5`, `x != 0` -
 and answer with the range that satisfies them (`x in [-3, 3]`) rather than a
@@ -291,6 +298,7 @@ Three exports:
       core/matrices.py     A x = b, determinant, eigenvalues and the rest
       core/sheet.py        chained steps, each using the ones above
       core/statistics.py   describing readings, and the line through them
+      core/odes.py         differential equations in prime notation
       core/units.py        mm and m cannot be quietly mixed
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
@@ -305,7 +313,7 @@ Three exports:
         reference_window.py  searchable symbol and syntax reference
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 168 tests
+    tests/test_engicalc.py 180 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -363,7 +371,7 @@ them.
 
 ## Tests
 
-168 tests covering the parser (including that it refuses `__import__`), the
+180 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator

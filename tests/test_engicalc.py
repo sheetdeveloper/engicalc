@@ -1925,3 +1925,100 @@ class TestStatistics(unittest.TestCase):
 
         with self.assertRaises(ParseError):
             parse_columns("1\t2\n3\n4\t5")
+
+
+class TestDifferentialEquations(unittest.TestCase):
+    """Beam deflection, transient cooling, RC circuits and vibration are all
+    differential equations, and none of them parsed before."""
+
+    def _solve(self, text, conditions=""):
+        from engicalc.core.odes import solve_ode
+        return solve_ode(text, conditions=conditions)
+
+    def test_prime_notation_becomes_a_derivative(self):
+        from engicalc.core.odes import _prepare
+
+        self.assertEqual(_prepare("y' = y", "y", "x"),
+                         "Derivative(y(x), x) = y(x)")
+        self.assertEqual(_prepare("y'' + 4y = 0", "y", "x"),
+                         "Derivative(y(x), x, 2) + 4y(x) = 0")
+
+    def test_a_coefficient_before_the_variable_is_not_missed(self):
+        """There is no word boundary between a digit and a letter, so a
+        naive \by\b leaves the y in 4y as a bare symbol - and the equation
+        then comes out wrong rather than failing."""
+        from engicalc.core.odes import _prepare
+
+        self.assertIn("4y(x)", _prepare("y'' + 4y = 0", "y", "x"))
+        self.assertNotIn("4y ", _prepare("y'' + 4y = 0", "y", "x"))
+
+    def test_names_like_E_and_I_stay_symbols(self):
+        """E is Euler's number and I the imaginary unit to the ordinary
+        parser, which makes the beam equation quietly wrong."""
+        result = self._solve("E*I*y'' = M")
+        drawn = sp.sstr(result.expression)
+        self.assertNotIn("exp", drawn)
+        self.assertIn("E", drawn)
+        self.assertIn("I", drawn)
+
+    def test_newton_cooling(self):
+        result = self._solve("y' = -(y - 20)/5", "y(0) = 90")
+        x = sp.Symbol("x")
+        self.assertAlmostEqual(float(result.expression.subs(x, 0)), 90.0,
+                               places=9)
+        # heading for the ambient temperature it is cooling towards
+        self.assertAlmostEqual(float(result.expression.subs(x, 1000)), 20.0,
+                               places=6)
+
+    def test_simple_harmonic_motion(self):
+        result = self._solve("y'' + 4y = 0", "y(0) = 1, y'(0) = 0")
+        x = sp.Symbol("x")
+        self.assertEqual(sp.simplify(result.expression - sp.cos(2 * x)), 0)
+
+    def test_free_fall_matches_the_arithmetic(self):
+        """SymPy's dsolve recurses forever on y'' = constant, so this is
+        integrated directly instead."""
+        result = self._solve("y'' = -9.81", "y(0) = 0, y'(0) = 20")
+        x = sp.Symbol("x")
+        for t in (0, 1, 2, 3):
+            with self.subTest(t=t):
+                self.assertAlmostEqual(float(result.expression.subs(x, t)),
+                                       20 * t - 4.905 * t * t, places=6)
+
+    def test_the_beam_equation(self):
+        result = self._solve("y'' = -w*x/(E*I)")
+        x, w, E, I = sp.symbols("x w E I")
+        # y'''' would be the load; here y'' = -wx/EI integrates twice
+        expected = -w * x ** 3 / (6 * E * I)
+        without_constants = result.expression.subs(
+            {sp.Symbol("C1"): 0, sp.Symbol("C2"): 0})
+        self.assertEqual(sp.simplify(without_constants - expected), 0)
+
+    def test_a_general_solution_says_it_is_general(self):
+        result = self._solve("y' = y")
+        self.assertTrue(result.warnings)
+        self.assertIn("general solution", result.warnings[0])
+        self.assertIn("C1", result.warnings[0])
+
+    def test_conditions_remove_the_constants(self):
+        result = self._solve("y' + y/2 = 0", "y(0) = 5")
+        self.assertEqual([], result.warnings)
+        self.assertNotIn("C1", sp.sstr(result.expression))
+
+    def test_an_equation_with_no_derivative_is_explained(self):
+        with self.assertRaises(ParseError) as caught:
+            self._solve("y = 2x")
+        self.assertIn("no derivative", str(caught.exception))
+
+    def test_a_malformed_condition_is_explained(self):
+        with self.assertRaises(ParseError) as caught:
+            self._solve("y' = y", "banana")
+        self.assertIn("condition", str(caught.exception).lower())
+
+    def test_it_is_reachable_as_an_operation(self):
+        from engicalc.core.engine import OPERATIONS
+
+        self.assertIn("ode", OPERATIONS)
+        result = calculate("y' = y", "ode", "x", conditions="y(0) = 3")
+        x = sp.Symbol("x")
+        self.assertEqual(sp.simplify(result.expression - 3 * sp.exp(x)), 0)

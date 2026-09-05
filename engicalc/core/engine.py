@@ -18,7 +18,7 @@ from .parsing import ParseError, parse_input, parse_number, parse_system
 
 OPERATIONS = [
     "solve", "simplify", "expand", "factor", "evaluate",
-    "derivative", "integral", "limit", "series", "roots", "system",
+    "derivative", "integral", "limit", "series", "roots", "system", "ode",
 ]
 
 
@@ -89,6 +89,13 @@ def calculate(text: str, operation: str = "solve", variable: str | None = None,
     operation = operation.lower().strip()
     if operation == "system":
         return solve_system(text, subs=subs)
+    if operation == "ode":
+        # Imported here: core.odes imports CalcResult from this module, so a
+        # module-level import would be circular.
+        from .odes import solve_ode
+
+        return solve_ode(text, variable=variable or "x",
+                         conditions=str(kwargs.get("conditions", "") or ""))
 
     parsed = parse_input(text)
     expr = parsed.expr

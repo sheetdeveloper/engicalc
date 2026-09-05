@@ -105,12 +105,14 @@ class CalculatorTab(ttk.Frame):
         self.upper_var = tk.StringVar()
         self.point_var = tk.StringVar(value="0")
         self.order_var = tk.StringVar(value="1")
+        self.conditions_var = tk.StringVar()
         self._extra_widgets = {}
         for key, label, var, width in (
                 ("lower", "from", self.lower_var, 6),
                 ("upper", "to", self.upper_var, 6),
                 ("point", "at", self.point_var, 6),
-                ("order", "order", self.order_var, 4)):
+                ("order", "order", self.order_var, 4),
+                ("conditions", "conditions", self.conditions_var, 22)):
             frame = ttk.Frame(self.extra)
             ttk.Label(frame, text=label).pack(side="left")
             ttk.Entry(frame, textvariable=var, width=width).pack(side="left",
@@ -266,12 +268,17 @@ class CalculatorTab(ttk.Frame):
                 self._extra_widgets["order"].pack(side="left")
         elif operation == "derivative":
             self._extra_widgets["order"].pack(side="left")
+        elif operation == "ode":
+            # Without conditions the answer carries arbitrary constants and
+            # is a family of curves, so the box is put in front of people.
+            self._extra_widgets["conditions"].pack(side="left")
 
     # -- actions ----------------------------------------------------------
     def compute(self) -> None:
         operation = self.op_var.get()
         kwargs = dict(lower=self.lower_var.get(), upper=self.upper_var.get(),
-                      point=self.point_var.get(), order=self.order_var.get())
+                      point=self.point_var.get(), order=self.order_var.get(),
+                      conditions=self.conditions_var.get())
         variable = self.var_var.get().strip() or None
 
         # A calculus shape in the equation bar carries its own limits, so it

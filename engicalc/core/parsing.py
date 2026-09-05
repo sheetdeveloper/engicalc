@@ -60,6 +60,9 @@ SAFE_CONSTANTS = {
 _PARSER_INTERNALS = {
     "Symbol": sp.Symbol, "Integer": sp.Integer, "Float": sp.Float,
     "Rational": sp.Rational, "Function": sp.Function, "Eq": sp.Eq,
+    # Written by core/odes.py when it turns y' into a derivative. Safe: it
+    # builds an expression, it does not evaluate anything.
+    "Derivative": sp.Derivative,
     # emitted when parsing with evaluate=False (display parsing)
     "Add": sp.Add, "Mul": sp.Mul, "Pow": sp.Pow,
 }
