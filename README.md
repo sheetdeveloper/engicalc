@@ -33,7 +33,11 @@ the area it measures shaded underneath and the working beside it.*
 | ![Matrices](docs/screenshots/matrices.png) | ![Interpolation](docs/screenshots/interpolate.png) |
 | **Matrices** - several equations solved at once | **Interpolation** - reading between the rows of a table |
 | ![Formula library](docs/screenshots/formula_library.png) | ![Graphing](docs/screenshots/graph.png) |
-| **212 formulas**, each rearranging for any variable | **Graphing** - explicit, implicit, parametric and polar |
+| **229 formulas**, each rearranging for any variable | **Graphing** - explicit, implicit, parametric and polar |
+| ![Solved together](docs/screenshots/simultaneous.png) | ![Units](docs/screenshots/units.png) |
+| **Equations solved together** - in any order, with the count before the answer | **Units** - and the same value in everything else that measures it |
+| ![All working](docs/screenshots/working.png) | ![Trendlines](docs/screenshots/statistics.png) |
+| **All working** - the rule stated, then applied | **Trendlines** - six shapes, scored so they compare |
 
 ---
 
