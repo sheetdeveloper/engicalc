@@ -1,0 +1,7 @@
+# EngiCalc dependencies
+sympy>=1.12        # symbolic engine: parsing, solving, calculus
+matplotlib>=3.7    # graphing (Tk backend for the window, Agg for file output)
+numpy>=1.24        # fast evaluation of plotted curves
+openpyxl>=3.1      # writing formula-driven .xlsx workbooks
+# tkinter and sqlite3 ship with Python - no pip install needed.
+# On Debian/Ubuntu tkinter is a separate OS package: sudo apt install python3-tk
