@@ -89,8 +89,15 @@ class History:
         self.conn.commit()
         return cur.lastrowid
 
-    def add_result(self, result, project: str = "", note: str = "") -> int:
-        """Store a :class:`engicalc.core.engine.CalcResult`."""
+    def add_result(self, result, project: str = "", note: str = "",
+                   source: dict | None = None) -> int:
+        """Store a :class:`engicalc.core.engine.CalcResult`.
+
+        ``source`` is whatever the tab needs to rebuild itself - the rows of
+        a sheet, the readings behind a summary. Kept apart from
+        ``input_text`` because what restores a tab and what reads well in the
+        history list are rarely the same thing.
+        """
         numeric = None
         if result.numeric:
             first = result.numeric[0]
@@ -100,6 +107,7 @@ class History:
             title=result.input_text[:80], input_text=result.input_text,
             variable=result.variable or "", result_text=result.result_text,
             expression=str(result.expression) if result.expression is not None else "",
+            inputs=dict(source or {}),
             numeric=numeric, project=project, note=note))
 
     def add_formula_solution(self, solution, project: str = "",

@@ -908,6 +908,44 @@ class TestSimultaneousSet(unittest.TestCase):
         self.assertIn("Not enough to go on", result.result_text)
         self.assertIn("1 equation.", result.result_text)   # not "1 equations"
 
+    def test_a_fractional_power_never_reaches_the_exact_solver(self):
+        import time
+
+        from engicalc.core.system import solve_set
+
+        # sp.solve turns a system into a polynomial one and, failing that,
+        # reaches for a Groebner basis - doubly exponential in the worst
+        # case and impossible to interrupt. The duct example hit exactly
+        # that and sat at "Solving..." indefinitely. It only happened
+        # sometimes, because which path SymPy takes depends on its cached
+        # state, which is what let it through the tests and out to a user.
+        text = ("A = pi*0.15^2/4\n"
+                "v = 0.5/A\n"
+                "Re = v*0.15/7.5e-6\n"
+                "f = 0.3164/Re^0.25\n"
+                "dp = f*(20/0.15)*1.2*v^2/2")
+        started = time.monotonic()
+        result = solve_set(text)
+        self.assertLess(time.monotonic() - started, 5.0,
+                        "the solver went the expensive way round")
+        self.assertTrue(any("iteration" in step.title.lower()
+                            for step in result.steps),
+                        "it should say it was solved numerically")
+        values = {str(k): float(v) for k, v in result.results[0].items()}
+        self.assertAlmostEqual(values["Re"], 565884.0, delta=10.0)
+
+    def test_an_exact_answer_is_still_preferred_where_it_is_safe(self):
+        from engicalc.core.system import solve_set
+
+        # A whole-number power is not the dangerous shape - 1/A is A to the
+        # minus one - so these keep their exact answers.
+        self.assertIn("13/2", solve_set("x + y = 10; x - y = 3").result_text)
+        exact = solve_set("1/Rt = 1/R1 + 1/R2; R1 = 220; R2 = 330")
+        self.assertIn("Rt = 132", exact.result_text)
+        for result in (solve_set("x + y = 10; x - y = 3"), exact):
+            self.assertFalse(any("iteration" in step.title.lower()
+                                 for step in result.steps))
+
     def test_a_residual_is_judged_against_the_size_of_its_own_terms(self):
         from engicalc.core.system import solve_set
 
@@ -1737,12 +1775,16 @@ class TestSaveAndExport(unittest.TestCase):
         # arrives and the tab looks as though it refused.
         if getattr(tab, "runner", None) is None:
             return
-        for _ in range(200):
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
             self.app.update()
             if getattr(tab, "result", None) is not None:
                 return
             time.sleep(0.02)
-        self.fail(f"{type(tab).__name__} produced no answer in time")
+        status = ""
+        if hasattr(tab, "status"):
+            status = f" - it says {tab.status.cget('text')!r}"
+        self.fail(f"{type(tab).__name__} produced no answer in 20s{status}")
 
     def test_every_tab_offers_both(self):
         tabs = self.tabs()
@@ -1857,12 +1899,14 @@ class TestSimultaneousTab(unittest.TestCase):
 
     def _solve(self):
         self.tab.solve()
-        for _ in range(200):
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
             self.app.update()
             if self.tab.result is not None:
                 return self.tab.result
             time.sleep(0.02)
-        self.fail("no answer in time")
+        self.fail(f"no answer in 20s - it says "
+                  f"{self.tab.status.cget('text')!r}")
 
     def test_it_lives_inside_the_calculator(self):
         # A tenth top-level tab for something this close to the calculator
@@ -2270,6 +2314,149 @@ class TestSplitNameNotice(unittest.TestCase):
         expression = parse_input("T1 + T2").expr
         self.assertEqual(names_read_as_products("T1 + T2", expression),
                          ["T1", "T2"])
+
+
+# --------------------------------------------------------------------------
+# Reopening a saved calculation
+# --------------------------------------------------------------------------
+class TestReopenFromHistory(unittest.TestCase):
+    """A saved calculation goes back to the tab it came from.
+
+    Saving worked everywhere and reopening did not: everything that was not
+    a formula went to the single-equation calculator, so a unit conversion
+    came back as "25 mm to in" in an equation bar and a set of equations as
+    several lines in a field that holds one. Nothing raised - it landed
+    somewhere it made no sense, which is the worst way to be wrong.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import matplotlib
+        matplotlib.use("Agg")
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.destroy()
+        except Exception as exc:                      # noqa: BLE001
+            raise unittest.SkipTest(f"no display available: {exc}")
+
+    def setUp(self):
+        import tempfile
+        from tkinter import messagebox
+
+        from engicalc.ui.app import EngiCalcApp
+
+        self.complaints = []
+        for name in ("showinfo", "showerror", "showwarning"):
+            original = getattr(messagebox, name)
+            setattr(messagebox, name,
+                    lambda title, message="", *a, _n=name, **kw:
+                    self.complaints.append((_n, title, message)))
+            self.addCleanup(setattr, messagebox, name, original)
+
+        self.app = EngiCalcApp(
+            db_path=os.path.join(tempfile.mkdtemp(), "h.db"))
+        self.addCleanup(self._close)
+        self.app.update_idletasks()
+
+    def _close(self):
+        try:
+            self.app.update_idletasks()
+        except Exception:                             # noqa: BLE001
+            pass
+        self.app.destroy()
+
+    def _solve_simultaneous(self):
+        tab = self.app.simultaneous_tab
+        tab.solve()
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            self.app.update()
+            if tab.result is not None:
+                return
+            time.sleep(0.02)
+        self.fail(f"no answer in 20s - it says "
+                  f"{tab.status.cget('text')!r}")
+
+    def _landed_on(self):
+        notebook = self.app.notebook
+        name = notebook.tab(notebook.select(), "text").strip()
+        if name == "Calculator":
+            inner = self.app.calculator_pane.tabs
+            name += " / " + inner.tab(inner.select(), "text").strip()
+        return name
+
+    def test_each_kind_goes_back_to_its_own_tab(self):
+        units = self.app.units_tab
+        units.category.set("Pressure")
+        units._category_changed()
+        units.value.set("2.5")
+        units.source.set("bar")
+        units.target.set("psi")
+        units.convert()
+        units.save(quiet=True)
+
+        self._solve_simultaneous()
+        self.app.simultaneous_tab.save(quiet=True)
+        self.app.sheet_tab.save(quiet=True)
+        self.app.statistics_tab.save(quiet=True)
+        self.app.update_idletasks()
+
+        expected = {"convert": "Calculator / Units",
+                    "system": "Calculator / Solved together",
+                    "sheet": "Sheet",
+                    "statistics": "Data"}
+        for entry in self.app.history.recent(limit=20):
+            if entry.operation not in expected:
+                continue
+            with self.subTest(saved_from=entry.operation):
+                self.complaints.clear()
+                self.app.reopen_entry(entry)
+                self.app.update_idletasks()
+                self.assertEqual([], self.complaints)
+                self.assertEqual(expected[entry.operation], self._landed_on())
+
+    def test_what_was_saved_comes_back(self):
+        units = self.app.units_tab
+        units.category.set("Pressure")
+        units._category_changed()
+        units.value.set("2.5")
+        units.source.set("bar")
+        units.target.set("psi")
+        units.convert()
+        units.save(quiet=True)
+        self.app.sheet_tab.save(quiet=True)
+        rows_before = len(self.app.sheet_tab.rows)
+        self.app.update_idletasks()
+
+        # Wipe both, so a restore is visibly a restore rather than the tab
+        # having been left as it was.
+        units.value.set("999")
+        units.category.set("Length")
+        units._category_changed()
+        self.app.sheet_tab._clear_rows()
+        self.app.sheet_tab.calculate()
+        self.app.update_idletasks()
+
+        for entry in self.app.history.recent(limit=20):
+            self.app.reopen_entry(entry)
+            self.app.update_idletasks()
+
+        self.assertIn("36.259", units.answer.cget("text"))
+        self.assertEqual(rows_before, len(self.app.sheet_tab.rows))
+
+    def test_an_entry_with_nothing_stored_still_opens(self):
+        from engicalc.storage.history import Entry
+
+        # Saved by an older version, before the tabs carried what rebuilds
+        # them. It should fall back rather than raise.
+        self.app.history.add(Entry(kind="calculator", operation="system",
+                                   title="x + y = 10", input_text="x + y = 10"))
+        entry = self.app.history.recent(limit=1)[0]
+        self.complaints.clear()
+        self.app.reopen_entry(entry)
+        self.app.update_idletasks()
+        self.assertEqual("Calculator / One equation", self._landed_on())
 
 
 # --------------------------------------------------------------------------

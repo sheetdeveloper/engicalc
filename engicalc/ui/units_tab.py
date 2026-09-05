@@ -232,6 +232,18 @@ class UnitsTab(ttk.Frame):
                   for unit, number in self.equivalents()]
         return "\n".join(lines)
 
+    def restore(self, source: dict) -> None:
+        """Put the conversion back as it was asked."""
+        if source.get("category"):
+            self.category.set(source["category"])
+            self._category_changed(keep=True)
+        self.value.set(source.get("value", ""))
+        self.source.set(source.get("from", ""))
+        self.target.set(source.get("to", ""))
+        self.absolute.set(bool(source.get("absolute", True)))
+        self.convert()
+        self.status.configure(text="Reopened from history")
+
     def copy_answer(self) -> None:
         text = self.answer.cget("text")
         if not text:
@@ -263,6 +275,10 @@ class UnitsTab(ttk.Frame):
         result.result_text = self.answer.cget("text")
         for unit, number in equivalents:
             result.steps.append(Step(f"{fmt_number(number, 8)} {unit}"))
-        self.app.history.add_result(result, project=self.app.project.get())
+        self.app.history.add_result(
+            result, project=self.app.project.get(),
+            source={"value": self.value.get(), "from": self.source.get(),
+                    "to": self.target.get(), "category": self.category.get(),
+                    "absolute": self.absolute.get()})
         self.app.refresh_history()
         self.status.configure(text="Saved to history")

@@ -300,9 +300,15 @@ class SimultaneousTab(ttk.Frame):
                 messagebox.showinfo("Nothing to save", "Solve something first.")
             return
         self.app.history.add_result(self.result,
-                                    project=self.app.project.get())
+                                    project=self.app.project.get(),
+                                    source={"equations": self.get_text()})
         self.app.refresh_history()
         self.status.configure(text="Saved to history")
+
+    def restore(self, source: dict) -> None:
+        """Put the equations back and solve them again."""
+        self.set_text(source.get("equations", ""))
+        self.solve()
 
     def export(self) -> None:
         rows = self._answer_rows()

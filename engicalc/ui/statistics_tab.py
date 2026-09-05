@@ -402,8 +402,10 @@ class StatisticsTab(ttk.Frame):
             if not quiet:
                 messagebox.showinfo("Nothing to save", "Paste some data first.")
             return
-        self.app.history.add_result(self._as_result(),
-                                    project=self.app.project.get())
+        self.app.history.add_result(
+            self._as_result(), project=self.app.project.get(),
+            source={"readings": self.data_text.get("1.0", "end").strip(),
+                    "shape": self.trend.get()})
         self.app.refresh_history()
         self.status.configure(text="Saved to history")
 
@@ -433,6 +435,15 @@ class StatisticsTab(ttk.Frame):
             self.status.configure(text="Exported")
         except Exception as exc:                       # noqa: BLE001
             messagebox.showerror("Export failed", str(exc))
+
+    def restore(self, source: dict) -> None:
+        """Put the readings back and work them out again."""
+        self.data_text.delete("1.0", "end")
+        self.data_text.insert("1.0", source.get("readings", ""))
+        if source.get("shape"):
+            self.trend.set(source["shape"])
+        self.compute()
+        self.status.configure(text="Reopened from history")
 
     def copy_picture(self) -> None:
         if self.description is None:

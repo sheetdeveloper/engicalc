@@ -17,6 +17,7 @@ means, so :func:`convert` refuses the ambiguous case and asks.
 
 from __future__ import annotations
 
+import functools
 import re
 
 import sympy as sp
@@ -225,7 +226,18 @@ def convert(value, from_unit: str, to_unit: str, absolute: bool | None = None):
             return number - ABSOLUTE_ZERO
         return number
 
-    converted = u.convert_to(number * parse_unit(source), parse_unit(target))
+    return number * _factor(source, target)
+
+
+@functools.lru_cache(maxsize=None)
+def _factor(source: str, target: str):
+    """How many *target* there are in one *source*.
+
+    A constant, and deriving it is symbolic and not cheap, so it is derived
+    once. Only valid where the two units differ by scaling alone - Celsius
+    has an offset and never reaches here.
+    """
+    converted = u.convert_to(parse_unit(source), parse_unit(target))
     return sp.simplify(converted / parse_unit(target))
 
 
@@ -288,6 +300,30 @@ def category_of(unit: str) -> str:
     return ""
 
 
+@functools.lru_cache(maxsize=None)
+def _dimension_named(unit: str):
+    """The dimension of one unit, worked out once.
+
+    Deriving this is symbolic and not cheap, and the answer cannot change
+    while the program is running - the unit table is a literal.
+    """
+    try:
+        return dimension_of(parse_unit(unit))
+    except Exception:                                 # noqa: BLE001
+        return None
+
+
+@functools.lru_cache(maxsize=None)
+def _same_dimension(unit: str) -> tuple:
+    wanted = _dimension_named(unit)
+    if wanted is None:
+        return ()
+    return tuple(
+        name for members in CATEGORIES.values() for name in members
+        if name not in CELSIUS and name != "K"
+        and _dimension_named(name) == wanted)
+
+
 def same_dimension(unit: str) -> list:
     """Every offered unit measuring the same thing as *unit*.
 
@@ -295,24 +331,14 @@ def same_dimension(unit: str) -> list:
     because that is the question actually being asked - what this value can
     be expressed as. Temperature is the exception the table cannot express:
     degrees Celsius is a kelvin with an offset, so it is paired by hand.
+
+    A fresh list each time, because the cached answer behind it is shared
+    and a caller that sorted it in place would corrupt every later call.
     """
     unit = (unit or "").strip()
     if unit in CELSIUS or unit == "K":
         return ["K", "degC"]
-    try:
-        wanted = dimension_of(parse_unit(unit))
-    except Exception:                                 # noqa: BLE001
-        return []
-    out = []
-    for name in [n for members in CATEGORIES.values() for n in members]:
-        if name in CELSIUS or name == "K":
-            continue
-        try:
-            if dimension_of(parse_unit(name)) == wanted:
-                out.append(name)
-        except Exception:                             # noqa: BLE001
-            continue
-    return out
+    return list(_same_dimension(unit))
 
 
 def looks_wrong(value, typical: str) -> str:

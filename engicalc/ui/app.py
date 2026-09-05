@@ -263,6 +263,23 @@ class EngiCalcApp(tk.Tk):
                 if symbol in self.library_tab.entries:
                     self.library_tab.entries[symbol].set(str(value))
             self.notebook.select(self.library_tab)
+        elif entry.operation in self._restorable() and entry.inputs:
+            # Saved from a tab that knows how to rebuild itself. Without
+            # this every one of them came back as text in the equation bar -
+            # a unit conversion as "25 mm to in", a set of equations as
+            # several lines in a field that holds one. Nothing raised; it
+            # just landed somewhere it made no sense.
+            tab, sub = self._restorable()[entry.operation]
+            self.notebook.select(sub if sub is not None else tab)
+            if sub is not None:
+                self.calculator_pane.tabs.select(tab)
+            try:
+                tab.restore(entry.inputs)
+            except Exception as exc:                  # noqa: BLE001
+                messagebox.showinfo(
+                    "Could not reopen that",
+                    f"It was saved, but not in a form this version can put "
+                    f"back ({exc}).")
         else:
             self.calculator_tab.input_var.set(entry.input_text)
             if entry.operation:
@@ -273,6 +290,15 @@ class EngiCalcApp(tk.Tk):
             self.notebook.select(self.calculator_pane)
             self.calculator_pane.show_calculator()
             self.calculator_tab.compute()
+
+    def _restorable(self) -> dict:
+        """operation -> (the tab, the pane holding it if it is a sub-tab)."""
+        return {
+            "system": (self.simultaneous_tab, self.calculator_pane),
+            "convert": (self.units_tab, self.calculator_pane),
+            "sheet": (self.sheet_tab, None),
+            "statistics": (self.statistics_tab, None),
+        }
 
     # -- dialogs ----------------------------------------------------------
     def show_about(self) -> None:

@@ -77,6 +77,13 @@ Underneath sits a plain-text box for anyone who would rather type
 `2x^2 - 5x - 3 = 0` and be done with it. The two are kept in step - edit either
 one and the other follows, and typed text becomes real structure, so typing
 `sqrt(x)` there gives you a radical upstairs with an editable box under it.
+**Show all working** on the steps panel expands the working. Instead of the
+integral of 2x becoming x squared with nothing in between, it names the rule
+and states it as notation - constant multiple, then the power rule - and then
+applies it. A transposition goes one move at a time, each carrying the
+equation it leaves behind, described the way it would be said out loud: add
+fifteen to both sides, rather than take away minus fifteen.
+
 There is also a plain-text toggle on the steps panel if you want something
 copyable, and a Copy LaTeX button for pasting into a report.
 
@@ -188,17 +195,65 @@ and you still get an answer, with a warning saying it is a guess from outside
 where the numbers came from. Reading past the end of a steam table silently
 is how people get hurt.
 
+### Calculator -> Solved together
+
+A calculation is rarely a chain that runs one way. Sizing a duct, the friction
+factor depends on the Reynolds number, which depends on the velocity, which
+depends on the area - and the pressure drop depends on all three. Untangling
+that by hand before you can start is where the mistakes come from.
+
+Write the equations in any order and they are solved as a set. A known value
+is an equation too, so fixing something means writing `d = 0.15` on a line of
+its own.
+
+**The count is shown before anything is solved, and updates as you type.**
+Three equations and four unknowns has no single answer, and being told so
+while you are still writing is more use than any number would be - so it says
+what to do about the shortfall rather than only naming it.
+
+Every answer is substituted back into the original equations and checked. A
+numerical solve that converged on the wrong branch looks exactly like one that
+worked until you do that. The check is relative: an absolute tolerance against
+a Reynolds number of half a million would be asking for more significant
+figures than double precision carries.
+
+### Calculator -> Units
+
+Converts a quantity, and then shows it in every unit that measures the same
+thing - 2.5 bar is also 250 kPa and 36.26 psi - because the number you need is
+often not the one you thought to ask for.
+
+Temperature is the one case it asks about rather than guessing: 20 °C is
+293.15 K as a temperature and 20 K as a difference, and picking wrong is a 273
+degree error that looks perfectly plausible on the page. The choice appears
+only where it changes the answer.
+
 ### Data
 
 The numbers a lab report needs. Paste one column of readings and it gives the
 count, mean, median, standard deviation, standard error and range. Paste two
-and it also fits a straight line through them - slope and intercept with their
-uncertainties, R squared, and the residuals drawn on the plot.
+and it fits **six trendline shapes** - linear, quadratic, cubic, exponential,
+logarithmic and power - lists them ranked, and draws the one you pick.
+
+**R squared is measured on the readings for every shape, which is deliberately
+not what a spreadsheet does.** An exponential is fitted by taking logs of y and
+fitting a line to those, and Excel reports how well that line fits the logs.
+That number flatters - taking logs squashes the large residuals that matter
+most - and two shapes scored that way cannot be compared at all, because they
+are measured against different things. Since the whole point of offering six
+shapes is to choose between them, each is scored by how far its curve actually
+lands from the readings. On noisy exponential data the difference is enough to
+change which shape wins.
+
+A shape that cannot be fitted is still listed, saying why: "needs every y above
+zero" is more use than the shape quietly not appearing. A fit that misses badly
+scores below zero, which means the curve describes the readings worse than a
+flat line through their mean - worth being told.
 
 Both the sample and population standard deviations are shown, sample first,
 because measurements are a sample and quoting the wrong one is an invisible
-error. The residuals are there because R squared says how much of the
-variation the line accounts for, not whether a line was the right thing to
+error. The residuals are drawn because R squared says how much of the
+variation the curve accounts for, not whether it was the right shape to
 fit - a pattern in the residuals means it was not.
 
 ### Sheet
@@ -317,6 +372,8 @@ Three exports:
       formulas/data/hvac.py  ductwork, fans and sheet metal
       core/updates.py      is there a newer release - telling, never installing
       core/units.py        mm and m cannot be quietly mixed
+      core/system.py       equations solved together, in any order
+      core/fitting.py      six trendline shapes, scored so they compare
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
       ui/
@@ -328,9 +385,11 @@ Three exports:
         matrixview.py      draws a matrix, which mathtext cannot
         symbol_pad.py      the pad widget
         reference_window.py  searchable symbol and syntax reference
+        calculator_pane.py the Calculator's sub-tabs
+        simultaneous_tab.py  units_tab.py
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 198 tests
+    tests/test_engicalc.py 268 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
