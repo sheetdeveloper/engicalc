@@ -2022,3 +2022,117 @@ class TestDifferentialEquations(unittest.TestCase):
         result = calculate("y' = y", "ode", "x", conditions="y(0) = 3")
         x = sp.Symbol("x")
         self.assertEqual(sp.simplify(result.expression - 3 * sp.exp(x)), 0)
+
+
+class TestHvacAndSheetMetal(unittest.TestCase):
+    """The trade formulas. The bend maths must agree with the flat-pattern
+    generator, or a blank cut from a number worked out here will not fold to
+    the size the drawing says."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.library = get_library()
+
+    def _value(self, key, target, values):
+        formula = self.library.get(key)
+        self.assertIsNotNone(formula, f"{key} is missing")
+        return solve_formula(formula, target, values).value
+
+    def test_the_branch_is_loaded(self):
+        self.assertIn("HVAC & Sheet Metal", self.library.branches())
+        self.assertGreaterEqual(
+            len(self.library.by_branch("HVAC & Sheet Metal")), 15)
+
+    def test_searches_that_used_to_find_nothing(self):
+        for query in ["bend allowance", "velocity pressure", "fan law",
+                      "air changes", "k-factor", "setback"]:
+            with self.subTest(query=query):
+                self.assertTrue(self.library.search(query),
+                                f"nothing found for {query!r}")
+
+    def test_bend_allowance_matches_hand_arithmetic(self):
+        # BA = theta (R + K T), 90 degrees on 1.2 mm with R = 1.2, K = 0.44
+        expected = (math.pi / 2) * (1.2 + 0.44 * 1.2)
+        got = self._value("hvac_sheet_metal.bend_allowance", "BA",
+                          {"theta": str(math.pi / 2), "R": "1.2",
+                           "K": "0.44", "T": "1.2"})
+        self.assertAlmostEqual(got, expected, places=9)
+
+    def test_setback_has_no_minus_r_on_the_end(self):
+        """An unbent corner has no setback, and the wrong form gives a
+        negative bend deduction, which no fold has."""
+        straight = self._value("hvac_sheet_metal.bend_setback", "SSB",
+                               {"R": "1.2", "T": "1.2", "theta": "0"})
+        self.assertAlmostEqual(straight, 0.0, places=12)
+
+        square = self._value("hvac_sheet_metal.bend_setback", "SSB",
+                             {"R": "1.2", "T": "1.2",
+                              "theta": str(math.pi / 2)})
+        self.assertAlmostEqual(square, 2.4, places=9)
+
+    def test_bend_deduction_is_positive_for_a_square_corner(self):
+        deduction = self._value("hvac_sheet_metal.bend_deduction", "BD",
+                                {"SSB": "2.4", "BA": "2.714336"})
+        self.assertGreater(deduction, 0)
+
+    def test_the_bend_maths_agrees_with_the_flat_pattern_generator(self):
+        """Checked against sheet_developer's bendmath.py where it is
+        available - the two must not drift apart."""
+        import sys as _sys
+        _sys.path.insert(0, r"C:\dev\sheet_developer")
+        try:
+            from sheetmetal.bendmath import BendSpec
+        except Exception:                             # noqa: BLE001
+            self.skipTest("sheet_developer not available here")
+
+        for thickness, radius, k, degrees in [(1.2, 1.2, 0.44, 90),
+                                              (2.0, 2.0, 0.44, 90),
+                                              (1.0, 1.0, 0.44, 45),
+                                              (3.0, 3.0, 0.40, 135)]:
+            spec = BendSpec(thickness=thickness, inside_radius=radius,
+                            k_factor=k)
+            theta = str(math.radians(degrees))
+            with self.subTest(T=thickness, R=radius, angle=degrees):
+                allowance = self._value(
+                    "hvac_sheet_metal.bend_allowance", "BA",
+                    {"theta": theta, "R": str(radius), "K": str(k),
+                     "T": str(thickness)})
+                self.assertAlmostEqual(allowance,
+                                       spec.bend_allowance(degrees), places=9)
+                setback = self._value(
+                    "hvac_sheet_metal.bend_setback", "SSB",
+                    {"R": str(radius), "T": str(thickness), "theta": theta})
+                self.assertAlmostEqual(setback, spec.setback(degrees),
+                                       places=9)
+
+    def test_velocity_pressure(self):
+        # 0.5 rho v^2 at 1.2 kg/m3 and 10 m/s is 60 Pa
+        self.assertAlmostEqual(
+            self._value("hvac_sheet_metal.velocity_pressure", "pv",
+                        {"rho": "1.2", "v": "10"}), 60.0, places=9)
+
+    def test_the_fan_laws_scale_as_they_should(self):
+        """Power goes with the cube of speed - half the speed is an eighth
+        of the power, which is the whole argument for variable speed."""
+        half = self._value("hvac_sheet_metal.fan_law_power", "W2",
+                           {"W1": "800", "N2": "500", "N1": "1000"})
+        self.assertAlmostEqual(half, 100.0, places=9)
+
+        pressure = self._value("hvac_sheet_metal.fan_law_pressure", "p2",
+                               {"p1": "400", "N2": "500", "N1": "1000"})
+        self.assertAlmostEqual(pressure, 100.0, places=9)
+
+    def test_a_rolled_blank_wraps_the_mid_thickness(self):
+        self.assertAlmostEqual(
+            self._value("hvac_sheet_metal.cylinder_blank", "L",
+                        {"D": "300", "t": "1.2"}),
+            math.pi * 301.2, places=6)
+
+    def test_every_new_formula_rearranges_for_every_variable(self):
+        """The library-wide invariant, checked again for this branch so a
+        failure names the branch rather than a key."""
+        for formula in self.library.by_branch("HVAC & Sheet Metal"):
+            for variable in formula.variables:
+                with self.subTest(formula=formula.key, solve_for=variable.symbol):
+                    solution = solve_formula(formula, variable.symbol, {})
+                    self.assertIsNotNone(solution.expression)

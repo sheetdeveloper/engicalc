@@ -134,10 +134,18 @@ Recognising a formula by its notation is much faster than reading ASCII.
 
 ### Formula library
 
-**212 formulas across 11 branches**: Mechanics, Strength of Materials,
+**229 formulas across 12 branches**: Mechanics, Strength of Materials,
 Thermodynamics, Fluid Mechanics, Heat Transfer, Electrical, Civil & Structural,
-Materials & Manufacturing, Chemical & Process, Control & Signals, and
-Geometry & Maths.
+Materials & Manufacturing, Chemical & Process, Control & Signals,
+Geometry & Maths, and **HVAC & Sheet Metal**.
+
+The HVAC branch covers duct sizing and airflow, velocity pressure, duct
+friction, air changes, sensible load, fan power and the fan laws; and on the
+sheet-metal side bend allowance, setback, bend deduction, K-factor, sheet
+weight and rolled blank length. The bend maths matches the flat-pattern
+generator in the Sheet.Developments project exactly - a test checks the two
+against each other, because a blank cut from a number worked out here has to
+fold to the size the drawing says.
 
 Every formula carries its variables, units, descriptions, typical values and
 assumptions. Pick what to solve for, fill in what you know, press Calculate.
@@ -299,6 +307,7 @@ Three exports:
       core/sheet.py        chained steps, each using the ones above
       core/statistics.py   describing readings, and the line through them
       core/odes.py         differential equations in prime notation
+      formulas/data/hvac.py  ductwork, fans and sheet metal
       core/units.py        mm and m cannot be quietly mixed
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
@@ -313,7 +322,7 @@ Three exports:
         reference_window.py  searchable symbol and syntax reference
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 180 tests
+    tests/test_engicalc.py 190 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -371,7 +380,7 @@ them.
 
 ## Tests
 
-180 tests covering the parser (including that it refuses `__import__`), the
+190 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator

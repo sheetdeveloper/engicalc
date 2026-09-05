@@ -16,6 +16,7 @@ from .model import Formula, Variable
 _DATA_MODULES = [
     "mechanics", "strength", "thermodynamics", "fluids", "heat_transfer",
     "electrical", "civil", "manufacturing", "chemical", "control", "geometry",
+    "hvac",
 ]
 
 USER_FORMULA_FILE = os.path.join(
