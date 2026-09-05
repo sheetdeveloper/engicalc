@@ -7,8 +7,10 @@ SymPy's own ``sstr`` gives ``Eq(2*x**2 - 5*x - 3, 0)``; this module gives
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 import sympy as sp
+from sympy.printing.latex import LatexPrinter
 
 from .parsing import GREEK_NAMES, NAME_PATTERN, SAFE_FUNCTIONS
 
@@ -157,10 +159,49 @@ def latex_name(name: str, one_symbol: bool = True) -> str:
     return drawn
 
 
+def number_to_latex(text: str) -> str:
+    """A formatted number as notation: 5.66e+05 becomes 5.66 x 10^5.
+
+    Takes the string :func:`fmt_number` produced, so whatever notation and
+    how many figures were asked for are already decided - this only turns
+    the ASCII way of writing an exponent into the drawn one.
+    """
+    lowered = str(text).strip()
+    if "e" not in lowered.lower():
+        return lowered
+    mantissa, _, exponent = lowered.lower().partition("e")
+    try:
+        power = int(exponent)
+    except ValueError:
+        return lowered
+    mantissa = mantissa.rstrip(".")
+    if mantissa in ("1", "1.0", ""):
+        return f"10^{{{power}}}"
+    if mantissa in ("-1", "-1.0"):
+        return f"-10^{{{power}}}"
+    return rf"{mantissa} \times 10^{{{power}}}"
+
+
+class _Printer(LatexPrinter):
+    """SymPy's printer, with the app's number format for Floats.
+
+    Only that one method is replaced. SymPy has no idea the setting exists,
+    and everything else about how an expression is drawn should stay exactly
+    as it was.
+    """
+
+    def _print_Float(self, expr):
+        return number_to_latex(fmt_number(expr))
+
+
 def latex(expr, **kwargs) -> str:
-    """``sp.latex`` with the difference symbols drawn as Δ."""
+    """``sp.latex`` with the difference symbols drawn as Δ, and the app's
+    number format applied to any Float in the expression."""
     kwargs.setdefault("symbol_names", symbol_names(expr))
-    return sp.latex(expr, **kwargs)
+    try:
+        return _Printer(kwargs).doprint(expr)
+    except Exception:  # noqa: BLE001 - a drawn answer is not worth an error
+        return sp.latex(expr, **kwargs)
 
 
 _GREEK = GREEK_NAMES
@@ -264,15 +305,110 @@ def fmt_set(solution) -> str:
     return fmt(solution)
 
 
+#: How numbers are written, app-wide. `figures` of None means "however many
+#: the caller asked for", which is the behaviour every call site was written
+#: against - so leaving this alone changes nothing.
+@dataclass
+class NumberFormat:
+    figures: int | None = None
+    #: auto, fixed, scientific or engineering.
+    notation: str = "auto"
+
+
+FORMAT = NumberFormat()
+
+#: What the notations are called where somebody has to choose one.
+NOTATIONS = {
+    "auto": "As it reads best",
+    "fixed": "Plain decimal",
+    "scientific": "Scientific  1.23e5",
+    "engineering": "Engineering  123e3",
+}
+
+
+#: Passed as `figures` to go back to letting each caller choose.
+AS_ASKED = "auto"
+
+#: Not passed at all. Distinct from AS_ASKED, which is a request to reset -
+#: telling the two apart from the values themselves is what went wrong the
+#: first time.
+_KEEP = object()
+
+
+def set_number_format(figures=_KEEP, notation=_KEEP) -> None:
+    """Set how numbers are written from here on.
+
+    Anything not passed is left as it is; ``figures=AS_ASKED`` puts the
+    figures back to each caller's own choice, which is how the app starts.
+    """
+    if figures is not _KEEP:
+        FORMAT.figures = (None if figures in (None, "", AS_ASKED)
+                          else int(figures))
+    if notation is not _KEEP and notation is not None:
+        if notation not in NOTATIONS:
+            raise ValueError(f"There is no {notation!r} notation.")
+        FORMAT.notation = notation
+
+
+def _engineering(value: float, figures: int) -> str:
+    """The exponent as a multiple of three, which is what a prefix is.
+
+    566e3 and 5.66e5 are the same number, but only one of them reads as
+    kilo-anything.
+    """
+    if value == 0:
+        return "0"
+    from math import floor, log10
+
+    exponent = int(floor(log10(abs(value))))
+    exponent -= exponent % 3
+    mantissa = value / (10.0 ** exponent)
+    # The mantissa runs from 1 to 1000 here rather than 1 to 10, so it needs
+    # up to two more places before the point than a scientific mantissa -
+    # and those places are significant figures already spent.
+    before = len(str(int(abs(mantissa))))
+    text = f"{mantissa:.{max(figures - before, 0)}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text if exponent == 0 else f"{text}e{exponent}"
+
+
 def fmt_number(value, digits: int = 10) -> str:
-    """Format a numeric value without a trailing wall of zeros."""
+    """Format a number the way the app has been asked to write them.
+
+    *digits* is what this caller would like; the app-wide setting wins when
+    one has been chosen, since a preference that applied to only some tabs
+    would not be one.
+
+    For plain decimal the number is places after the point, which is what
+    "decimal places" means. For the others it is significant figures - a
+    fixed number of places after the point does not go with an exponent.
+    """
+    chosen = FORMAT.figures
+    notation = FORMAT.notation
     try:
-        number = sp.N(value, digits)
-        if number.is_real:
-            as_float = float(number)
-            if as_float == int(as_float) and abs(as_float) < 1e15:
-                return str(int(as_float))
-            return f"{as_float:.{digits}g}"
-        return str(number)
+        # Converted at full precision and rounded once, at the end. Rounding
+        # to significant figures first and then formatting to decimal places
+        # rounds twice and answers neither question.
+        number = sp.N(value, 20)
+        if not number.is_real:
+            return str(number)
+        as_float = float(number)
     except Exception:  # noqa: BLE001
         return str(value)
+
+    if notation == "fixed":
+        places = 4 if chosen is None else chosen
+        return f"{as_float:.{max(places, 0)}f}"
+
+    figures = max(chosen if chosen is not None else digits, 1)
+    if notation == "scientific":
+        return f"{as_float:.{figures - 1}e}"
+    if notation == "engineering":
+        return _engineering(as_float, figures)
+
+    # Auto: a whole number is written as one, and anything else to the
+    # figures asked for with the trailing zeros trimmed.
+    if as_float == int(as_float) and abs(as_float) < 1e15:
+        return str(int(as_float))
+    return f"{as_float:.{figures}g}"

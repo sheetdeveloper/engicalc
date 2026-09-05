@@ -465,7 +465,11 @@ def _append(row: Row, expr, bracket_add: bool = False) -> None:
         return
 
     if expr.is_Number or expr.is_NumberSymbol:
-        row.items.extend(str(expr))
+        # str() on a Float prints the fifteen digits it carries rather than
+        # the ones that were typed, so 0.15 comes back as
+        # 0.150000000000000 and fills the bar. The shortest form that reads
+        # back as the same number is what belongs in an editable box.
+        row.items.extend(repr(float(expr)) if expr.is_Float else str(expr))
         return
 
     if expr.is_Add:
@@ -550,6 +554,12 @@ def _append(row: Row, expr, bracket_add: bool = False) -> None:
 def _display_text(expr) -> str:
     from ..core.display import fmt
 
+    # A Float carries fifteen digits whether or not they were typed, and
+    # `repr` prints all of them: 1.5 comes back as 1.50000000000000. The
+    # shortest form that reads back as the same number is the one that was
+    # typed, near enough, and it is what belongs in an editable box.
+    if getattr(expr, "is_Float", False):
+        return repr(float(expr))
     try:
         return fmt(expr)
     except Exception:                                   # noqa: BLE001
@@ -567,12 +577,15 @@ def structured_row(text: str) -> Row:
     Half-typed input is the normal case while someone is still typing, so a
     parse failure is not an error - it just means no structure yet.
     """
-    from ..core.parsing import parse_for_display
+    from ..core.parsing import parse_for_display, symbols_in
 
     if not text.strip():
         return Row()
     try:
-        row = row_from_expression(parse_for_display(text))
+        # Declared first, or a run of letters is split into a product on the
+        # way in and written back out that way: `Re` returned as `R*E`.
+        row = row_from_expression(
+            parse_for_display(text, extra_symbols=symbols_in(text)))
     except Exception:                                   # noqa: BLE001
         return row_from_text(text)
     return row if row.items else row_from_text(text)

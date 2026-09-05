@@ -125,8 +125,27 @@ class InterpolateTab(ttk.Frame):
         answer.pack(fill="both", expand=True, pady=(6, 0))
         self.answer_math = mathrender.MathLabel(answer, fontsize=20, height=54)
         self.answer_math.pack(fill="x")
-        self.working = ReadOnlyText(answer, height=9)
-        self.working.pack(fill="both", expand=True, pady=(4, 0))
+
+        # The working drawn as notation, the way the calculator draws it.
+        # A fraction shown properly in one box and as characters in the box
+        # below it is the app choosing two ways to write maths.
+        working_header = ttk.Frame(answer)
+        working_header.pack(fill="x", pady=(6, 0))
+        ttk.Label(working_header, text="Working",
+                  style="Hint.TLabel").pack(side="left")
+        self.steps_mode = tk.StringVar(value="math")
+        ttk.Radiobutton(working_header, text="typeset", value="math",
+                        variable=self.steps_mode,
+                        command=self._render_steps).pack(side="right")
+        ttk.Radiobutton(working_header, text="plain text", value="text",
+                        variable=self.steps_mode,
+                        command=self._render_steps).pack(side="right", padx=6)
+
+        self.steps_holder = ttk.Frame(answer)
+        self.steps_holder.pack(fill="both", expand=True, pady=(4, 0))
+        self.steps_math = mathrender.MathList(self.steps_holder, fontsize=14)
+        self.working = ReadOnlyText(self.steps_holder, height=9)
+        self.steps_math.pack(fill="both", expand=True)
 
         plot_frame = ttk.Labelframe(right, text="The data", padding=4)
         plot_frame.pack(fill="both", expand=True, pady=(6, 0))
@@ -212,17 +231,39 @@ class InterpolateTab(ttk.Frame):
         except Exception:                             # noqa: BLE001
             self.answer_math.show(None, result.result_text)
 
-        lines = [result.result_text, ""]
-        if result.warnings:
-            lines += ["! " + w for w in result.warnings] + [""]
-        lines.append(result.steps_text())
-        self.working.set("\n".join(lines))
+        self._render_steps()
         self._draw(result)
         self.status.configure(
             text="Extrapolated - see the warning" if result.warnings
             else "Done")
         if self.app.autosave.get():
             self.save(quiet=True)
+
+    def _render_steps(self) -> None:
+        """Draw the working, at whichever level and in whichever form."""
+        if self.result is None:
+            return
+        for widget in (self.steps_math, self.working):
+            widget.pack_forget()
+
+        wants_all = self.app.show_working.get()
+        steps = [step for step in self.result.steps
+                 if wants_all or not step.minor]
+
+        if self.steps_mode.get() == "text":
+            self.working.pack(fill="both", expand=True)
+            lines = [self.result.result_text, ""]
+            if self.result.warnings:
+                lines += ["! " + w for w in self.result.warnings] + [""]
+            lines += [s.text() for s in steps]
+            self.working.set("\n".join(lines))
+            return
+
+        self.steps_math.pack(fill="both", expand=True)
+        blocks = [(step.title, step.drawn(), step.detail) for step in steps]
+        for warning in self.result.warnings:
+            blocks.append(("Note", None, warning))
+        self.steps_math.render(blocks or [("", None, "(no working)")])
 
     def _draw(self, result) -> None:
         """The data, the fitted curve if there is one, and the answer on it."""

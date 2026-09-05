@@ -39,7 +39,9 @@ the area it measures shaded underneath and the working beside it.*
 | ![All working](docs/screenshots/working.png) | ![Trendlines](docs/screenshots/statistics.png) |
 | **All working** - the rule stated, then applied | **Trendlines** - six shapes, scored so they compare |
 | ![Steam](docs/screenshots/steam.png) | ![Moist air](docs/screenshots/moistair.png) |
-| **Steam tables** computed from IAPWS-IF97 | **Moist air** - the psychrometric chart, read off exactly |
+| **Steam tables** computed from IAPWS-IF97, with the chart beside them | **Moist air** - the psychrometric chart, read off exactly |
+| ![A study](docs/screenshots/study.png) | ![Interpolation](docs/screenshots/interpolate.png) |
+| **Parametric studies** - the same set solved down a column of values | **Interpolation** - between the rows of a table, working shown |
 
 ---
 
@@ -66,6 +68,19 @@ installer includes on Windows and macOS. On Debian/Ubuntu: `sudo apt install
 python3-tk`.
 
 ---
+
+## How numbers are written
+
+**Options -> Numbers** sets the decimal places and the notation for the whole
+app at once - plain decimal, scientific or engineering, where engineering
+keeps the exponent a multiple of three because that is what makes it kilo or
+micro. A preference that applied to only some tabs would not be one.
+
+Plain decimal counts places after the point, which is what "decimal places"
+means; the others count significant figures, because a fixed number of
+places after the point does not go with an exponent. In the typeset panels an
+exponent is drawn as one - 565.884 x 10^3 rather than 565.884e3.
+
 
 ## The tabs
 
@@ -222,6 +237,17 @@ numerical solve that converged on the wrong branch looks exactly like one that
 worked until you do that. The check is relative: an absolute tolerance against
 a Reynolds number of half a million would be asking for more significant
 figures than double precision carries.
+
+Leave a set one equation short and the name nothing pins down becomes an
+input. The **Study** page beside the answer then solves the whole set once
+for each value of it and tabulates and plots the results - what the pressure
+drop does across every duct size, rather than at the one you were given.
+
+Each value is solved from the equations as written rather than from the
+previous answer. That is slower, and it is right: a set with more than one
+solution can jump between them as the swept value moves, and carrying the
+last answer forward would smooth over exactly that.
+
 
 ### Calculator -> Units
 
@@ -417,6 +443,7 @@ Three exports:
       core/fitting.py      six trendline shapes, scored so they compare
       core/steam.py        water and steam, from IAPWS-IF97
       core/psychrometrics.py  moist air, on top of that saturation pressure
+      plotting/property_plot.py  the saturation dome, T-s, P-v, P-h, T-v
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
       ui/
@@ -434,7 +461,7 @@ Three exports:
         simultaneous_tab.py  units_tab.py
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 290 tests
+    tests/test_engicalc.py 307 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 

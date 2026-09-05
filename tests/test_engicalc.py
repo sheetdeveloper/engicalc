@@ -2732,6 +2732,212 @@ class TestPsychrometrics(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# How numbers are written
+# --------------------------------------------------------------------------
+class TestNumberFormat(unittest.TestCase):
+    """One setting, consulted by every place that writes a number."""
+
+    def setUp(self):
+        from engicalc.core.display import AS_ASKED, set_number_format
+
+        # Whatever a test sets, put it back: this is module state and a
+        # leaked setting would show up as a puzzling failure somewhere else.
+        self.addCleanup(set_number_format, figures=AS_ASKED, notation="auto")
+
+    def test_it_changes_nothing_until_it_is_changed(self):
+        from engicalc.core.display import fmt_number
+
+        # Every call site was written against its own choice of figures, so
+        # the default has to be exactly that.
+        self.assertEqual(fmt_number(565884.2421, 7), "565884.2")
+        self.assertEqual(fmt_number(1.5, 7), "1.5")
+        self.assertEqual(fmt_number(4000, 7), "4000")
+
+    def test_decimal_places_are_places_not_figures(self):
+        from engicalc.core.display import fmt_number, set_number_format
+
+        # Four decimal places on 565884.2421 is 565884.2421. Four
+        # significant figures is 565900. Asking for one and getting the
+        # other is what makes a setting worse than no setting.
+        set_number_format(figures=4, notation="fixed")
+        self.assertEqual(fmt_number(565884.2421, 7), "565884.2421")
+        self.assertEqual(fmt_number(1.5, 7), "1.5000")
+        set_number_format(figures=2)
+        self.assertEqual(fmt_number(738.821919, 7), "738.82")
+
+    def test_engineering_puts_the_exponent_in_threes(self):
+        from engicalc.core.display import fmt_number, set_number_format
+
+        # 566e3 and 5.66e5 are the same number, but only one reads as kilo.
+        set_number_format(figures=6, notation="engineering")
+        self.assertEqual(fmt_number(565884.2421, 7), "565.884e3")
+        self.assertEqual(fmt_number(0.000123456, 7), "123.456e-6")
+        for value in (1.0, 12.0, 123.0, 1234.0, 12345.0, 1234567.0):
+            with self.subTest(value=value):
+                text = fmt_number(value, 7)
+                if "e" in text:
+                    self.assertEqual(int(text.split("e")[1]) % 3, 0)
+
+    def test_scientific_is_one_figure_before_the_point(self):
+        from engicalc.core.display import fmt_number, set_number_format
+
+        set_number_format(figures=4, notation="scientific")
+        self.assertEqual(fmt_number(565884.2421, 7), "5.659e+05")
+
+    def test_the_setting_can_be_put_back(self):
+        from engicalc.core.display import AS_ASKED, fmt_number, \
+            set_number_format
+
+        set_number_format(figures=3, notation="fixed")
+        # Setting one must leave the other alone...
+        set_number_format(notation="engineering")
+        self.assertEqual(fmt_number(1.5, 7), "1.5")
+        # ...and asking for the default figures must actually reset them,
+        # even while a notation is also being set.
+        set_number_format(figures=AS_ASKED, notation="auto")
+        self.assertEqual(fmt_number(565884.2421, 7), "565884.2")
+
+    def test_an_exponent_is_typeset_as_an_exponent(self):
+        import sympy as sp
+
+        from engicalc.core.display import latex, set_number_format
+
+        # The point of the typeset panels is that they show notation rather
+        # than the way notation has to be typed.
+        x = sp.Symbol("x")
+        set_number_format(figures=4, notation="scientific")
+        self.assertIn(r"\times 10^{5}", latex(sp.Eq(x, sp.Float("565884.24"))))
+        set_number_format(figures=6, notation="engineering")
+        self.assertIn(r"\times 10^{-6}",
+                      latex(sp.Eq(x, sp.Float("0.000123456"))))
+
+    def test_the_typeset_form_renders(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        import sympy as sp
+        from matplotlib import mathtext
+        from matplotlib.font_manager import FontProperties
+
+        from engicalc.core.display import latex, set_number_format
+
+        parser = mathtext.MathTextParser("path")
+        x = sp.Symbol("x")
+        for notation in ("scientific", "engineering", "fixed", "auto"):
+            set_number_format(figures=4, notation=notation)
+            for value in ("565884.2421", "0.000123456", "1.5"):
+                with self.subTest(notation=notation, value=value):
+                    drawn = latex(sp.Eq(x, sp.Float(value)))
+                    parser.parse(f"${drawn}$", dpi=100,
+                                 prop=FontProperties(size=14))
+
+    def test_a_bare_power_of_ten_loses_its_one(self):
+        from engicalc.core.display import number_to_latex
+
+        # "1 x 10^5" is how nobody writes it.
+        self.assertEqual(number_to_latex("1e5"), "10^{5}")
+        self.assertEqual(number_to_latex("-1e5"), "-10^{5}")
+        self.assertEqual(number_to_latex("2.5e5"), r"2.5 \times 10^{5}")
+        self.assertEqual(number_to_latex("42"), "42")
+
+    def test_a_notation_that_does_not_exist_is_refused(self):
+        from engicalc.core.display import set_number_format
+
+        with self.assertRaises(ValueError):
+            set_number_format(notation="roman numerals")
+
+
+# --------------------------------------------------------------------------
+# A parametric study
+# --------------------------------------------------------------------------
+class TestSweep(unittest.TestCase):
+    """The same set solved down a column of values.
+
+    One number in a calculation is rarely the number - it is the one you
+    were given this time - and duct diameters come in sizes.
+    """
+
+    DUCT = ("A = pi*d^2/4\n"
+            "v = 0.5/A\n"
+            "Re = v*d/7.5e-6\n"
+            "f = 0.3164/Re^0.25\n"
+            "dp = f*(20/d)*1.2*v^2/2")
+
+    def test_only_what_the_equations_take_as_input_is_offered(self):
+        from engicalc.core.system import free_names
+
+        # Every other name is worked out by an equation. Fixing one of those
+        # would be over-determining the set in a roundabout way.
+        self.assertEqual(free_names(self.DUCT), ["d"])
+
+    def test_a_determined_set_has_nothing_to_sweep(self):
+        from engicalc.core.system import free_names
+
+        self.assertEqual(free_names("x + y = 10\nx - y = 2"), [])
+
+    def test_it_solves_once_for_each_value(self):
+        from engicalc.core.system import spread, sweep
+
+        rows = sweep(self.DUCT, "d", spread(0.1, 0.3, 5))
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(all(row.ok for row in rows))
+        self.assertAlmostEqual(rows[0].value, 0.1)
+        self.assertAlmostEqual(rows[-1].value, 0.3)
+
+    def test_the_answers_move_the_way_the_physics_does(self):
+        from engicalc.core.system import spread, sweep
+
+        # A wider duct is a slower one and a much lower pressure drop.
+        rows = sweep(self.DUCT, "d", spread(0.1, 0.3, 5))
+        drops = [row.get("dp") for row in rows]
+        speeds = [row.get("v") for row in rows]
+        self.assertEqual(drops, sorted(drops, reverse=True))
+        self.assertEqual(speeds, sorted(speeds, reverse=True))
+        self.assertAlmostEqual(rows[1].get("dp"), 738.8, delta=1.0)
+
+    def test_spread_includes_both_ends(self):
+        from engicalc.core.system import spread
+
+        values = spread(0.0, 1.0, 5)
+        self.assertEqual(len(values), 5)
+        self.assertAlmostEqual(values[0], 0.0)
+        self.assertAlmostEqual(values[-1], 1.0)
+        self.assertEqual(spread(2.0, 9.0, 1), [2.0])
+
+    def test_a_value_that_will_not_solve_is_reported_not_dropped(self):
+        from engicalc.core.system import sweep, sweep_table
+
+        # A row that failed still has to appear, or the table quietly has a
+        # gap in it and the shape of the answer looks different.
+        rows = sweep("y = 1/x", "x", [1.0, 0.0, 2.0])
+        self.assertEqual(len(rows), 3)
+        headings, table = sweep_table(rows, ["y"])
+        self.assertEqual(len(table), 3)
+        self.assertEqual(headings[0], "value")
+
+    def test_a_numerical_answer_has_its_imaginary_dust_dropped(self):
+        from engicalc.core.system import solve_set
+
+        # nsolve returned the pressure drop as 738.82 - 4.9e-18*I, which is a
+        # real number with floating point dust on it, and it went to the
+        # answer panel looking like that.
+        result = solve_set(self.DUCT + "\nd = 0.15")
+        for value in result.results[0].values():
+            with self.subTest(value=value):
+                self.assertFalse(value.has(sp.I),
+                                 f"{value} still carries an imaginary part")
+
+    def test_a_genuinely_complex_answer_is_kept(self):
+        from engicalc.core.system import _tidy
+
+        # Dropping the imaginary part of a real answer is tidying; dropping
+        # it from a complex one is losing the answer.
+        kept = _tidy({sp.Symbol("x"): sp.Float(3.0) + 4 * sp.I})
+        self.assertTrue(list(kept.values())[0].has(sp.I))
+        tidied = _tidy({sp.Symbol("x"): sp.Float(3.0) + sp.Float(1e-18) * sp.I})
+        self.assertFalse(list(tidied.values())[0].has(sp.I))
+
+
+# --------------------------------------------------------------------------
 # Units
 # --------------------------------------------------------------------------
 class TestUnits(unittest.TestCase):

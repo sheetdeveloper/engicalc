@@ -26,6 +26,10 @@ from ..core.steam import (P_CRITICAL, T_CRITICAL, SteamError, saturated,
                           saturation_pressure, saturation_temperature, state,
                           wet)
 from ..core.steps import Step
+from ..plotting.property_plot import DIAGRAMS, draw
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
 from ..export.excel import export_table
 from .widgets import MONO, ScrollFrame
 
@@ -106,10 +110,33 @@ class SteamTab(ttk.Frame):
                               wraplength=900, justify="left")
         self.note.pack(fill="x", pady=(6, 0))
 
-        answer = ttk.Labelframe(self, text="Properties", padding=6)
-        answer.pack(fill="both", expand=True, pady=(8, 0))
+        panes = ttk.PanedWindow(self, orient="horizontal")
+        panes.pack(fill="both", expand=True, pady=(8, 0))
+
+        answer = ttk.Labelframe(panes, text="Properties", padding=6)
         self.table = ScrollFrame(answer, height=300)
         self.table.pack(fill="both", expand=True)
+        panes.add(answer, weight=3)
+
+        # The chart beside the numbers. Where a state sits - inside the dome
+        # or outside it, near the critical point or nowhere near - is usually
+        # the actual question, and it is the thing a table cannot show.
+        chart = ttk.Labelframe(panes, text="Where that is", padding=6)
+        picker = ttk.Frame(chart)
+        picker.pack(fill="x")
+        ttk.Label(picker, text="Diagram").pack(side="left")
+        self.diagram = tk.StringVar(value="T-s")
+        box = ttk.Combobox(picker, state="readonly", width=8,
+                           textvariable=self.diagram, values=list(DIAGRAMS))
+        box.pack(side="left", padx=4)
+        box.bind("<<ComboboxSelected>>", lambda e: self._draw())
+        self.figure = Figure(figsize=(4.6, 3.4), dpi=100)
+        self.figure.patch.set_facecolor("white")
+        self.axes = self.figure.add_subplot(111)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=chart)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True,
+                                         pady=(4, 0))
+        panes.add(chart, weight=4)
 
         self.status = ttk.Label(actions, text="Ready", style="Hint.TLabel")
         self.status.pack(side="left")
@@ -177,7 +204,17 @@ class SteamTab(ttk.Frame):
 
         self.note.configure(text="")
         self._fill(states, heading)
+        self._draw()
         self.status.configure(text=heading)
+
+    def _draw(self) -> None:
+        """Redraw the chart with the current states marked."""
+        try:
+            draw(self.axes, self.diagram.get(), self.result or ())
+            self.figure.tight_layout()
+            self.canvas.draw_idle()
+        except Exception:                             # noqa: BLE001
+            pass          # a chart that will not draw must not stop the table
 
     def _states(self):
         """(the states to show, a line describing them)."""
