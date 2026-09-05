@@ -91,8 +91,12 @@ class LibraryTab(ttk.Frame):
         self.result_math.configure(height=120)
         self.result_math.pack(fill="both", expand=True)
 
+        # Anchored to the bottom so it always gets its full height.
+        # Packed after an expanding pane it is last in line for space
+        # and gets sliced to a few pixels - the buttons are there but
+        # show as blank slivers. See TestActionRows.
         actions = ttk.Frame(right)
-        actions.pack(fill="x", pady=(8, 0))
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
         ttk.Button(actions, text="Save to history",
                    command=self.save).pack(side="left")
         ttk.Button(actions, text="Export to Excel",

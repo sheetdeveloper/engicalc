@@ -1203,3 +1203,70 @@ class TestMatrices(unittest.TestCase):
             solve_system(self._m("1 0\n0 1"), self._m("1\n2")), CalcResult)
         self.assertIsInstance(
             operate(self._m("1 0\n0 1"), "determinant"), CalcResult)
+
+
+# --------------------------------------------------------------------------
+# Every tab's action buttons
+# --------------------------------------------------------------------------
+class TestActionRows(unittest.TestCase):
+    """No button may be squeezed below the height it needs.
+
+    A row of buttons packed after an expanding pane is last in line for
+    space. On a smaller window it gets a few pixels of the thirty-one it
+    needs, and the buttons render as blank grey slivers - present, clickable,
+    unreadable. This happened on the calculator, was fixed there, and then
+    came straight back in two tabs written afterwards, so it is checked
+    across every tab rather than one at a time.
+    """
+
+    SIZES = ["1280x820", "1100x760", "1000x700", "980x640"]
+
+    @classmethod
+    def setUpClass(cls):
+        import matplotlib
+        matplotlib.use("Agg")
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.destroy()
+        except Exception as exc:                      # noqa: BLE001
+            raise unittest.SkipTest(f"no display available: {exc}")
+
+    @staticmethod
+    def _buttons(widget, found):
+        for child in widget.winfo_children():
+            if child.winfo_class() in ("TButton", "TMenubutton"):
+                found.append(child)
+            TestActionRows._buttons(child, found)
+        return found
+
+    def test_no_button_is_clipped_at_any_supported_window_size(self):
+        from engicalc.ui.app import EngiCalcApp
+
+        app = EngiCalcApp()
+        try:
+            notebook = app.notebook
+            for size in self.SIZES:
+                app.geometry(size)
+                app.update()
+                app.update_idletasks()
+                for index in range(len(notebook.tabs())):
+                    notebook.select(index)
+                    app.update()
+                    app.update_idletasks()
+                    name = notebook.tab(index, "text").strip()
+                    tab = notebook.nametowidget(notebook.tabs()[index])
+                    clipped = [
+                        b for b in self._buttons(tab, [])
+                        if b.winfo_ismapped()
+                        and b.winfo_height() < b.winfo_reqheight()]
+                    with self.subTest(size=size, tab=name):
+                        self.assertEqual(
+                            [], clipped,
+                            f"{len(clipped)} clipped on {name} at {size}: "
+                            + ", ".join(
+                                f"{b.cget('text')!r} "
+                                f"{b.winfo_height()}/{b.winfo_reqheight()}px"
+                                for b in clipped))
+        finally:
+            app.destroy()

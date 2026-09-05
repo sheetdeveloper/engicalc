@@ -64,6 +64,21 @@ class MatrixTab(ttk.Frame):
                   text="one row per line; paste straight from Excel").pack(
                       side="left", padx=(10, 0))
 
+        # Packed before the expanding pane and anchored to the bottom.
+        # Pack allocates in packing order, so a row packed after an
+        # expanding widget is last in line for space and gets sliced
+        # to a few pixels - the buttons are there but show as blank
+        # slivers. side="bottom" alone is not enough. See
+        # TestActionRows.
+        actions = ttk.Frame(self)
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
+        self.status = ttk.Label(actions, text="Ready", style="Hint.TLabel")
+        self.status.pack(side="left")
+        ttk.Button(actions, text="Save to history",
+                   command=self.save).pack(side="right")
+        ttk.Button(actions, text="Copy as picture",
+                   command=self.copy_picture).pack(side="right", padx=6)
+
         panes = ttk.PanedWindow(self, orient="horizontal")
         panes.pack(fill="both", expand=True, pady=(8, 0))
 
@@ -117,14 +132,6 @@ class MatrixTab(ttk.Frame):
         self.working.pack(fill="both", expand=True, pady=(4, 0))
         panes.add(right, weight=3)
 
-        actions = ttk.Frame(self)
-        actions.pack(fill="x", pady=(8, 0))
-        self.status = ttk.Label(actions, text="Ready", style="Hint.TLabel")
-        self.status.pack(side="left")
-        ttk.Button(actions, text="Save to history",
-                   command=self.save).pack(side="right")
-        ttk.Button(actions, text="Copy as picture",
-                   command=self.copy_picture).pack(side="right", padx=6)
         self._sync()
 
     def _sync(self) -> None:

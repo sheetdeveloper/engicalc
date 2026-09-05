@@ -67,8 +67,12 @@ class HistoryTab(ttk.Frame):
         self.detail = ReadOnlyText(detail_frame, height=6, font=MONO)
         self.detail.pack(fill="x")
 
+        # Anchored to the bottom so it always gets its full height.
+        # Packed after an expanding pane it is last in line for space
+        # and gets sliced to a few pixels - the buttons are there but
+        # show as blank slivers. See TestActionRows.
         actions = ttk.Frame(self)
-        actions.pack(fill="x", pady=(8, 0))
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
         ttk.Button(actions, text="Reopen", command=self.reopen).pack(side="left")
         ttk.Button(actions, text="Toggle favourite",
                    command=self.toggle_favourite).pack(side="left", padx=6)
