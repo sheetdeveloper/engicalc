@@ -2460,6 +2460,171 @@ class TestReopenFromHistory(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# Water and steam
+# --------------------------------------------------------------------------
+class TestSteamAgainstTheStandard(unittest.TestCase):
+    """The verification values published with IAPWS-IF97.
+
+    This is the whole basis for trusting the module. The coefficients are
+    long and the formulation is easy to get subtly wrong, and a subtly wrong
+    property is worse than none at all because it gets believed. If these
+    fail, the module is wrong and must not be used until they pass.
+    """
+
+    #: T (K), p (MPa), v (m3/kg), h (kJ/kg), u (kJ/kg), s (kJ/kg K)
+    REGION_1 = [
+        (300, 3, 0.100215168e-2, 0.115331273e3, 0.112324818e3, 0.392294792),
+        (300, 80, 0.971180894e-3, 0.184142828e3, 0.106448356e3, 0.368563852),
+        (500, 3, 0.120241800e-2, 0.975542239e3, 0.971934985e3, 0.258041912e1),
+    ]
+    REGION_2 = [
+        (300, 0.0035, 0.394913866e2, 0.254991145e4, 0.241169160e4,
+         0.852238967e1),
+        (700, 0.0035, 0.923015898e2, 0.333568375e4, 0.301262819e4,
+         0.101749996e2),
+        (700, 30, 0.542946619e-2, 0.263149474e4, 0.246861076e4,
+         0.517540298e1),
+    ]
+
+    def _check(self, computed, expected):
+        for key, want in zip(("v", "h", "u", "s"), expected):
+            with self.subTest(property=key):
+                self.assertAlmostEqual(computed[key] / want, 1.0, places=8)
+
+    def test_region_1_matches_the_published_values(self):
+        from engicalc.core.steam import _region1
+
+        for T, pressure, *expected in self.REGION_1:
+            with self.subTest(T=T, p=pressure):
+                self._check(_region1(pressure, T), expected)
+
+    def test_region_2_matches_the_published_values(self):
+        from engicalc.core.steam import _region2
+
+        for T, pressure, *expected in self.REGION_2:
+            with self.subTest(T=T, p=pressure):
+                self._check(_region2(pressure, T), expected)
+
+    def test_the_saturation_line_hits_its_fixed_points(self):
+        from engicalc.core import steam
+
+        # The triple point and the critical point are defined values, not
+        # fitted ones, so landing on them is a real check.
+        self.assertAlmostEqual(steam.saturation_pressure(273.16),
+                               611.657e-6, places=9)
+        self.assertAlmostEqual(steam.saturation_pressure(steam.T_CRITICAL),
+                               steam.P_CRITICAL, places=6)
+
+    def test_the_reference_state_falls_out_of_the_equations(self):
+        from engicalc.core.steam import saturated
+
+        # IF-97 defines the internal energy and entropy of saturated liquid
+        # at the triple point as zero. Nothing here sets that; it emerges,
+        # which is what makes it worth checking.
+        #
+        # It emerges to about a part in 1e8 rather than exactly, because
+        # IF-97 is a fast fit to IAPWS-95 rather than a restatement of it,
+        # and does not reproduce its own reference state to the last bit.
+        # The tolerance is that of the standard, not of this code - a real
+        # error in the coefficients would be orders of magnitude larger, and
+        # the published verification values above are the authoritative
+        # check either way.
+        liquid, _vapour = saturated(T=273.16)
+        self.assertAlmostEqual(liquid.u, 0.0, delta=1e-6)
+        self.assertAlmostEqual(liquid.s, 0.0, delta=1e-6)
+
+    def test_saturation_temperature_and_pressure_are_inverses(self):
+        from engicalc.core.steam import (saturation_pressure,
+                                         saturation_temperature)
+
+        for celsius in (0.01, 50, 100, 200, 300, 370):
+            with self.subTest(celsius=celsius):
+                T = celsius + 273.15
+                self.assertAlmostEqual(
+                    saturation_temperature(saturation_pressure(T)), T,
+                    places=6)
+
+    def test_the_familiar_numbers_come_out_right(self):
+        from engicalc.core.steam import saturated
+
+        # The ones a student would notice if they were wrong.
+        liquid, vapour = saturated(T=373.15)
+        self.assertAlmostEqual(liquid.p * 1000, 101.42, places=1)
+        self.assertAlmostEqual(liquid.h, 419.10, places=1)
+        self.assertAlmostEqual(vapour.h, 2675.57, places=1)
+        self.assertAlmostEqual(vapour.h - liquid.h, 2256.47, places=1)
+
+    def test_wet_steam_is_the_weighted_average_it_should_be(self):
+        from engicalc.core.steam import saturated, wet
+
+        liquid, vapour = saturated(p=0.2)
+        mixture = wet(0.8, p=0.2)
+        # h = hf + x*hfg, done once here instead of by hand off two rows.
+        self.assertAlmostEqual(mixture.h,
+                               liquid.h + 0.8 * (vapour.h - liquid.h),
+                               places=9)
+        self.assertAlmostEqual(mixture.s,
+                               liquid.s + 0.8 * (vapour.s - liquid.s),
+                               places=9)
+
+    def test_the_ends_of_the_dome_are_the_saturated_states(self):
+        from engicalc.core.steam import saturated, wet
+
+        liquid, vapour = saturated(p=0.2)
+        self.assertAlmostEqual(wet(0.0, p=0.2).h, liquid.h, places=9)
+        self.assertAlmostEqual(wet(1.0, p=0.2).h, vapour.h, places=9)
+
+    def test_a_quality_outside_the_dome_is_refused(self):
+        from engicalc.core.steam import SteamError, wet
+
+        # Above 1 usually means the steam is superheated, which needs a
+        # temperature as well as a pressure - so say that rather than
+        # extrapolating the weighting past the vapour line.
+        with self.assertRaises(SteamError):
+            wet(1.4, p=0.2)
+        with self.assertRaises(SteamError):
+            wet(-0.1, p=0.2)
+
+    def test_a_known_table_row_comes_out_right(self):
+        from engicalc.core.steam import saturated
+
+        # 200 kPa, as printed in every set of steam tables.
+        liquid, vapour = saturated(p=0.2)
+        self.assertAlmostEqual(liquid.T - 273.15, 120.21, places=1)
+        self.assertAlmostEqual(liquid.h, 504.7, places=0)
+        self.assertAlmostEqual(vapour.h, 2706.2, places=0)
+
+    def test_a_state_lands_in_the_right_region(self):
+        from engicalc.core.steam import region_of
+
+        self.assertEqual(region_of(3.0, 300.0), 1)        # liquid water
+        self.assertEqual(region_of(0.0035, 300.0), 2)     # steam
+        self.assertEqual(region_of(30.0, 700.0), 2)
+
+    def test_a_region_that_is_not_implemented_says_so(self):
+        from engicalc.core.steam import SteamError, region_of, state
+
+        # A number from region 3 computed with region 1's equations looks
+        # entirely plausible and is simply wrong, so it is refused.
+        with self.assertRaises(SteamError):
+            region_of(25.0, 650.0)                        # near critical
+        with self.assertRaises(SteamError):
+            state(1.0, 1200.0)                            # above the standard
+        with self.assertRaises(SteamError):
+            state(1.0, 250.0)                             # ice
+
+    def test_the_saturation_line_stops_where_it_stops(self):
+        from engicalc.core.steam import SteamError, saturated
+
+        with self.assertRaises(SteamError):
+            saturated(T=700.0)                  # past the critical point
+        with self.assertRaises(SteamError):
+            saturated(T=373.15, p=0.1)          # both fixed at once
+        with self.assertRaises(SteamError):
+            saturated()                         # neither
+
+
+# --------------------------------------------------------------------------
 # Units
 # --------------------------------------------------------------------------
 class TestUnits(unittest.TestCase):
