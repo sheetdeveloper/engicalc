@@ -265,6 +265,35 @@ def _parse_side(text: str, local: dict, evaluate: bool = True) -> sp.Expr:
     )
 
 
+#: A run of two or more letters, which the parser reads as a product unless
+#: the name has been declared. Digits count as part of the run: `T1` is read
+#: as T times 1.
+_RUN = re.compile(r"[A-Za-z][A-Za-z0-9]+")
+
+
+def names_read_as_products(text: str, expression=None) -> list:
+    """Multi-letter runs in *text* that were read as several things.
+
+    Only the ones that really were split, checked against what came out
+    rather than guessed at from the spelling - `sin` is a function and `mm`
+    might be a declared name, and neither should be reported.
+    """
+    if not text:
+        return []
+    survived = set()
+    if expression is not None:
+        try:
+            survived = {s.name for s in expression.free_symbols}
+        except AttributeError:
+            survived = set()
+    found = []
+    for run in _RUN.findall(_preprocess(text)):
+        if run in survived or run in GLOBAL_DICT or run in found:
+            continue
+        found.append(run)
+    return found
+
+
 def parse_for_display(text: str, extra_symbols: dict | None = None):
     """Parse without simplifying, so the terms keep the order they were typed.
 

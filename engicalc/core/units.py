@@ -17,6 +17,7 @@ means, so :func:`convert` refuses the ambiguous case and asks.
 
 from __future__ import annotations
 
+import functools
 import re
 
 import sympy as sp
@@ -225,7 +226,18 @@ def convert(value, from_unit: str, to_unit: str, absolute: bool | None = None):
             return number - ABSOLUTE_ZERO
         return number
 
-    converted = u.convert_to(number * parse_unit(source), parse_unit(target))
+    return number * _factor(source, target)
+
+
+@functools.lru_cache(maxsize=None)
+def _factor(source: str, target: str):
+    """How many *target* there are in one *source*.
+
+    A constant, and deriving it is symbolic and not cheap, so it is derived
+    once. Only valid where the two units differ by scaling alone - Celsius
+    has an offset and never reaches here.
+    """
+    converted = u.convert_to(parse_unit(source), parse_unit(target))
     return sp.simplify(converted / parse_unit(target))
 
 
@@ -249,6 +261,84 @@ def to_declared(text: str, declared_unit: str,
         return converted, ""
     return converted, (f"{value_text} {given_unit} = "
                        f"{sp.Float(converted, 10)} {declared_unit}")
+
+
+#: Units grouped for a picker, in the order they are worth offering. Every
+#: name here is a key of :data:`UNITS` (or of :data:`CELSIUS`), and every one
+#: of those appears here exactly once - see the tests.
+CATEGORIES: dict = {
+    "Length": ["m", "mm", "cm", "km", "um", "in", "ft", "yd", "mile"],
+    "Area": ["hectare"],
+    "Volume": ["L", "mL", "gal"],
+    "Mass": ["kg", "g", "tonne", "lb"],
+    "Time": ["s", "ms", "min", "h", "day", "year"],
+    "Force": ["N", "kN", "MN"],
+    "Pressure": ["Pa", "kPa", "MPa", "GPa", "bar", "mbar", "atm", "psi"],
+    "Energy": ["J", "kJ", "MJ", "kWh", "cal", "kcal"],
+    "Power": ["W", "kW", "MW", "hp"],
+    "Temperature": ["K", "degC"],
+    "Angle": ["rad", "deg", "rev"],
+    "Frequency": ["Hz", "kHz", "rpm"],
+    "Electrical": ["V", "mV", "kV", "A", "mA", "ohm", "kohm", "F", "uF",
+                   "H", "mH", "C"],
+    "Amount": ["mol", "kmol"],
+}
+
+#: The spellings that are the same unit written another way. Offering all of
+#: them in a picker would be a list of synonyms rather than a list of units.
+ALIASES = {
+    "meter", "metre", "meters", "inch", "inches", "foot", "feet", "micron",
+    "sec", "hr", "t", "lbm", "litre", "mole", "Ohm", "ha",
+}
+
+
+def category_of(unit: str) -> str:
+    """Which group *unit* is offered under, or "" if it is not offered."""
+    for name, members in CATEGORIES.items():
+        if unit in members:
+            return name
+    return ""
+
+
+@functools.lru_cache(maxsize=None)
+def _dimension_named(unit: str):
+    """The dimension of one unit, worked out once.
+
+    Deriving this is symbolic and not cheap, and the answer cannot change
+    while the program is running - the unit table is a literal.
+    """
+    try:
+        return dimension_of(parse_unit(unit))
+    except Exception:                                 # noqa: BLE001
+        return None
+
+
+@functools.lru_cache(maxsize=None)
+def _same_dimension(unit: str) -> tuple:
+    wanted = _dimension_named(unit)
+    if wanted is None:
+        return ()
+    return tuple(
+        name for members in CATEGORIES.values() for name in members
+        if name not in CELSIUS and name != "K"
+        and _dimension_named(name) == wanted)
+
+
+def same_dimension(unit: str) -> list:
+    """Every offered unit measuring the same thing as *unit*.
+
+    Decided by comparing dimensions rather than by reading the categories,
+    because that is the question actually being asked - what this value can
+    be expressed as. Temperature is the exception the table cannot express:
+    degrees Celsius is a kelvin with an offset, so it is paired by hand.
+
+    A fresh list each time, because the cached answer behind it is shared
+    and a caller that sorted it in place would corrupt every later call.
+    """
+    unit = (unit or "").strip()
+    if unit in CELSIUS or unit == "K":
+        return ["K", "degC"]
+    return list(_same_dimension(unit))
 
 
 def looks_wrong(value, typical: str) -> str:

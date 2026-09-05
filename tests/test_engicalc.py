@@ -9,6 +9,7 @@ import random
 import re
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -907,6 +908,44 @@ class TestSimultaneousSet(unittest.TestCase):
         self.assertIn("Not enough to go on", result.result_text)
         self.assertIn("1 equation.", result.result_text)   # not "1 equations"
 
+    def test_a_fractional_power_never_reaches_the_exact_solver(self):
+        import time
+
+        from engicalc.core.system import solve_set
+
+        # sp.solve turns a system into a polynomial one and, failing that,
+        # reaches for a Groebner basis - doubly exponential in the worst
+        # case and impossible to interrupt. The duct example hit exactly
+        # that and sat at "Solving..." indefinitely. It only happened
+        # sometimes, because which path SymPy takes depends on its cached
+        # state, which is what let it through the tests and out to a user.
+        text = ("A = pi*0.15^2/4\n"
+                "v = 0.5/A\n"
+                "Re = v*0.15/7.5e-6\n"
+                "f = 0.3164/Re^0.25\n"
+                "dp = f*(20/0.15)*1.2*v^2/2")
+        started = time.monotonic()
+        result = solve_set(text)
+        self.assertLess(time.monotonic() - started, 5.0,
+                        "the solver went the expensive way round")
+        self.assertTrue(any("iteration" in step.title.lower()
+                            for step in result.steps),
+                        "it should say it was solved numerically")
+        values = {str(k): float(v) for k, v in result.results[0].items()}
+        self.assertAlmostEqual(values["Re"], 565884.0, delta=10.0)
+
+    def test_an_exact_answer_is_still_preferred_where_it_is_safe(self):
+        from engicalc.core.system import solve_set
+
+        # A whole-number power is not the dangerous shape - 1/A is A to the
+        # minus one - so these keep their exact answers.
+        self.assertIn("13/2", solve_set("x + y = 10; x - y = 3").result_text)
+        exact = solve_set("1/Rt = 1/R1 + 1/R2; R1 = 220; R2 = 330")
+        self.assertIn("Rt = 132", exact.result_text)
+        for result in (solve_set("x + y = 10; x - y = 3"), exact):
+            self.assertFalse(any("iteration" in step.title.lower()
+                                 for step in result.steps))
+
     def test_a_residual_is_judged_against_the_size_of_its_own_terms(self):
         from engicalc.core.system import solve_set
 
@@ -1577,6 +1616,39 @@ class TestActionRows(unittest.TestCase):
             raise unittest.SkipTest(f"no display available: {exc}")
 
     @staticmethod
+    def _notebooks(widget, found):
+        """Every notebook inside *widget*, however deeply nested."""
+        for child in widget.winfo_children():
+            if child.winfo_class() == "TNotebook":
+                found.append(child)
+            TestActionRows._notebooks(child, found)
+        return found
+
+    def _check_pages(self, app, notebook, size, path=""):
+        """Select every page of *notebook*, then any nested inside it."""
+        for index in range(len(notebook.tabs())):
+            notebook.select(index)
+            app.update()
+            app.update_idletasks()
+            name = ((path + " / ") if path else "") \
+                + notebook.tab(index, "text").strip()
+            tab = notebook.nametowidget(notebook.tabs()[index])
+            clipped = [
+                b for b in self._buttons(tab, [])
+                if b.winfo_ismapped()
+                and b.winfo_height() < b.winfo_reqheight()]
+            with self.subTest(size=size, tab=name):
+                self.assertEqual(
+                    [], clipped,
+                    f"{len(clipped)} clipped on {name} at {size}: "
+                    + ", ".join(
+                        f"{b.cget('text')!r} "
+                        f"{b.winfo_height()}/{b.winfo_reqheight()}px"
+                        for b in clipped))
+            for inner in self._notebooks(tab, []):
+                self._check_pages(app, inner, size, name)
+
+    @staticmethod
     def _buttons(widget, found):
         for child in widget.winfo_children():
             if child.winfo_class() in ("TButton", "TMenubutton"):
@@ -1594,25 +1666,9 @@ class TestActionRows(unittest.TestCase):
                 app.geometry(size)
                 app.update()
                 app.update_idletasks()
-                for index in range(len(notebook.tabs())):
-                    notebook.select(index)
-                    app.update()
-                    app.update_idletasks()
-                    name = notebook.tab(index, "text").strip()
-                    tab = notebook.nametowidget(notebook.tabs()[index])
-                    clipped = [
-                        b for b in self._buttons(tab, [])
-                        if b.winfo_ismapped()
-                        and b.winfo_height() < b.winfo_reqheight()]
-                    with self.subTest(size=size, tab=name):
-                        self.assertEqual(
-                            [], clipped,
-                            f"{len(clipped)} clipped on {name} at {size}: "
-                            + ", ".join(
-                                f"{b.cget('text')!r} "
-                                f"{b.winfo_height()}/{b.winfo_reqheight()}px"
-                                for b in clipped))
+                self._check_pages(app, notebook, size)
         finally:
+            app.update_idletasks()
             app.destroy()
 
 
@@ -1687,27 +1743,52 @@ class TestSaveAndExport(unittest.TestCase):
         from engicalc.ui.interpolate_tab import InterpolateTab
         from engicalc.ui.matrix_tab import MatrixTab
         from engicalc.ui.sheet_tab import SheetTab
+        from engicalc.ui.simultaneous_tab import SimultaneousTab
         from engicalc.ui.statistics_tab import StatisticsTab
 
-        wanted = (SheetTab, StatisticsTab, MatrixTab, InterpolateTab)
-        found = {}
-        notebook = self.app.notebook
-        for index, name in enumerate(notebook.tabs()):
-            widget = notebook.nametowidget(name)
-            if isinstance(widget, wanted):
-                found[notebook.tab(index, "text").strip()] = widget
-        return found
+        wanted = (SheetTab, StatisticsTab, MatrixTab, InterpolateTab,
+                  SimultaneousTab)
 
-    @staticmethod
-    def _work_it_out(tab):
-        for method in ("compute", "calculate"):
+        def walk(widget, found):
+            # Sub-tabs count. The simultaneous solver lives inside the
+            # Calculator, and a tab that cannot be found here is a tab whose
+            # save and export are never tried.
+            for child in widget.winfo_children():
+                if isinstance(child, wanted):
+                    found[type(child).__name__] = child
+                walk(child, found)
+            return found
+
+        return walk(self.app.notebook, {})
+
+    def _work_it_out(self, tab):
+        """Make the tab produce an answer, however it names doing so."""
+        for method in ("compute", "calculate", "solve"):
             if hasattr(tab, method):
                 getattr(tab, method)()
+                break
+        else:
+            self.fail(f"{type(tab).__name__} has no way to work anything out")
+
+        # Some tabs answer on a background thread and deliver through the
+        # event loop, so the loop has to be pumped or the answer never
+        # arrives and the tab looks as though it refused.
+        if getattr(tab, "runner", None) is None:
+            return
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            self.app.update()
+            if getattr(tab, "result", None) is not None:
                 return
+            time.sleep(0.02)
+        status = ""
+        if hasattr(tab, "status"):
+            status = f" - it says {tab.status.cget('text')!r}"
+        self.fail(f"{type(tab).__name__} produced no answer in 20s{status}")
 
     def test_every_tab_offers_both(self):
         tabs = self.tabs()
-        self.assertEqual(len(tabs), 4, f"found {sorted(tabs)}")
+        self.assertEqual(len(tabs), 5, f"found {sorted(tabs)}")
         for name, tab in tabs.items():
             with self.subTest(tab=name):
                 self.assertTrue(hasattr(tab, "save"), f"{name} cannot save")
@@ -1775,6 +1856,607 @@ class TestSaveAndExport(unittest.TestCase):
                           for cell in row if cell.value not in (None, "")]
                 self.assertGreater(len(filled), 3,
                                    f"{name} exported an empty sheet")
+
+
+# --------------------------------------------------------------------------
+# The simultaneous solver's tab
+# --------------------------------------------------------------------------
+class TestSimultaneousTab(unittest.TestCase):
+    """The count is what this screen is for.
+
+    Three equations and four unknowns has no single answer, and being told
+    so while typing is more use than any number would be - so the count is
+    shown before anything is solved and says what to do about a shortfall.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import matplotlib
+        matplotlib.use("Agg")
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.destroy()
+        except Exception as exc:                      # noqa: BLE001
+            raise unittest.SkipTest(f"no display available: {exc}")
+
+    def setUp(self):
+        import tempfile
+        from engicalc.ui.app import EngiCalcApp
+
+        self.app = EngiCalcApp(
+            db_path=os.path.join(tempfile.mkdtemp(), "h.db"))
+        self.addCleanup(self._close)
+        self.tab = self.app.simultaneous_tab
+        self.app.update_idletasks()
+
+    def _close(self):
+        try:
+            self.app.update_idletasks()
+        except Exception:                             # noqa: BLE001
+            pass
+        self.app.destroy()
+
+    def _solve(self):
+        self.tab.solve()
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            self.app.update()
+            if self.tab.result is not None:
+                return self.tab.result
+            time.sleep(0.02)
+        self.fail(f"no answer in 20s - it says "
+                  f"{self.tab.status.cget('text')!r}")
+
+    def test_it_lives_inside_the_calculator(self):
+        # A tenth top-level tab for something this close to the calculator
+        # would be one bar entry too many.
+        self.assertIs(self.app.calculator_pane.simultaneous, self.tab)
+        self.assertIs(self.app.calculator_pane.calculator,
+                      self.app.calculator_tab)
+
+    def test_the_count_says_what_to_do_about_a_shortfall(self):
+        self.tab.set_text("x + y = 10")
+        said = self.tab.count.cget("text")
+        self.assertIn("1 equation,", said)
+        self.assertIn("2 unknowns", said)
+        self.assertIn("Give 1 more equation", said)
+
+    def test_the_count_says_when_there_is_enough(self):
+        self.tab.set_text("x + y = 10\nx - y = 2")
+        self.assertIn("Enough to solve", self.tab.count.cget("text"))
+
+    def test_the_count_notices_too_many_equations(self):
+        self.tab.set_text("x = 1\nx = 2\ny = 3")
+        self.assertIn("more equation", self.tab.count.cget("text"))
+
+    def test_a_coupled_set_is_solved(self):
+        self.tab.set_text("\n".join([
+            "A = pi*0.15^2/4",
+            "v = 0.5/A",
+            "Re = v*0.15/7.5e-6",
+            "f = 0.3164/Re^0.25",
+            "dp = f*(20/0.15)*1.2*v^2/2"]))
+        result = self._solve()
+        values = {str(k): float(v) for k, v in result.results[0].items()}
+        self.assertAlmostEqual(values["Re"], 565884.0, delta=10.0)
+        self.assertAlmostEqual(values["dp"], 738.8, delta=1.0)
+        self.assertEqual([], result.warnings)
+
+    def test_the_examples_all_solve(self):
+        from engicalc.ui.simultaneous_tab import EXAMPLES
+
+        for name, text in EXAMPLES:
+            with self.subTest(example=name):
+                self.tab.set_text(text)
+                result = self._solve()
+                self.assertTrue(result.results,
+                                f"{name} produced no values: "
+                                f"{result.result_text}")
+
+
+# --------------------------------------------------------------------------
+# Trendlines
+# --------------------------------------------------------------------------
+class TestFitting(unittest.TestCase):
+    """Six shapes, and a score that can be compared across them."""
+
+    def test_each_shape_recovers_data_it_was_made_from(self):
+        import numpy as np
+
+        from engicalc.core.fitting import fit_curve
+
+        x = np.linspace(1.0, 6.0, 12)
+        cases = {
+            "linear": 2 * x + 1,
+            "quadratic": 3 * x ** 2 - 2 * x + 5,
+            "cubic": x ** 3 - 4 * x ** 2 + x + 2,
+            "exponential": 3 * np.exp(0.5 * x),
+            "logarithmic": 2.5 * np.log(x) + 4,
+            "power": 2 * x ** 1.7,
+        }
+        for kind, y in cases.items():
+            with self.subTest(kind=kind):
+                curve = fit_curve(kind, x, y)
+                self.assertTrue(curve.ok, curve.refused)
+                self.assertAlmostEqual(curve.r_squared, 1.0, places=6)
+
+    def test_the_right_shape_wins(self):
+        import numpy as np
+
+        from engicalc.core.fitting import best, fit_all
+
+        x = np.linspace(1.0, 6.0, 12)
+        self.assertEqual(best(fit_all(x, 3 * np.exp(0.5 * x))).key,
+                         "exponential")
+        self.assertEqual(best(fit_all(x, 2 * x ** 1.7)).key, "power")
+        self.assertEqual(best(fit_all(x, 2.5 * np.log(x) + 4)).key,
+                         "logarithmic")
+
+    def test_a_tie_goes_to_the_simpler_shape(self):
+        import numpy as np
+
+        from engicalc.core.fitting import best, fit_all
+
+        # A straight line is fitted perfectly by every polynomial. The one
+        # worth offering is the straight line.
+        x = np.linspace(1.0, 6.0, 12)
+        self.assertEqual(best(fit_all(x, 2 * x + 1)).key, "poly1")
+
+    def test_a_shape_that_cannot_be_fitted_says_why(self):
+        import numpy as np
+
+        from engicalc.core.fitting import fit_all
+
+        x = np.linspace(1.0, 6.0, 6)
+        curves = {c.key: c for c in fit_all(x, 3 * x - 5)}   # y goes negative
+        self.assertFalse(curves["exponential"].ok)
+        self.assertIn("above zero", curves["exponential"].refused)
+        self.assertFalse(curves["power"].ok)
+        # Refused shapes are still listed - "needs every y above zero" is
+        # more use than the shape quietly not appearing.
+        self.assertEqual(len(curves), 6)
+
+    def test_r_squared_is_measured_on_the_readings_not_their_logs(self):
+        import numpy as np
+
+        from engicalc.core.fitting import fit_curve
+
+        # An exponential is fitted by fitting a line to log(y). Scoring that
+        # line - which is what a spreadsheet reports - describes how well a
+        # line fits the logs, not how well the curve fits the readings, and
+        # taking logs squashes the large residuals that matter most. Two
+        # shapes scored that way cannot be compared.
+        rng = np.random.default_rng(7)
+        x = np.linspace(1.0, 6.0, 12)
+        y = 3 * np.exp(0.5 * x)
+        y = y * (1 + rng.normal(0, 0.12, y.size))
+
+        ours = fit_curve("exponential", x, y).r_squared
+
+        slope, intercept = np.polyfit(x, np.log(y), 1)
+        logged = np.log(y)
+        in_log_space = 1 - (np.sum((logged - (slope * x + intercept)) ** 2)
+                            / np.sum((logged - np.mean(logged)) ** 2))
+
+        self.assertLess(ours, in_log_space)
+        # And the difference is enough to change which shape looks best.
+        self.assertLess(ours, fit_curve("cubic", x, y).r_squared)
+
+    def test_a_curve_that_misses_can_score_below_zero(self):
+        import numpy as np
+
+        from engicalc.core.fitting import fit_curve
+
+        # Not a bug: it means the curve describes the readings worse than a
+        # flat line through their mean would, which is worth being told.
+        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        y = np.array([1.0, 40.0, 1.0, 40.0, 1.0, 40.0])
+        self.assertLess(fit_curve("logarithmic", x, y).r_squared, 0.2)
+
+    def test_a_polynomial_needs_enough_readings(self):
+        from engicalc.core.fitting import fit_curve
+
+        curve = fit_curve("cubic", [1.0, 2.0, 3.0], [1.0, 2.0, 3.0])
+        self.assertFalse(curve.ok)
+        self.assertIn("4 readings", curve.refused)
+
+
+# --------------------------------------------------------------------------
+# The unit converter
+# --------------------------------------------------------------------------
+class TestUnitGrouping(unittest.TestCase):
+
+    def test_every_unit_is_filed_exactly_once(self):
+        from engicalc.core.units import ALIASES, CATEGORIES, CELSIUS, UNITS
+
+        filed = [name for members in CATEGORIES.values() for name in members]
+        self.assertEqual(len(filed), len(set(filed)),
+                         "a unit is filed under two categories")
+        # Every unit is offered somewhere, or is deliberately an alias of one
+        # that is - a picker listing metre, meter and meters is a list of
+        # spellings rather than a list of units.
+        self.assertEqual(sorted(set(UNITS) - set(filed) - ALIASES), [])
+        # And nothing is offered that is not a unit.
+        self.assertEqual(sorted(set(filed) - set(UNITS) - set(CELSIUS)), [])
+
+    def test_what_a_value_converts_to_is_decided_by_dimension(self):
+        from engicalc.core.units import same_dimension
+
+        self.assertIn("psi", same_dimension("bar"))
+        self.assertIn("kWh", same_dimension("J"))
+        self.assertNotIn("kg", same_dimension("m"))
+        # Celsius and kelvin are paired by hand: the offset is not something
+        # a dimension can express.
+        self.assertEqual(sorted(same_dimension("degC")), ["K", "degC"])
+
+    def test_the_category_of_a_unit(self):
+        from engicalc.core.units import category_of
+
+        self.assertEqual(category_of("psi"), "Pressure")
+        self.assertEqual(category_of("nonsense"), "")
+
+
+class TestUnitsTab(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        import matplotlib
+        matplotlib.use("Agg")
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.destroy()
+        except Exception as exc:                      # noqa: BLE001
+            raise unittest.SkipTest(f"no display available: {exc}")
+
+    def setUp(self):
+        import tempfile
+        from engicalc.ui.app import EngiCalcApp
+
+        self.app = EngiCalcApp(
+            db_path=os.path.join(tempfile.mkdtemp(), "h.db"))
+        self.addCleanup(self._close)
+        self.tab = self.app.units_tab
+        self.app.update_idletasks()
+
+    def _close(self):
+        try:
+            self.app.update_idletasks()
+        except Exception:                             # noqa: BLE001
+            pass
+        self.app.destroy()
+
+    def _set(self, category, value, source, target):
+        self.tab.category.set(category)
+        self.tab._category_changed()
+        self.tab.value.set(value)
+        self.tab.source.set(source)
+        self.tab.target.set(target)
+        self.tab.convert()
+
+    def test_it_converts(self):
+        self._set("Pressure", "2.5", "bar", "psi")
+        self.assertIn("36.259", self.tab.answer.cget("text"))
+        self._set("Energy", "3.6", "MJ", "kWh")
+        self.assertIn("1 kWh", self.tab.answer.cget("text"))
+
+    def test_the_whole_column_is_offered(self):
+        self._set("Pressure", "2.5", "bar", "psi")
+        units = {unit for unit, _number in self.tab.equivalents()}
+        self.assertEqual(units, {"Pa", "kPa", "MPa", "GPa", "bar", "mbar",
+                                 "atm", "psi"})
+
+    def test_temperature_asks_which_kind_it_is(self):
+        # 20 degC is 293.15 K as a temperature and 20 K as a difference, and
+        # guessing wrong is a 273 degree error that looks plausible.
+        self._set("Temperature", "20", "degC", "K")
+        self.tab.absolute.set(True)
+        self.tab.convert()
+        self.assertIn("293.15", self.tab.answer.cget("text"))
+        self.tab.absolute.set(False)
+        self.tab.convert()
+        self.assertIn("20 K", self.tab.answer.cget("text"))
+
+    def test_the_choice_is_only_shown_where_it_matters(self):
+        self._set("Temperature", "20", "degC", "K")
+        self.assertTrue(self.tab.temperature_row.winfo_manager())
+        self._set("Length", "25", "mm", "in")
+        self.assertFalse(self.tab.temperature_row.winfo_manager())
+
+    def test_a_value_that_is_not_a_number_says_so(self):
+        self._set("Length", "not a number", "mm", "in")
+        self.assertEqual(self.tab.answer.cget("text"), "")
+        self.assertIn("not a number", self.tab.note.cget("text"))
+
+    def test_swapping_turns_the_conversion_round(self):
+        self._set("Length", "25", "mm", "in")
+        self.tab.swap()
+        self.assertEqual(self.tab.source.get(), "in")
+        self.assertEqual(self.tab.target.get(), "mm")
+
+
+# --------------------------------------------------------------------------
+# Showing the working
+# --------------------------------------------------------------------------
+class TestShowAllWorking(unittest.TestCase):
+    """The rule used is the part worth seeing.
+
+    The gap was between the integral of 2x and x squared: correct, and no
+    help to anyone trying to see where it came from.
+    """
+
+    def test_the_rule_is_named_and_stated(self):
+        from engicalc.core.engine import calculate
+
+        steps = calculate("2x", "integral", "x").steps
+        titles = [s.title for s in steps]
+        self.assertIn("Constant multiple", titles)
+        self.assertIn("Power rule", titles)
+        power = next(s for s in steps if s.title == "Power rule")
+        # Stated as notation, the way a textbook states it.
+        self.assertIn(r"\int", power.latex)
+        self.assertIn(r"\frac{x^{n+1}}{n+1}", power.latex)
+
+    def test_a_constant_multiple_shows_both_rules(self):
+        from engicalc.core.engine import calculate
+
+        # Two rules, not one: the constant comes out, and then something is
+        # done to what is left. Showing only the first is the original gap.
+        titles = [s.title for s in calculate("2x", "integral", "x").steps]
+        self.assertLess(titles.index("Constant multiple"),
+                        titles.index("Power rule"))
+
+    def test_a_transposition_is_one_move_at_a_time(self):
+        from engicalc.core.engine import calculate
+
+        steps = calculate("3x + 5 = 20", "solve", "x").steps
+        titles = [s.title for s in steps]
+        self.assertIn("Add 15 to both sides", titles)
+        self.assertIn("Divide both sides by 3", titles)
+        # Each move carries the equation it leaves behind.
+        move = next(s for s in steps if s.title == "Add 15 to both sides")
+        self.assertEqual(str(move.expr), "Eq(3*x, 15)")
+
+    def test_a_move_is_described_the_way_it_would_be_said(self):
+        from engicalc.core.engine import calculate
+
+        # Adding four is the same move as taking away minus four, and it is
+        # the one a person would say they were doing.
+        titles = [s.title for s in calculate("2x - 8 = 0", "solve", "x").steps]
+        self.assertIn("Add 8 to both sides", titles)
+        self.assertFalse([t for t in titles if "-8" in t])
+
+    def test_the_extra_steps_are_marked_rather_than_withheld(self):
+        from engicalc.core.engine import calculate
+
+        # Generated either way, so the switch does not have to work the
+        # answer out again.
+        steps = calculate("2x", "integral", "x").steps
+        self.assertTrue(any(s.minor for s in steps))
+        self.assertTrue(any(not s.minor for s in steps))
+
+    def test_the_ordinary_working_is_unchanged_by_default(self):
+        from engicalc.core.engine import calculate
+
+        steps = [s for s in calculate("2x", "integral", "x").steps
+                 if not s.minor]
+        self.assertEqual([s.title for s in steps],
+                         ["Integrate with respect to x", "Antiderivative F(x)"])
+
+    def test_the_rules_are_notation_that_renders(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        from matplotlib import mathtext
+        from matplotlib.font_manager import FontProperties
+
+        from engicalc.core.engine import calculate
+
+        parser = mathtext.MathTextParser("path")
+        drawn = 0
+        for text, operation in [("2x", "integral"), ("x^3", "integral"),
+                                ("1/x", "integral"), ("sin(x)", "integral"),
+                                ("exp(2x)", "integral"), ("x^3", "derivative"),
+                                ("x^2 - 5x + 6 = 0", "solve")]:
+            for step in calculate(text, operation, "x").steps:
+                if step.minor and step.latex:
+                    with self.subTest(input=text, rule=step.title):
+                        parser.parse(f"${step.latex}$", dpi=100,
+                                     prop=FontProperties(size=14))
+                        drawn += 1
+        self.assertGreater(drawn, 5, "no rules were drawn at all")
+
+
+# --------------------------------------------------------------------------
+# Saying when a name was read as a product
+# --------------------------------------------------------------------------
+class TestSplitNameNotice(unittest.TestCase):
+    """Nothing is declared in the equation bar, so a run of letters is
+    multiplied. That is right for free-form algebra - xy has always meant x
+    times y - but it is silent, and silence is what made the same thing hard
+    to find in the solver."""
+
+    def test_a_split_name_is_reported(self):
+        from engicalc.core.parsing import names_read_as_products, parse_input
+
+        expression = parse_input("Re*v/mu").expr
+        self.assertEqual(names_read_as_products("Re*v/mu", expression), ["Re"])
+
+    def test_a_name_that_survived_is_not_reported(self):
+        from engicalc.core.parsing import names_read_as_products, parse_input
+
+        # SymPy will not split a Greek name, so mu comes through whole and
+        # there is nothing to say about it.
+        expression = parse_input("Re*v/mu").expr
+        self.assertNotIn("mu", names_read_as_products("Re*v/mu", expression))
+
+    def test_functions_are_not_reported(self):
+        from engicalc.core.parsing import names_read_as_products, parse_input
+
+        for text in ["sin(x)+cos(x)", "sqrt(x)", "log10(x)"]:
+            with self.subTest(text=text):
+                expression = parse_input(text).expr
+                self.assertEqual(names_read_as_products(text, expression), [])
+
+    def test_an_ordinary_expression_says_nothing(self):
+        from engicalc.core.parsing import names_read_as_products, parse_input
+
+        # A note on every quadratic would be crying wolf.
+        expression = parse_input("2x^2 - 5x - 3 = 0").expr
+        self.assertEqual(names_read_as_products("2x^2 - 5x - 3 = 0",
+                                                expression), [])
+
+    def test_a_numbered_name_is_reported_too(self):
+        from engicalc.core.parsing import names_read_as_products, parse_input
+
+        # T1 comes out as T times 1, which is T - surprising enough to be
+        # worth saying out loud.
+        expression = parse_input("T1 + T2").expr
+        self.assertEqual(names_read_as_products("T1 + T2", expression),
+                         ["T1", "T2"])
+
+
+# --------------------------------------------------------------------------
+# Reopening a saved calculation
+# --------------------------------------------------------------------------
+class TestReopenFromHistory(unittest.TestCase):
+    """A saved calculation goes back to the tab it came from.
+
+    Saving worked everywhere and reopening did not: everything that was not
+    a formula went to the single-equation calculator, so a unit conversion
+    came back as "25 mm to in" in an equation bar and a set of equations as
+    several lines in a field that holds one. Nothing raised - it landed
+    somewhere it made no sense, which is the worst way to be wrong.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import matplotlib
+        matplotlib.use("Agg")
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.destroy()
+        except Exception as exc:                      # noqa: BLE001
+            raise unittest.SkipTest(f"no display available: {exc}")
+
+    def setUp(self):
+        import tempfile
+        from tkinter import messagebox
+
+        from engicalc.ui.app import EngiCalcApp
+
+        self.complaints = []
+        for name in ("showinfo", "showerror", "showwarning"):
+            original = getattr(messagebox, name)
+            setattr(messagebox, name,
+                    lambda title, message="", *a, _n=name, **kw:
+                    self.complaints.append((_n, title, message)))
+            self.addCleanup(setattr, messagebox, name, original)
+
+        self.app = EngiCalcApp(
+            db_path=os.path.join(tempfile.mkdtemp(), "h.db"))
+        self.addCleanup(self._close)
+        self.app.update_idletasks()
+
+    def _close(self):
+        try:
+            self.app.update_idletasks()
+        except Exception:                             # noqa: BLE001
+            pass
+        self.app.destroy()
+
+    def _solve_simultaneous(self):
+        tab = self.app.simultaneous_tab
+        tab.solve()
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            self.app.update()
+            if tab.result is not None:
+                return
+            time.sleep(0.02)
+        self.fail(f"no answer in 20s - it says "
+                  f"{tab.status.cget('text')!r}")
+
+    def _landed_on(self):
+        notebook = self.app.notebook
+        name = notebook.tab(notebook.select(), "text").strip()
+        if name == "Calculator":
+            inner = self.app.calculator_pane.tabs
+            name += " / " + inner.tab(inner.select(), "text").strip()
+        return name
+
+    def test_each_kind_goes_back_to_its_own_tab(self):
+        units = self.app.units_tab
+        units.category.set("Pressure")
+        units._category_changed()
+        units.value.set("2.5")
+        units.source.set("bar")
+        units.target.set("psi")
+        units.convert()
+        units.save(quiet=True)
+
+        self._solve_simultaneous()
+        self.app.simultaneous_tab.save(quiet=True)
+        self.app.sheet_tab.save(quiet=True)
+        self.app.statistics_tab.save(quiet=True)
+        self.app.update_idletasks()
+
+        expected = {"convert": "Calculator / Units",
+                    "system": "Calculator / Solved together",
+                    "sheet": "Sheet",
+                    "statistics": "Data"}
+        for entry in self.app.history.recent(limit=20):
+            if entry.operation not in expected:
+                continue
+            with self.subTest(saved_from=entry.operation):
+                self.complaints.clear()
+                self.app.reopen_entry(entry)
+                self.app.update_idletasks()
+                self.assertEqual([], self.complaints)
+                self.assertEqual(expected[entry.operation], self._landed_on())
+
+    def test_what_was_saved_comes_back(self):
+        units = self.app.units_tab
+        units.category.set("Pressure")
+        units._category_changed()
+        units.value.set("2.5")
+        units.source.set("bar")
+        units.target.set("psi")
+        units.convert()
+        units.save(quiet=True)
+        self.app.sheet_tab.save(quiet=True)
+        rows_before = len(self.app.sheet_tab.rows)
+        self.app.update_idletasks()
+
+        # Wipe both, so a restore is visibly a restore rather than the tab
+        # having been left as it was.
+        units.value.set("999")
+        units.category.set("Length")
+        units._category_changed()
+        self.app.sheet_tab._clear_rows()
+        self.app.sheet_tab.calculate()
+        self.app.update_idletasks()
+
+        for entry in self.app.history.recent(limit=20):
+            self.app.reopen_entry(entry)
+            self.app.update_idletasks()
+
+        self.assertIn("36.259", units.answer.cget("text"))
+        self.assertEqual(rows_before, len(self.app.sheet_tab.rows))
+
+    def test_an_entry_with_nothing_stored_still_opens(self):
+        from engicalc.storage.history import Entry
+
+        # Saved by an older version, before the tabs carried what rebuilds
+        # them. It should fall back rather than raise.
+        self.app.history.add(Entry(kind="calculator", operation="system",
+                                   title="x + y = 10", input_text="x + y = 10"))
+        entry = self.app.history.recent(limit=1)[0]
+        self.complaints.clear()
+        self.app.reopen_entry(entry)
+        self.app.update_idletasks()
+        self.assertEqual("Calculator / One equation", self._landed_on())
 
 
 # --------------------------------------------------------------------------
@@ -1914,7 +2596,10 @@ class TestEvaluationBar(unittest.TestCase):
     def _bar(self, integrand, lower="1", upper="2"):
         result = calculate(integrand, "integral", "x",
                            lower=lower, upper=upper)
-        return next((s.latex for s in result.steps if s.latex), "")
+        # The rule steps carry notation too, and are shown only when the
+        # working is asked for. The bar is a step of the ordinary sort.
+        return next((s.latex for s in result.steps
+                     if s.latex and not s.minor), "")
 
     def test_the_working_uses_the_evaluation_bar(self):
         bar = self._bar("2x", "-1.6", "2.4")
@@ -1959,7 +2644,7 @@ class TestEvaluationBar(unittest.TestCase):
 
     def test_an_indefinite_integral_has_no_bar(self):
         result = calculate("2x", "integral", "x")
-        self.assertFalse(any(s.latex for s in result.steps))
+        self.assertFalse(any(s.latex for s in result.steps if not s.minor))
         self.assertTrue(any("constant of integration" in (s.detail or "")
                             for s in result.steps))
 

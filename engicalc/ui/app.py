@@ -11,7 +11,7 @@ from .. import __version__
 from ..formulas.library import get_library
 from ..plotting.plot import spec_from_result
 from ..storage.history import DEFAULT_DB, History
-from .calculator_tab import CalculatorTab
+from .calculator_pane import CalculatorPane
 from .cards_tab import CardsTab
 from .graph_tab import GraphTab
 from .history_tab import HistoryTab
@@ -71,6 +71,9 @@ class EngiCalcApp(tk.Tk):
         self.history = History(db_path)
         self.project = tk.StringVar(value="")
         self.autosave = tk.BooleanVar(value=False)
+        # Every step is generated either way; this decides how many are
+        # shown. See core.steps.Step.minor.
+        self.show_working = tk.BooleanVar(value=False)
         # Off unless asked for. The app promises nothing leaves the machine,
         # and a check is a request to GitHub carrying an IP address - small,
         # but not the promise. Remembered once somebody turns it on.
@@ -101,6 +104,9 @@ class EngiCalcApp(tk.Tk):
                              variable=self.autosave)
         view.add_checkbutton(label="Check for updates at startup",
                              variable=self.check_at_start)
+        view.add_checkbutton(label="Show all working",
+                             variable=self.show_working,
+                             command=self.refresh_working)
         menu.add_cascade(label="Options", menu=view)
 
         help_menu = tk.Menu(menu, tearoff=0)
@@ -112,6 +118,14 @@ class EngiCalcApp(tk.Tk):
         help_menu.add_command(label="About", command=self.show_about)
         menu.add_cascade(label="Help", menu=help_menu)
         self.configure(menu=menu)
+
+    def refresh_working(self) -> None:
+        """Redraw the working wherever it is shown, at the new level."""
+        for tab in (self.calculator_tab, self.simultaneous_tab):
+            try:
+                tab._render_steps()
+            except Exception:                         # noqa: BLE001
+                pass          # a tab with nothing worked out yet has none
 
     # -- updates ----------------------------------------------------------
     def check_for_updates(self, quietly: bool = False) -> None:
@@ -168,7 +182,12 @@ class EngiCalcApp(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True, padx=8, pady=8)
 
-        self.calculator_tab = CalculatorTab(self.notebook, self)
+        # The pane holds the two calculator sub-tabs; `calculator_tab` is
+        # still the calculator itself, so nothing that talks to it changes.
+        self.calculator_pane = CalculatorPane(self.notebook, self)
+        self.calculator_tab = self.calculator_pane.calculator
+        self.simultaneous_tab = self.calculator_pane.simultaneous
+        self.units_tab = self.calculator_pane.units
         self.graph_tab = GraphTab(self.notebook, self)
         self.library_tab = LibraryTab(self.notebook, self)
         self.cards_tab = CardsTab(self.notebook, self)
@@ -178,7 +197,7 @@ class EngiCalcApp(tk.Tk):
         self.statistics_tab = StatisticsTab(self.notebook, self)
         self.history_tab = HistoryTab(self.notebook, self)
 
-        self.notebook.add(self.calculator_tab, text="  Calculator  ")
+        self.notebook.add(self.calculator_pane, text="  Calculator  ")
         self.notebook.add(self.graph_tab, text="  Graph  ")
         self.notebook.add(self.library_tab, text="  Formula library  ")
         self.notebook.add(self.cards_tab, text="  Formula cards  ")
@@ -210,7 +229,8 @@ class EngiCalcApp(tk.Tk):
             self, on_insert=self._insert_from_reference)
 
     def _insert_from_reference(self, item) -> None:
-        self.notebook.select(self.calculator_tab)
+        self.notebook.select(self.calculator_pane)
+        self.calculator_pane.show_calculator()
         self.calculator_tab.insert_item(item)
 
     def open_formula(self, formula) -> None:
@@ -243,6 +263,23 @@ class EngiCalcApp(tk.Tk):
                 if symbol in self.library_tab.entries:
                     self.library_tab.entries[symbol].set(str(value))
             self.notebook.select(self.library_tab)
+        elif entry.operation in self._restorable() and entry.inputs:
+            # Saved from a tab that knows how to rebuild itself. Without
+            # this every one of them came back as text in the equation bar -
+            # a unit conversion as "25 mm to in", a set of equations as
+            # several lines in a field that holds one. Nothing raised; it
+            # just landed somewhere it made no sense.
+            tab, sub = self._restorable()[entry.operation]
+            self.notebook.select(sub if sub is not None else tab)
+            if sub is not None:
+                self.calculator_pane.tabs.select(tab)
+            try:
+                tab.restore(entry.inputs)
+            except Exception as exc:                  # noqa: BLE001
+                messagebox.showinfo(
+                    "Could not reopen that",
+                    f"It was saved, but not in a form this version can put "
+                    f"back ({exc}).")
         else:
             self.calculator_tab.input_var.set(entry.input_text)
             if entry.operation:
@@ -250,8 +287,18 @@ class EngiCalcApp(tk.Tk):
             if entry.variable:
                 self.calculator_tab.var_var.set(entry.variable)
             self.calculator_tab._sync_options()
-            self.notebook.select(self.calculator_tab)
+            self.notebook.select(self.calculator_pane)
+            self.calculator_pane.show_calculator()
             self.calculator_tab.compute()
+
+    def _restorable(self) -> dict:
+        """operation -> (the tab, the pane holding it if it is a sub-tab)."""
+        return {
+            "system": (self.simultaneous_tab, self.calculator_pane),
+            "convert": (self.units_tab, self.calculator_pane),
+            "sheet": (self.sheet_tab, None),
+            "statistics": (self.statistics_tab, None),
+        }
 
     # -- dialogs ----------------------------------------------------------
     def show_about(self) -> None:

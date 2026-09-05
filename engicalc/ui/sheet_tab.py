@@ -246,6 +246,17 @@ class SheetTab(ttk.Frame):
         self.calculate()
         self.status.configure(text=f"Opened {os.path.basename(path)}")
 
+    def restore(self, source: dict) -> None:
+        """Rebuild this sheet from what was saved with it."""
+        sheet = Sheet.from_dict(source["sheet"])
+        self._clear_rows()
+        self.title_var.set(sheet.title)
+        for step in sheet.steps:
+            self._add_widgets(step.name, step.expression, step.unit, step.note)
+        self.path = None
+        self.calculate()
+        self.status.configure(text="Reopened from history")
+
     def save_as(self) -> None:
         path = filedialog.asksaveasfilename(
             defaultextension=".json", initialdir=SHEET_DIR,
@@ -314,7 +325,8 @@ class SheetTab(ttk.Frame):
                                     "Add a step or two first.")
             return
         self.app.history.add_result(self._as_result(),
-                                    project=self.app.project.get())
+                                    project=self.app.project.get(),
+                                    source={"sheet": self.sheet.to_dict()})
         self.app.refresh_history()
         self.status.configure(text="Saved to history")
 

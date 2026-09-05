@@ -96,6 +96,23 @@ def parse_set(text: str, given: dict | None = None) -> Parsed:
     return Parsed(equations, unknowns, given)
 
 
+
+def _fractional_power(parsed: Parsed) -> bool:
+    """True when an unknown is raised to something other than a whole number.
+
+    That is the shape that sends sp.solve into a Groebner basis, which can
+    take unbounded time and cannot be interrupted. An integer power - `1/A`
+    is A to the minus one - is not this, and solves exactly without trouble.
+    """
+    unknowns = set(parsed.unknowns)
+    for equation in parsed.equations:
+        for power in equation.atoms(sp.Pow):
+            if not (power.base.free_symbols & unknowns):
+                continue
+            if not power.exp.is_Integer:
+                return True
+    return False
+
 def _residuals(equations: list, answer: dict) -> list:
     """How far each equation is from being satisfied, relative to its size.
 
@@ -174,22 +191,34 @@ def solve_set(text: str, given: dict | None = None) -> CalcResult:
             "whole family of answers rather than one.")
         return result
 
-    solutions = []
-    try:
-        solutions = sp.solve(parsed.equations, parsed.unknowns, dict=True)
-    except Exception as exc:                          # noqa: BLE001
-        result.warnings.append(f"The exact solver gave up ({exc}).")
-
     answer = None
-    if solutions:
-        answer = solutions[0]
-        if len(solutions) > 1:
-            result.warnings.append(
-                f"{len(solutions)} sets of values satisfy these equations; "
-                "the first is shown. The others are just as valid - which one "
-                "is wanted is a question about the problem, not the algebra.")
-    else:
+    solutions = []
+    if _fractional_power(parsed):
+        # Straight to iteration. Asking for an exact answer here means a
+        # Groebner basis, which can take unbounded time and cannot be
+        # stopped once it has started - see the note on _fractional_power.
+        result.steps.append(Step(
+            "Solved by iteration",
+            detail="An unknown is raised to a fractional power, so there is "
+                   "no exact answer worth waiting for - this is found "
+                   "numerically instead."))
         answer = _numeric(parsed, result)
+    else:
+        try:
+            solutions = sp.solve(parsed.equations, parsed.unknowns, dict=True)
+        except Exception as exc:                      # noqa: BLE001
+            result.warnings.append(f"The exact solver gave up ({exc}).")
+
+        if solutions:
+            answer = solutions[0]
+            if len(solutions) > 1:
+                result.warnings.append(
+                    f"{len(solutions)} sets of values satisfy these "
+                    "equations; the first is shown. The others are just as "
+                    "valid - which one is wanted is a question about the "
+                    "problem, not the algebra.")
+        else:
+            answer = _numeric(parsed, result)
 
     if not answer:
         result.result_text = "No solution found."

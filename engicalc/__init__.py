@@ -1,3 +1,3 @@
 """EngiCalc - equation solver, grapher and engineering formula library."""
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
