@@ -23,7 +23,7 @@ dependencies: sympy, matplotlib, numpy, openpyxl. Tkinter and sqlite3 ship with
 Python.
 
 **Scale:** ~7,700 lines of Python across 44 modules. 212 formulas, 804 variable
-slots, 99 tests.
+slots, 114 tests.
 
 ---
 
@@ -33,7 +33,7 @@ slots, 99 tests.
 
 | Area | How it was checked |
 |---|---|
-| Solver, calculus, systems | 99 automated tests, all passing |
+| Solver, calculus, systems | 114 automated tests, all passing |
 | All 212 formulas | Every one parses; declared variables match the equation exactly (enforced by test) |
 | Rearrangement | 800 of 804 possible rearrangements resolve symbolically; the other 4 fall through to a numeric solver |
 | Excel export | Generated workbooks recalculated in LibreOffice: **0 formula errors**. Values checked by hand |
@@ -45,6 +45,7 @@ slots, 99 tests.
 | **The frozen build** | `build_exe.bat` run end to end on Windows. `dist\EngiCalc.exe` launches, loads the library, renders the typeset bar and the pad. Driven through `--cli` on the console build, the frozen engine solves, integrates (3.2 for the worked case), takes limits, and rearranges a library formula |
 | **Inequalities** | `<=`, `>=`, `<`, `>` and `!=` solve to a range, checked against the pad's own worked examples, an absolute value, a sign flip across a denominator (`1/x < 1`), an empty solution and a plain numeric comparison |
 | **Interpolation** | Linear checked against the arithmetic done by hand, a value on a row returning that row, an exact polynomial fit, reverse lookup, a curve that turns being reported as two answers, and extrapolation warning rather than answering quietly |
+| **Matrices** | A x = b checked by substituting the answer back into the original equations, a singular system refused rather than fudged, an ill-conditioned one flagged, eigenvalues of a known matrix, and rounding noise not reported as a complex result while genuinely complex eigenvalues are kept |
 | **The installer** | `build_installer.bat` compiled `Output\EngiCalc_Setup.exe` (57.7 MB) with Inno Setup 6 |
 
 ### Not verified
@@ -107,6 +108,13 @@ beyond the four already here. The caret trick is worth knowing: the expression
 is rendered a second time with a `|` at the cursor, and because everything ahead
 of the marker is laid out as though it were absent, the position that render
 reports is valid for the image actually drawn.
+
+**Matrices are drawn, not typeset by mathtext.** There is no array
+environment in the subset mathtext supports, so `ui/matrixview.py` lays the
+grid out itself and draws the brackets, typesetting only the individual
+entries. This is the same wall `_UNSUPPORTED` already guards; the fix was to
+stop asking mathtext for something it does not have rather than to widen the
+sanitiser and get a parse error at display time.
 
 **The spec collects whole packages rather than listing modules.** Both the
 formula library and SymPy import by name at runtime, so PyInstaller's import
@@ -202,7 +210,7 @@ Roughly by value per unit of effort.
 ## 6. How to verify a change
 
 ```
-run_engicalc.bat test          # 99 tests, about 25 seconds
+run_engicalc.bat test          # 114 tests, about 25 seconds
 run_engicalc.bat               # then actually look at the window
 ```
 
@@ -240,6 +248,8 @@ engicalc/
   ui/
     app.py             window shell, cross-tab plumbing
     interpolate_tab.py the table reader
+    matrix_tab.py      A x = b and friends
+    matrixview.py      draws a matrix, which mathtext cannot
     clipboard.py       a picture on the clipboard, for Word
     mathrender.py      LaTeX -> PNG -> Tk, with fallback
     mathfield.py       the editable typeset equation bar

@@ -50,6 +50,9 @@ If you add a feature, produce one of these rather than a new shape.
     core/interpolate.py   reading between the rows of a table. Parses a pasted
                           two-column table, interpolates, and returns a
                           CalcResult like everything else.
+    core/matrices.py      A x = b and the operations around it. Refuses a
+                          singular system rather than fudging it, and flags an
+                          ill-conditioned one.
     core/display.py       SymPy -> readable text (** becomes ^, Eq becomes =).
                           Cosmetic only, never parsed back.
     core/excel_printer.py SymPy -> Excel formula strings. See the rules below.
@@ -69,6 +72,8 @@ If you add a feature, produce one of these rather than a new shape.
                           typed text into the same tree.
     ui/clipboard.py       CF_DIB on the Windows clipboard, so a worked
                           calculation can be pasted into Word as a picture.
+    ui/matrixview.py      draws a matrix onto a canvas - typeset entries laid
+                          out in a grid with the brackets drawn as lines.
     ui/pad.py             the symbol list. Buttons, the reference window and the
                           syntax docs are all generated from PAD, so they cannot
                           drift apart - add a symbol here and it appears in all
@@ -111,6 +116,13 @@ it is laid out as though it were absent, which is what makes that position valid
 for the image actually drawn. The placeholder is a literal `□` because mathtext
 has neither `\square` nor `\Box` - if you change it, change `PLACEHOLDER_CP`
 with it, or the boxes stop being locatable.
+
+**Matrices never go through mathtext.** It has no array or matrix
+environment - `egin{bmatrix}`, `egin{array}` and SymPy's own matrix LaTeX
+all fail to parse, which is why `_UNSUPPORTED` rejects `egin{`. Anything
+drawing a matrix uses `ui/matrixview.py`, which typesets each entry on its own
+(those are ordinary expressions and mathtext is happy with them) and draws the
+brackets as lines. Do not "fix" this by widening the sanitiser.
 
 **Anything imported by name has to be declared to PyInstaller.** The formula
 library loads its eleven branch modules with `importlib.import_module`, and

@@ -11,6 +11,23 @@ New to this codebase? Read **HANDOVER.md** first - it covers what is built, what
 was verified and how, what was not, and what to do next. **CLAUDE.md** covers how
 to work on the code.
 
+**[Download the installer](https://github.com/sheetdeveloper/engicalc/releases/latest)**
+for Windows - no Python needed.
+
+---
+
+![The calculator](docs/screenshots/calculator.png)
+
+*A definite integral, typed into the equation bar as a real integral sign, with
+the area it measures shaded underneath and the working beside it.*
+
+| | |
+|---|---|
+| ![Matrices](docs/screenshots/matrices.png) | ![Interpolation](docs/screenshots/interpolate.png) |
+| **Matrices** - several equations solved at once | **Interpolation** - reading between the rows of a table |
+| ![Formula library](docs/screenshots/formula_library.png) | ![Graphing](docs/screenshots/graph.png) |
+| **212 formulas**, each rearranging for any variable | **Graphing** - explicit, implicit, parametric and polar |
+
 ---
 
 ## Running it
@@ -149,6 +166,26 @@ and you still get an answer, with a warning saying it is a guess from outside
 where the numbers came from. Reading past the end of a steam table silently
 is how people get hurt.
 
+### Matrices
+
+Built around **A x = b** - solving several equations at once, which is what
+matrices are for in engineering. A frame with a dozen joints gives a dozen
+equations that all have to hold, and this solves them in one step. Type or
+paste the coefficients one row per line.
+
+Also determinant, inverse, transpose, rank, eigenvalues (natural frequencies,
+buckling loads, principal stresses) and multiplication. Entries can be
+symbols, not just numbers.
+
+Two things it refuses to do quietly:
+
+- **A singular matrix has no unique solution**, so it says so instead of
+  returning whatever dividing by nearly-zero produced. The equations are
+  either contradictory or say the same thing twice.
+- **An ill-conditioned matrix is flagged.** If small changes in the inputs
+  would swing the answer wildly, the figures are arithmetic rather than
+  engineering, and you are told.
+
 ### History
 
 Every calculation you save goes into a SQLite database at
@@ -221,6 +258,7 @@ Three exports:
         data/              one module per branch - this is where to add formulas
       plotting/plot.py     all four curve types, root marking, sweeps
       core/interpolate.py  reading between the rows of a table
+      core/matrices.py     A x = b, determinant, eigenvalues and the rest
       storage/history.py   SQLite history
       export/excel.py      the workbook builders
       ui/
@@ -229,11 +267,12 @@ Three exports:
         pad.py             the symbol list: buttons, help and syntax in one place
         mathfield.py       the editable typeset equation bar
         clipboard.py       put a picture on the clipboard, for Word
+        matrixview.py      draws a matrix, which mathtext cannot
         symbol_pad.py      the pad widget
         reference_window.py  searchable symbol and syntax reference
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 99 tests
+    tests/test_engicalc.py 114 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -291,7 +330,7 @@ them.
 
 ## Tests
 
-99 tests covering the parser (including that it refuses `__import__`), the
+114 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator

@@ -1078,3 +1078,128 @@ class TestInterpolation(unittest.TestCase):
         self.assertTrue(result.result_text)
         self.assertTrue(result.steps)
         self.assertTrue(result.plottable)
+
+
+# --------------------------------------------------------------------------
+# Matrices
+# --------------------------------------------------------------------------
+class TestMatrices(unittest.TestCase):
+    """Built around A x = b, which is what matrices are for in engineering."""
+
+    def _m(self, text):
+        from engicalc.core.matrices import parse_matrix
+        return parse_matrix(text)
+
+    def test_rows_parse_from_excel_csv_or_spaces(self):
+        for text in ["1 2\n3 4", "1,2\n3,4", "1\t2\n3\t4", "[1 2]\n[3 4]"]:
+            with self.subTest(text=text):
+                self.assertEqual(self._m(text).tolist(), [[1, 2], [3, 4]])
+
+    def test_ragged_rows_are_rejected(self):
+        with self.assertRaises(ParseError):
+            self._m("1 2 3\n4 5")
+
+    def test_solving_three_equations(self):
+        from engicalc.core.matrices import solve_system
+
+        result = solve_system(self._m("2 1 -1\n-3 -1 2\n-2 1 2"),
+                              self._m("8\n-11\n-3"))
+        self.assertEqual([int(v) for v in result.results[0]], [2, 3, -1])
+
+    def test_the_solution_satisfies_the_original_equations(self):
+        """The real check: substitute it back."""
+        from engicalc.core.matrices import solve_system
+
+        a = self._m("4 -2 1\n-2 4 -2\n1 -2 4")
+        b = self._m("11\n-16\n17")
+        x = solve_system(a, b).results[0]
+        self.assertEqual(sp.simplify(a * x - b), sp.zeros(3, 1))
+
+    def test_a_singular_system_is_refused_not_fudged(self):
+        from engicalc.core.matrices import solve_system
+
+        result = solve_system(self._m("1 2\n2 4"), self._m("3\n6"))
+        self.assertFalse(result.results)
+        self.assertIn("no unique solution", result.result_text.lower())
+        self.assertTrue(any("singular" in w for w in result.warnings))
+
+    def test_an_ill_conditioned_system_warns(self):
+        """Nearly singular gives an answer that is arithmetic, not
+        engineering."""
+        from engicalc.core.matrices import solve_system
+
+        result = solve_system(self._m("1 1\n1 1.0000000001"), self._m("2\n2"))
+        self.assertTrue(any("ill-conditioned" in w for w in result.warnings))
+
+    def test_mismatched_sizes_are_explained(self):
+        from engicalc.core.matrices import solve_system
+
+        with self.assertRaises(ParseError):
+            solve_system(self._m("1 2\n3 4"), self._m("1\n2\n3"))
+
+    def test_determinant_inverse_rank_transpose(self):
+        from engicalc.core.matrices import operate
+
+        m = self._m("4 1\n2 3")
+        self.assertEqual(operate(m, "determinant").results[0], 10)
+        self.assertEqual(operate(m, "transpose").results[0],
+                         sp.Matrix([[4, 2], [1, 3]]))
+        self.assertEqual(operate(m, "rank").results[0], 2)
+        inverse = operate(m, "inverse").results[0]
+        self.assertEqual(sp.simplify(m * inverse), sp.eye(2))
+
+    def test_inverting_a_singular_matrix_says_so(self):
+        from engicalc.core.matrices import operate
+
+        result = operate(self._m("1 2\n2 4"), "inverse")
+        self.assertFalse(result.results)
+        self.assertIn("no inverse", result.result_text.lower())
+
+    def test_eigenvalues_of_a_known_matrix(self):
+        from engicalc.core.matrices import operate
+
+        values = operate(self._m("4 1\n2 3"), "eigenvalues").results
+        self.assertEqual(sorted(int(v) for v in values), [2, 5])
+
+    def test_rounding_noise_is_not_reported_as_complex(self):
+        """A real eigenvalue arrives as 3.21432 + 0.e-12*I from the root
+        finder; printed with that tail it claims to be complex."""
+        from engicalc.core.matrices import operate
+
+        result = operate(self._m("2 1 -1\n-3 -1 2\n-2 1 2"), "eigenvalues")
+        self.assertNotIn("I", result.result_text)
+        for value in result.results:
+            self.assertTrue(sp.N(value).is_real, msg=str(value))
+
+    def test_genuinely_complex_eigenvalues_are_kept(self):
+        """A rotation has no real eigenvalues - stripping them would be a
+        different answer, not a tidier one."""
+        from engicalc.core.matrices import operate
+
+        result = operate(self._m("0 -1\n1 0"), "eigenvalues")
+        self.assertTrue(any(not sp.N(v).is_real for v in result.results))
+
+    def test_multiplication_checks_the_shapes(self):
+        from engicalc.core.matrices import operate
+
+        product = operate(self._m("1 2\n3 4"), "multiply",
+                          self._m("5 6\n7 8")).results[0]
+        self.assertEqual(product, sp.Matrix([[19, 22], [43, 50]]))
+        with self.assertRaises(ParseError):
+            operate(self._m("1 2 3"), "multiply", self._m("1 2 3"))
+
+    def test_a_symbolic_matrix_works(self):
+        from engicalc.core.matrices import operate
+
+        a, b, c, d = sp.symbols("a b c d")
+        result = operate(self._m("a b\nc d"), "determinant")
+        self.assertEqual(sp.simplify(result.results[0] - (a * d - b * c)), 0)
+
+    def test_results_are_calcresults(self):
+        from engicalc.core.engine import CalcResult
+        from engicalc.core.matrices import operate, solve_system
+
+        self.assertIsInstance(
+            solve_system(self._m("1 0\n0 1"), self._m("1\n2")), CalcResult)
+        self.assertIsInstance(
+            operate(self._m("1 0\n0 1"), "determinant"), CalcResult)

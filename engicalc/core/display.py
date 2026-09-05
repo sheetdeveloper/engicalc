@@ -22,6 +22,13 @@ def fmt(expr) -> str:
     if not isinstance(expr, sp.Basic):
         return str(expr)
 
+    # A Float prints all fifteen of the digits it is carrying, so a limit
+    # typed as -1.6 comes back as -1.60000000000000. None of those zeros are
+    # information, and they make a worked solution look like a machine
+    # readout rather than an answer.
+    if isinstance(expr, sp.Float):
+        return fmt_number(expr)
+
     if isinstance(expr, sp.Equality):
         return f"{fmt(expr.lhs)} = {fmt(expr.rhs)}"
     if isinstance(expr, sp.Rel):
