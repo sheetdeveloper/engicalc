@@ -16,8 +16,11 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from ..core.display import fmt_number
+from ..core.engine import CalcResult
 from ..core.parsing import ParseError
 from ..core.statistics import describe, fit_line, parse_columns
+from ..core.steps import Step
+from ..export.excel import export_table
 from . import mathrender
 from .widgets import MONO, ScrollFrame
 
@@ -59,6 +62,10 @@ class StatisticsTab(ttk.Frame):
         self.status.pack(side="left")
         ttk.Button(actions, text="Copy as picture",
                    command=self.copy_picture).pack(side="right")
+        ttk.Button(actions, text="Export...",
+                   command=self.export).pack(side="right", padx=6)
+        ttk.Button(actions, text="Save to history",
+                   command=self.save).pack(side="right")
         ttk.Button(actions, text="Calculate", style="Accent.TButton",
                    command=self.compute).pack(side="right", padx=6)
 
@@ -263,6 +270,75 @@ class StatisticsTab(ttk.Frame):
                         f"{fmt_number(value, 6)}   {note}".strip())
                        for label, value, note in self.fit.rows()]
         return blocks
+
+    # -- getting it out ----------------------------------------------------
+    def _summary_rows(self) -> list:
+        """Every figure on the page, flattened for a table."""
+        # describe() already reports the count, so it is not added again.
+        rows = [[label, value, note]
+                for label, value, note in self.description.rows()]
+        if self.columns.paired:
+            rows.append(["Second column", "", ""])
+            rows += [[label, value, note]
+                     for label, value, note in describe(self.columns.y).rows()]
+        if self.fit is not None:
+            rows.append(["Line of best fit", "", self.fit.as_text()])
+            rows += [[label, value, note] for label, value, note
+                     in self.fit.rows()]
+        return rows
+
+    def _as_result(self) -> CalcResult:
+        result = CalcResult(operation="statistics",
+                            input_text=f"{self.description.count} readings")
+        lines = [f"{label} = {fmt_number(value, 6)}" if value != "" else label
+                 for label, value, _note in self._summary_rows()]
+        result.variable = ", ".join(
+            label for label, value, _note in self._summary_rows()
+            if value != "")
+        result.result_text = "\n".join(lines)
+        for label, value, note in self._summary_rows():
+            result.steps.append(Step(
+                label, detail=f"{value}   {note}".strip()))
+        return result
+
+    def save(self, quiet: bool = False) -> None:
+        if self.description is None:
+            self.compute()
+        if self.description is None:
+            if not quiet:
+                messagebox.showinfo("Nothing to save", "Paste some data first.")
+            return
+        self.app.history.add_result(self._as_result(),
+                                    project=self.app.project.get())
+        self.app.refresh_history()
+        self.status.configure(text="Saved to history")
+
+    def export(self) -> None:
+        if self.description is None:
+            self.compute()
+        if self.description is None:
+            messagebox.showinfo("Nothing to export", "Paste some data first.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile="data.xlsx")
+        if not path:
+            return
+        # The readings go out with the summary. A mean and a standard
+        # deviation with no data under them cannot be checked by anyone.
+        rows = self._summary_rows() + [["", "", ""], ["The data itself", "", ""]]
+        if self.columns.paired:
+            rows.append(["x", "y", ""])
+            rows += [[x, y, ""] for x, y in zip(self.columns.x,
+                                                self.columns.y)]
+        else:
+            rows += [[x, "", ""] for x in self.columns.x]
+        try:
+            export_table(("", "Value", "Note"), rows, path,
+                         title="Data and statistics", sheet="Data")
+            self.status.configure(text="Exported")
+        except Exception as exc:                       # noqa: BLE001
+            messagebox.showerror("Export failed", str(exc))
 
     def copy_picture(self) -> None:
         if self.description is None:

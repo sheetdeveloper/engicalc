@@ -7,10 +7,17 @@ Change a number near the top and press Calculate; everything below it follows.
 
 from __future__ import annotations
 
+import math
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import sympy as sp
+
+from ..core.display import fmt, pretty_names
+from ..core.engine import CalcResult
+from ..core.steps import Step
+from ..export.excel import export_table
 from ..core.sheet import SHEET_DIR, Sheet, blocks_for
 from . import mathrender
 from .widgets import MONO, ScrollFrame
@@ -27,6 +34,22 @@ EXAMPLE = [
 
 HEADINGS = ("Name", "Is", "Unit", "Note", "Answer")
 WIDTHS = (10, 26, 10, 22)
+
+
+
+def _show_greek(var: tk.StringVar) -> None:
+    """Rewrite a cell with its Greek names as letters.
+
+    Done when the cell is finished with rather than on every keystroke:
+    ``tau`` is the first three characters of ``taper``, and swapping it for a
+    letter mid-word would fight whoever is still typing. The substitution is
+    reversible - the sheet reads a letter and its name as one quantity - so
+    nothing downstream needs to know this happened.
+    """
+    text = var.get()
+    shown = pretty_names(text)
+    if shown != text:
+        var.set(shown)
 
 
 class SheetTab(ttk.Frame):
@@ -70,6 +93,10 @@ class SheetTab(ttk.Frame):
         self.status.pack(side="left")
         ttk.Button(actions, text="Copy as picture",
                    command=self.copy_picture).pack(side="right")
+        ttk.Button(actions, text="Export...",
+                   command=self.export).pack(side="right", padx=6)
+        ttk.Button(actions, text="Save to history",
+                   command=self.save).pack(side="right")
         ttk.Button(actions, text="Add a step",
                    command=self.add_row).pack(side="right", padx=6)
         ttk.Button(actions, text="Calculate", style="Accent.TButton",
@@ -91,12 +118,21 @@ class SheetTab(ttk.Frame):
         row = ttk.Frame(body)
         row.pack(fill="x", pady=1)
         variables = []
-        for value, width in ((name, WIDTHS[0]), (expression, WIDTHS[1]),
-                             (unit, WIDTHS[2]), (note, WIDTHS[3])):
+        # The name and what it equals are the two that hold quantities, so
+        # they are the two written in Greek. A unit or a note is prose.
+        cells = ((pretty_names(name), WIDTHS[0]),
+                 (pretty_names(expression), WIDTHS[1]),
+                 (unit, WIDTHS[2]), (note, WIDTHS[3]))
+        for index, (value, width) in enumerate(cells):
             var = tk.StringVar(value=value)
             entry = ttk.Entry(row, textvariable=var, width=width, font=MONO)
             entry.pack(side="left", padx=2)
-            entry.bind("<Return>", lambda e: self.calculate())
+            if index < 2:
+                entry.bind("<FocusOut>", lambda e, v=var: _show_greek(v))
+                entry.bind("<Return>", lambda e, v=var: (_show_greek(v),
+                                                         self.calculate()))
+            else:
+                entry.bind("<Return>", lambda e: self.calculate())
             variables.append(var)
         answer = ttk.Label(row, text="", width=26, anchor="w", font=MONO)
         answer.pack(side="left", padx=2)
@@ -226,6 +262,80 @@ class SheetTab(ttk.Frame):
         self.status.configure(text=f"Saved {os.path.basename(path)}")
 
     # -- output -----------------------------------------------------------
+    # -- getting it out ----------------------------------------------------
+    @staticmethod
+    def _answer(result):
+        """A number where there is one, so a spreadsheet can use it.
+
+        `279440.0/pi` is the exact answer and no use at all in Excel, which
+        cannot add up a symbol. Anything that evaluates to a real number goes
+        out as that number; anything genuinely symbolic goes out as its own
+        text, which is the honest thing to send.
+        """
+        if result.error:
+            return result.error
+        try:
+            value = float(sp.N(result.value))
+        except (TypeError, ValueError):
+            return fmt(result.value)
+        return value if math.isfinite(value) else fmt(result.value)
+
+    def _worked_rows(self) -> list:
+        """The rows that produced an answer, in the order they are headed."""
+        rows = []
+        for step, result in zip(self.sheet.steps, self.results):
+            if not step.name.strip():
+                continue
+            rows.append([step.name, step.expression, step.unit, step.note,
+                         self._answer(result)])
+        return rows
+
+    def _as_result(self) -> CalcResult:
+        """The sheet as one calculation, for the history."""
+        worked = self._worked_rows()
+        result = CalcResult(
+            operation="sheet",
+            input_text=self.title_var.get().strip() or "Calculation sheet",
+            variable=", ".join(row[0] for row in worked))
+        result.result_text = "\n".join(
+            f"{name} = {answer}" + (f" {unit}" if unit else "")
+            for name, _is, unit, _note, answer in worked)
+        for name, expression, unit, note, answer in worked:
+            result.steps.append(Step(
+                f"{name} = {expression}" + (f"  [{unit}]" if unit else ""),
+                detail=(f"{answer}   {note}".strip())))
+        return result
+
+    def save(self, quiet: bool = False) -> None:
+        self.calculate()
+        if not self._worked_rows():
+            if not quiet:
+                messagebox.showinfo("Nothing to save",
+                                    "Add a step or two first.")
+            return
+        self.app.history.add_result(self._as_result(),
+                                    project=self.app.project.get())
+        self.app.refresh_history()
+        self.status.configure(text="Saved to history")
+
+    def export(self) -> None:
+        self.calculate()
+        rows = self._worked_rows()
+        if not rows:
+            messagebox.showinfo("Nothing to export", "Add a step or two first.")
+            return
+        title = self.title_var.get().strip() or "Calculation sheet"
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile=f"{title}.xlsx")
+        if not path:
+            return
+        try:
+            export_table(HEADINGS, rows, path, title=title, sheet="Sheet")
+            self.status.configure(text=f"Exported to {os.path.basename(path)}")
+        except Exception as exc:                       # noqa: BLE001
+            messagebox.showerror("Export failed", str(exc))
+
     def copy_picture(self) -> None:
         if not self.results:
             self.calculate()

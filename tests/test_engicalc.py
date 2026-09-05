@@ -689,6 +689,349 @@ class TestMathField(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# Shapes written next to each other
+# --------------------------------------------------------------------------
+class TestShapesSideBySide(unittest.TestCase):
+    """Manning's formula opens with a 1/n and a root of S side by side.
+
+    Drawn, that is unambiguous. Compiled, the fraction's denominator used to
+    run straight into the root - `1/nsqrt(S)`, where `nsqrt` is a single name
+    - and the answer came back as S*q*r*s*t/n from a formula that had been
+    entered correctly. Nothing said anything was wrong, which is what makes
+    it worth a test of its own.
+    """
+
+    def field(self, *items):
+        from engicalc.ui import mathfield as mf
+
+        row = mf.Row()
+        for item in items:
+            if isinstance(item, str):
+                row.items.extend(item)
+            else:
+                row.items.append(item)
+        return row
+
+    def shape(self, key, *slots):
+        from engicalc.ui import mathfield as mf
+
+        group = mf.new_group(mf.TEMPLATES[key])
+        for slot, text in zip(group.rows, slots):
+            slot.items.extend(text)
+        return group
+
+    def test_a_fraction_does_not_swallow_what_follows_it(self):
+        import sympy as sp
+        from engicalc.core.parsing import parse_input
+        from engicalc.ui import mathfield as mf
+
+        row = self.field(self.shape("frac", "1", "n"),
+                         self.shape("sqrt", "S"))
+        self.assertEqual(mf.to_text(row), "(1/n)sqrt(S)")
+        self.assertEqual(parse_input(mf.to_text(row)).expr,
+                         sp.sqrt(sp.Symbol("S")) / sp.Symbol("n"))
+
+    def test_mannings_formula_compiles_to_what_it_draws(self):
+        import sympy as sp
+        from engicalc.core.parsing import parse_input
+        from engicalc.ui import mathfield as mf
+
+        numerator = self.shape("power", "yb+y^2")
+        numerator.rows[1].items.append(self.shape("frac", "5", "3"))
+        denominator = self.shape("power", "b+2")
+        denominator.rows[0].items.append(self.shape("sqrt", "2"))
+        denominator.rows[0].items.extend("y")
+        denominator.rows[1].items.append(self.shape("frac", "2", "3"))
+        big = self.shape("frac")
+        big.rows[0].items.append(numerator)
+        big.rows[1].items.append(denominator)
+
+        row = self.field("Q=", self.shape("frac", "1", "n"),
+                         self.shape("sqrt", "S"), big)
+        drawn = parse_input(mf.to_text(row)).expr
+        longhand = parse_input(
+            "Q = (1/n)*sqrt(S)*((y*b+y^2)^(5/3))/((b+2*sqrt(2)*y)^(2/3))").expr
+        self.assertEqual(
+            sp.simplify((drawn.lhs - drawn.rhs) - (longhand.lhs - longhand.rhs)),
+            0)
+
+    def test_a_power_over_a_sum_draws_the_bracket_it_computes(self):
+        from engicalc.ui import mathfield as mf
+
+        # The value was always the whole base; the picture was not, and the
+        # picture is what gets checked by eye and pasted into a report.
+        row = self.field(self.shape("power", "yb+y^2"))
+        row.items[0].rows[1].items.append(self.shape("frac", "5", "3"))
+        self.assertIn(r"\left(yb+y^2\right)", mf.to_latex(row))
+        self.assertEqual(mf.to_text(row), "(yb+y^2)^(5/3)")
+
+    def test_a_root_and_a_fraction_do_not_gain_brackets_inside(self):
+        from engicalc.ui import mathfield as mf
+
+        # Both already enclose what they hold, so brackets would be noise.
+        self.assertNotIn(r"\left(",
+                         mf.to_latex(self.field(self.shape("sqrt", "a+b"))))
+        self.assertNotIn(r"\left(",
+                         mf.to_latex(self.field(self.shape("frac", "a+b", "c"))))
+
+    def test_an_open_edge_is_bracketed_and_a_closed_one_is_not(self):
+        from engicalc.ui import mathfield as mf
+
+        # x^2 next to y would read as x to the power 2y.
+        self.assertEqual(
+            mf.to_text(self.field(self.shape("power", "x", "2"), "y")),
+            "(x^2)y")
+        # n next to 1/2 would read as the single name n1.
+        self.assertEqual(
+            mf.to_text(self.field("n", self.shape("frac", "1", "2"))),
+            "n(1/2)")
+        # A root closes itself, so nothing is added.
+        self.assertEqual(
+            mf.to_text(self.field("2", self.shape("sqrt", "x"))), "2sqrt(x)")
+        # And a function call must not gain a multiplication.
+        self.assertEqual(
+            mf.to_text(self.field("sin", self.shape("paren", "x"))), "sin(x)")
+
+
+# --------------------------------------------------------------------------
+# Greek in cells that get read back
+# --------------------------------------------------------------------------
+class TestGreekInCells(unittest.TestCase):
+    """A sheet cell is not a label: what it says is what gets parsed, and a
+    name is how the rows below refer to it. So every substitution made in one
+    has to survive the round trip, and a letter and its name have to be one
+    quantity rather than two that look alike."""
+
+    def test_every_greek_letter_can_be_typed_back_in(self):
+        from engicalc.core.parsing import GREEK_NAMES, canonical_name
+
+        for name, letter in GREEK_NAMES.items():
+            with self.subTest(name=name):
+                self.assertEqual(GREEK_NAMES[canonical_name(letter)], letter)
+
+    def test_only_reversible_substitutions_are_made(self):
+        from engicalc.core.display import pretty_names
+        from engicalc.core.parsing import canonical_name
+
+        for text in ["rho*v*d/mu", "pi*d^2/4", "sigma_max", "T_amb",
+                     "200e9", "rhombus", "mub", "sin(theta)"]:
+            with self.subTest(text=text):
+                self.assertEqual(canonical_name(pretty_names(text)),
+                                 canonical_name(text))
+
+
+    def test_a_difference_draws_as_a_triangle_and_reads_back_as_d(self):
+        from engicalc.core.display import pretty_names
+        from engicalc.core.parsing import canonical_name
+
+        self.assertEqual(pretty_names("dT"), "\u2206T")
+        self.assertEqual(canonical_name("\u2206T"), "dT")
+
+    def test_the_triangle_is_not_the_greek_letter(self):
+        from engicalc.core.display import pretty_names
+        from engicalc.core.parsing import canonical_name
+
+        # Two characters that look alike and mean different things. If the
+        # difference used the Greek letter, dT would read back as DeltaT and
+        # the row below would stop finding it.
+        self.assertEqual(ord(pretty_names("dT")[0]), 0x2206)
+        self.assertEqual(ord(pretty_names("Delta")), 0x394)
+        self.assertEqual(canonical_name(pretty_names("Delta")), "Delta")
+
+    def test_a_differential_is_left_alone(self):
+        from engicalc.core.display import pretty_names
+
+        # d followed by a capital only. dx and dt are differentials and dp is
+        # a lowercase name; none of them are a difference to be redrawn.
+        for name in ["dx", "dt", "dp", "drag", "delta"]:
+            with self.subTest(name=name):
+                self.assertFalse(pretty_names(name).startswith("\u2206"))
+
+    def test_a_row_named_with_a_triangle_is_found_by_its_d_name(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet("Temperatures")
+        sheet.add("T1", "300", "K")
+        sheet.add("T2", "350", "K")
+        sheet.add("\u2206T", "T2-T1", "K")
+        sheet.add("Q", "dT*2", "")
+        results = sheet.evaluate()
+        self.assertFalse(results[-1].error)
+        self.assertEqual(float(results[-1].value), 100.0)
+
+    def test_a_row_named_with_a_letter_is_found_by_its_name(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet("Pipe")
+        sheet.add("\u03c1", "998", "kg/m^3")
+        sheet.add("v", "2", "m/s")
+        sheet.add("q", "rho*v^2/2", "Pa")
+        results = sheet.evaluate()
+        self.assertFalse(results[-1].error)
+        self.assertEqual(float(results[-1].value), 1996.0)
+
+    def test_the_same_quantity_twice_is_still_a_redefinition(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet("Twice")
+        sheet.add("rho", "998", "")
+        sheet.add("\u03c1", "1000", "")
+        results = sheet.evaluate()
+        self.assertIn("defined twice", results[-1].error or "")
+
+
+# --------------------------------------------------------------------------
+# Equations solved together
+# --------------------------------------------------------------------------
+class TestSimultaneousSet(unittest.TestCase):
+
+    def test_a_set_is_solved_whatever_order_it_is_written_in(self):
+        from engicalc.core.system import solve_set
+
+        result = solve_set("x + y = 10; x - y = 2")
+        self.assertIn("x = 6", result.result_text)
+        self.assertIn("y = 4", result.result_text)
+
+    def test_multi_letter_names_survive(self):
+        from engicalc.core.system import parse_set
+
+        # Re is a Reynolds number, not R times Euler's number, and dp is a
+        # pressure drop rather than d times p.
+        parsed = parse_set("Re = 4000\ndp = 2*Re")
+        self.assertEqual([s.name for s in parsed.unknowns], ["Re", "dp"])
+
+    def test_the_count_comes_before_any_answer(self):
+        from engicalc.core.system import solve_set
+
+        result = solve_set("x + y = 10")
+        self.assertIn("Not enough to go on", result.result_text)
+        self.assertIn("1 equation.", result.result_text)   # not "1 equations"
+
+    def test_a_residual_is_judged_against_the_size_of_its_own_terms(self):
+        from engicalc.core.system import solve_set
+
+        # Reynolds number comes out near 5e5. An absolute 1e-6 residual would
+        # be asking for twelve significant figures, and the check would call
+        # a good answer wrong.
+        result = solve_set(
+            "A = pi*0.15^2/4\n"
+            "v = 0.5/A\n"
+            "Re = v*0.15/7.5e-6\n"
+            "f = 0.3164/Re^0.25\n"
+            "dp = f*(20/0.15)*1.2*v^2/2")
+        self.assertNotIn("do not satisfy", " ".join(result.warnings))
+        values = result.results[0]
+        by_name = {str(k): float(v) for k, v in values.items()}
+        self.assertAlmostEqual(by_name["Re"], 565884.0, delta=10.0)
+        self.assertAlmostEqual(by_name["dp"], 738.8, delta=1.0)
+
+
+# --------------------------------------------------------------------------
+# Names with more than one letter in them
+# --------------------------------------------------------------------------
+class TestMultiLetterNames(unittest.TestCase):
+    """T1 and T2 are the commonest pair of names in thermodynamics, and the
+    sheet could not subtract them: the parser splits a run of letters and
+    digits into a product, and the constructor it emits for the number was
+    not among the names it could reach."""
+
+    def test_a_numbered_name_parses(self):
+        from engicalc.core.parsing import parse_input
+
+        self.assertIsNotNone(parse_input("T2-T1").expr)
+
+    def test_a_sheet_declares_its_own_rows(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet("Temperatures")
+        sheet.add("T1", "300", "K")
+        sheet.add("T2", "350", "K")
+        sheet.add("dT", "T2-T1", "K")
+        results = sheet.evaluate()
+        self.assertFalse(results[-1].error)
+        self.assertEqual(float(results[-1].value), 50.0)
+
+    def test_a_sheet_row_called_Re_is_a_reynolds_number(self):
+        from engicalc.core.sheet import Sheet
+
+        # Undeclared, Re parses as R times Euler's number and the friction
+        # factor comes back as a number that is wrong but looks fine.
+        sheet = Sheet("Friction")
+        sheet.add("Re", "4000", "")
+        sheet.add("f", "0.3164/Re^0.25", "")
+        results = sheet.evaluate()
+        self.assertFalse(results[-1].error)
+        self.assertAlmostEqual(float(results[-1].value), 0.039785, places=5)
+
+    def test_upright_is_only_claimed_where_the_name_is_one_symbol(self):
+        from engicalc.core.display import latex_name
+        from engicalc.ui.mathfield import _chars_to_latex
+
+        # Declared - one symbol, so it is set upright.
+        self.assertEqual(latex_name("Re"), r"\mathrm{Re}")
+        self.assertEqual(latex_name("T1"), "T_{1}")
+        # In the equation bar nothing is declared and Re really is R times e,
+        # so drawing it upright would claim something untrue.
+        self.assertEqual(_chars_to_latex("Re"), "Re")
+        self.assertEqual(_chars_to_latex("T1"), "T1")
+
+    def test_a_subscript_holds_together_in_both(self):
+        from engicalc.core.display import latex_name
+        from engicalc.ui.mathfield import _chars_to_latex
+
+        # This is what makes a subscript the way to write a multi-letter
+        # variable: an underscore name is one symbol in every path.
+        for drawn in (latex_name("c_p"), _chars_to_latex("c_p")):
+            self.assertEqual(drawn, "c_{p}")
+        self.assertEqual(_chars_to_latex("sigma_max"),
+                         r"\sigma _{\mathrm{max}}")
+
+    def test_a_rate_is_drawn_with_a_dot_over_the_letter(self):
+        from engicalc.core.display import latex_name
+
+        self.assertEqual(latex_name("mdot"), r"\dot{m}")
+        self.assertEqual(latex_name("Qdot"), r"\dot{Q}")
+        self.assertEqual(latex_name("mdot_a"), r"\dot{m}_{a}")
+        # Two dots for a second derivative, and checked first, or xddot
+        # would come out as xd with one dot over it.
+        self.assertEqual(latex_name("xddot"), r"\ddot{x}")
+
+    def test_the_underscore_spelling_draws_the_dot_in_both_paths(self):
+        from engicalc.core.display import latex_name
+        from engicalc.ui.mathfield import _chars_to_latex
+
+        # m_dot is one symbol everywhere, so it can be drawn as one anywhere.
+        for drawn in (latex_name("m_dot"), _chars_to_latex("m_dot")):
+            self.assertEqual(drawn, r"\dot{m}")
+        # mdot is only one symbol where names are declared. In the equation
+        # bar it is m times d times o times t, and a dot would be drawing a
+        # quantity that was never computed.
+        self.assertEqual(_chars_to_latex("mdot"), "mdot")
+
+    def test_an_ordinary_name_that_ends_in_dot_is_left_alone(self):
+        from engicalc.core.display import latex_name
+
+        self.assertEqual(latex_name("dot"), r"\mathrm{dot}")
+        self.assertEqual(latex_name("pivot"), r"\mathrm{pivot}")
+
+    def test_a_cell_keeps_the_spelling(self):
+        from engicalc.core.display import pretty_names
+
+        # The dot is a combining mark with no precomposed form for most
+        # letters, so it would not survive being read back out of a cell.
+        for name in ["mdot", "Qdot", "m_dot"]:
+            with self.subTest(name=name):
+                self.assertEqual(pretty_names(name), name)
+
+    def test_notation_between_names_survives_the_split(self):
+        from engicalc.ui.mathfield import _chars_to_latex
+
+        # The names come out of the text before the characters are rewritten;
+        # the other way round, the `cdot` inside \cdot looked like a name.
+        self.assertEqual(_chars_to_latex("Re*v/mu"), r"Re\cdot v/\mu ")
+
+
+# --------------------------------------------------------------------------
 # Plotting the answer
 # --------------------------------------------------------------------------
 class TestResultPlot(unittest.TestCase):
@@ -1271,6 +1614,167 @@ class TestActionRows(unittest.TestCase):
                                 for b in clipped))
         finally:
             app.destroy()
+
+
+# --------------------------------------------------------------------------
+# Getting a calculation back out of the app
+# --------------------------------------------------------------------------
+class TestSaveAndExport(unittest.TestCase):
+    """Every tab that works something out can save it and export it.
+
+    The Calculator has had both from the start and the tabs written later
+    picked them up unevenly - the Sheet could save to a file but not to the
+    history, the Data tab could do neither, and Matrices and Interpolate
+    could save but not export. A calculation that cannot leave the app is one
+    that gets redone in Excel, so this is checked on every tab at once rather
+    than remembered tab by tab.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import matplotlib
+        matplotlib.use("Agg")
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.destroy()
+        except Exception as exc:                      # noqa: BLE001
+            raise unittest.SkipTest(f"no display available: {exc}")
+
+    def setUp(self):
+        import tempfile
+        from tkinter import filedialog, messagebox
+
+        from engicalc.ui.app import EngiCalcApp
+
+        self.workspace = tempfile.mkdtemp()
+
+        # A modal dialog with nobody to close it waits for ever, so they are
+        # recorded instead of shown. Anything that lands here is a tab saying
+        # it had nothing to do, which is the failure being tested for.
+        self.complaints = []
+        for name in ("showinfo", "showerror", "showwarning"):
+            original = getattr(messagebox, name)
+            setattr(messagebox, name,
+                    lambda title, message="", *a, _n=name, **kw:
+                    self.complaints.append((_n, title, message)))
+            self.addCleanup(setattr, messagebox, name, original)
+
+        self.saved_to = os.path.join(self.workspace, "out.xlsx")
+        original_dialog = filedialog.asksaveasfilename
+        filedialog.asksaveasfilename = lambda **kw: self.saved_to
+        self.addCleanup(setattr, filedialog, "asksaveasfilename",
+                        original_dialog)
+
+        # Its own database. A test must never write into the history the
+        # person using the app is keeping.
+        self.app = EngiCalcApp(db_path=os.path.join(self.workspace, "h.db"))
+        self.addCleanup(self._close)
+        self.app.update_idletasks()
+
+    def _close(self):
+        # The plot canvases schedule their redraw for when the loop is next
+        # idle. Destroying the window first leaves those callbacks pointing
+        # at nothing, and Tk reports each one as a background error.
+        try:
+            self.app.update_idletasks()
+        except Exception:                             # noqa: BLE001
+            pass
+        self.app.destroy()
+
+    def tabs(self):
+        """The tabs that work something out, by the name on the tab."""
+        from engicalc.ui.interpolate_tab import InterpolateTab
+        from engicalc.ui.matrix_tab import MatrixTab
+        from engicalc.ui.sheet_tab import SheetTab
+        from engicalc.ui.statistics_tab import StatisticsTab
+
+        wanted = (SheetTab, StatisticsTab, MatrixTab, InterpolateTab)
+        found = {}
+        notebook = self.app.notebook
+        for index, name in enumerate(notebook.tabs()):
+            widget = notebook.nametowidget(name)
+            if isinstance(widget, wanted):
+                found[notebook.tab(index, "text").strip()] = widget
+        return found
+
+    @staticmethod
+    def _work_it_out(tab):
+        for method in ("compute", "calculate"):
+            if hasattr(tab, method):
+                getattr(tab, method)()
+                return
+
+    def test_every_tab_offers_both(self):
+        tabs = self.tabs()
+        self.assertEqual(len(tabs), 4, f"found {sorted(tabs)}")
+        for name, tab in tabs.items():
+            with self.subTest(tab=name):
+                self.assertTrue(hasattr(tab, "save"), f"{name} cannot save")
+                self.assertTrue(hasattr(tab, "export"), f"{name} cannot export")
+
+    def test_saving_puts_an_entry_in_the_history(self):
+        for name, tab in self.tabs().items():
+            with self.subTest(tab=name):
+                self._work_it_out(tab)
+                self.complaints.clear()
+                before = len(self.app.history.recent(limit=200))
+                tab.save(quiet=True)
+                after = len(self.app.history.recent(limit=200))
+                self.assertEqual([], self.complaints,
+                                 f"{name} refused to save")
+                self.assertEqual(after, before + 1,
+                                 f"{name} saved nothing")
+
+    def test_a_sheet_exports_numbers_rather_than_symbols(self):
+        import openpyxl
+
+        # The exact answer for the example's Reynolds number is 279440/pi.
+        # Sending that to a spreadsheet is correct and useless - the whole
+        # point of exporting is to carry on working in it, and nothing there
+        # can add up a symbol.
+        from engicalc.ui.sheet_tab import SheetTab
+
+        sheet = next(tab for tab in self.tabs().values()
+                     if isinstance(tab, SheetTab))
+        self.saved_to = os.path.join(self.workspace, "sheet.xlsx")
+        sheet.calculate()
+        sheet.export()
+
+        book = openpyxl.load_workbook(self.saved_to)
+        rows = list(book.active.iter_rows(values_only=True))
+        # Everything below the headings; above them is the sheet's title.
+        start = next(index for index, r in enumerate(rows)
+                     if r and r[0] == "Name")
+        answer_column = list(rows[start]).index("Answer")
+        answers = {r[0]: r[answer_column] for r in rows[start + 1:]
+                   if r and r[0]}
+        self.assertIn("Re", answers)
+        for name, value in answers.items():
+            with self.subTest(row=name):
+                self.assertIsInstance(value, (int, float),
+                                      f"{name} exported as {value!r}")
+        self.assertAlmostEqual(answers["Re"], 88948.5, delta=1.0)
+
+    def test_exporting_writes_a_workbook_that_opens(self):
+        import openpyxl
+
+        for index, (name, tab) in enumerate(self.tabs().items()):
+            self.saved_to = os.path.join(self.workspace, f"out{index}.xlsx")
+            self.complaints.clear()
+            self._work_it_out(tab)
+            tab.export()
+            with self.subTest(tab=name):
+                self.assertEqual([], self.complaints,
+                                 f"{name} refused to export")
+                self.assertTrue(os.path.exists(self.saved_to),
+                                f"{name} wrote nothing")
+                book = openpyxl.load_workbook(self.saved_to)
+                filled = [cell.value
+                          for row in book.active.iter_rows()
+                          for cell in row if cell.value not in (None, "")]
+                self.assertGreater(len(filled), 3,
+                                   f"{name} exported an empty sheet")
 
 
 # --------------------------------------------------------------------------

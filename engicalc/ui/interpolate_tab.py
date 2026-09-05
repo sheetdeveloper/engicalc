@@ -16,6 +16,7 @@ from matplotlib.figure import Figure
 from ..core.display import fmt_number
 from ..core.interpolate import METHODS, interpolate, parse_table, reverse
 from ..core.parsing import ParseError
+from ..export.excel import export_expression
 from . import mathrender
 from .widgets import MONO, ReadOnlyText
 
@@ -55,6 +56,8 @@ class InterpolateTab(ttk.Frame):
         actions.pack(side="bottom", fill="x", pady=(8, 0))
         self.status = ttk.Label(actions, text="Ready", style="Hint.TLabel")
         self.status.pack(side="left")
+        ttk.Button(actions, text="Export...",
+                   command=self.export).pack(side="right", padx=6)
         ttk.Button(actions, text="Save to history",
                    command=self.save).pack(side="right")
         ttk.Button(actions, text="Copy as picture",
@@ -285,6 +288,21 @@ class InterpolateTab(ttk.Frame):
             messagebox.showerror("Could not draw the calculation", str(exc))
             return
         self.status.configure(text="Copied - paste it straight into Word")
+
+    def export(self) -> None:
+        if self.result is None:
+            messagebox.showinfo("Nothing to export", "Work something out first.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile="interpolation.xlsx")
+        if not path:
+            return
+        try:
+            export_expression(self.result, path)
+            self.status.configure(text="Exported")
+        except Exception as exc:                       # noqa: BLE001
+            messagebox.showerror("Export failed", str(exc))
 
     def save(self, quiet: bool = False) -> None:
         if self.result is None:

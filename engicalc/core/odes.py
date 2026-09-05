@@ -30,13 +30,11 @@ import sympy as sp
 
 from .display import fmt
 from .engine import CalcResult
-from .parsing import SAFE_FUNCTIONS, ParseError, parse_input
+from .parsing import ParseError, parse_input, symbols_in
 from .steps import Step
 
 # y'' before y', or the second derivative is read as two first ones.
 _PRIMES = [("''''", 4), ("'''", 3), ("''", 2), ("'", 1)]
-
-_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
 
 
 @dataclass
@@ -79,14 +77,11 @@ def _locals(text: str, function: str, variable: str) -> dict:
 
     Without this, `E` and `I` in the beam equation are Euler's number and the
     imaginary unit, and the answer comes back containing exp(-1) - wrong, and
-    wrong in a way that still looks like an answer. The formula library does
-    the same thing for the same reason.
+    wrong in a way that still looks like an answer.
     """
     names = {function: sp.Function(function), variable: sp.Symbol(variable)}
-    for name in set(_IDENTIFIER.findall(text)):
-        if name in names or name in SAFE_FUNCTIONS or name == "Derivative":
-            continue
-        names[name] = sp.Symbol(name)
+    for name, symbol in symbols_in(text, skip=(function, variable)).items():
+        names.setdefault(name, symbol)
     return names
 
 

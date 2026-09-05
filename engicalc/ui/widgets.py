@@ -9,6 +9,25 @@ from tkinter import ttk
 
 BG = "#f7f7f9"
 ACCENT = "#1f4e79"
+
+_CACHE_ROOTS: dict = {}
+
+
+def images_are_stale(owner: str) -> bool:
+    """True when *owner*'s cached images belong to a root that has gone.
+
+    A tk.PhotoImage is owned by one Tk interpreter. A cache that outlives its
+    root holds dangling references, and using one raises an error about an
+    image name or a destroyed application - neither of which points at the
+    replaced interpreter that actually caused it. Callers clear their cache
+    when this says so.
+    """
+    root = tk._default_root
+    if _CACHE_ROOTS.get(owner, False) is root:
+        return False
+    _CACHE_ROOTS[owner] = root
+    return True
+
 MONO = ("Consolas", 10)
 MONO_BIG = ("Consolas", 12)
 

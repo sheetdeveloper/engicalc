@@ -20,6 +20,8 @@ from tkinter import ttk
 import sympy as sp
 from matplotlib.figure import Figure
 
+from .widgets import images_are_stale
+
 # mathtext understands a subset of LaTeX. These rewrites cover what SymPy
 # actually emits for the expressions this app produces.
 _REWRITES = [
@@ -85,6 +87,8 @@ def photo(latex: str, fontsize: int = 14, colour: str = "#111111",
           dpi: int = 130) -> tk.PhotoImage:
     """Cached Tk image for a LaTeX string."""
     key = (latex, fontsize, colour, dpi)
+    if images_are_stale(__name__):
+        _CACHE.clear()
     image = _CACHE.get(key)
     if image is not None:
         return image
