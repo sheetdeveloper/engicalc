@@ -862,3 +862,84 @@ class TestSetDisplay(unittest.TestCase):
             fmt_set(sp.Union(sp.Interval.open(-sp.oo, -2),
                              sp.Interval.open(2, sp.oo))),
             "(-oo, -2)  or  (2, oo)")
+
+
+# --------------------------------------------------------------------------
+# Copying a calculation out, and the pad's layout arithmetic
+# --------------------------------------------------------------------------
+class TestCopyOut(unittest.TestCase):
+    """A worked calculation has to be able to leave the app and land in a
+    report."""
+
+    def setUp(self):
+        import matplotlib
+        matplotlib.use("Agg")
+
+    def test_a_calculation_renders_to_a_picture(self):
+        from engicalc.ui import mathrender
+
+        result = calculate("2x^2 - 5x - 3 = 0", "solve")
+        blocks = [("Problem", sp.Eq(sp.sympify("2*x**2-5*x-3"), 0), None)]
+        blocks += [(s.title, s.expr, s.detail) for s in result.steps]
+        image = mathrender.render_calculation(blocks)
+        self.assertGreater(image.width, 200)
+        self.assertGreater(image.height, 200)
+
+    def test_a_long_note_does_not_stretch_the_picture(self):
+        """bbox_inches sizes the canvas to the widest line, so an unwrapped
+        note would make the picture wider than the page it is going onto."""
+        from engicalc.ui import mathrender
+
+        note = "This is a very long explanatory note. " * 8
+        page = int(6.5 * 200)                       # width_inches * dpi
+        image = mathrender.render_calculation([("Heading", None, note)])
+        self.assertLessEqual(image.width, page)
+        # and it is genuinely long - the wrapping is doing something
+        self.assertGreater(image.height, 100)
+
+    def test_the_dib_has_a_bitmap_header_and_no_file_header(self):
+        """CF_DIB is a BMP without its 14-byte file header - handing Windows
+        the whole file instead produces a paste of garbage."""
+        from PIL import Image
+
+        from engicalc.ui import clipboard
+
+        data = clipboard._to_dib(Image.new("RGBA", (8, 8), (255, 0, 0, 128)))
+        self.assertNotEqual(data[:2], b"BM")        # file header gone
+        header_size = int.from_bytes(data[:4], "little")
+        self.assertEqual(header_size, 40)           # BITMAPINFOHEADER
+        self.assertEqual(int.from_bytes(data[4:8], "little"), 8)
+
+    def test_transparency_is_flattened_onto_white(self):
+        """A transparent PNG pasted into Word turns black in some versions."""
+        from PIL import Image
+
+        from engicalc.ui import clipboard
+
+        image = Image.new("RGBA", (4, 4), (0, 0, 0, 0))
+        data = clipboard._to_dib(image)
+        self.assertEqual(int.from_bytes(data[:4], "little"), 40)
+        self.assertIn(b"\xff\xff\xff", data[40:])   # white pixels present
+
+
+class TestPadLayout(unittest.TestCase):
+    def test_rows_are_balanced_rather_than_ragged(self):
+        from engicalc.ui.symbol_pad import SymbolPad
+
+        # 24 keys in a pad 22 wide is 22 + 2, which looks like a mistake
+        self.assertEqual(SymbolPad._balanced(24, 22), 12)
+        self.assertEqual(SymbolPad._balanced(24, 8), 8)
+        self.assertEqual(SymbolPad._balanced(10, 22), 10)
+        self.assertEqual(SymbolPad._balanced(7, 22), 7)
+
+    def test_balancing_never_needs_more_rows_than_it_had(self):
+        from engicalc.ui.symbol_pad import SymbolPad
+
+        for count in range(1, 60):
+            for columns in range(4, 27):
+                balanced = SymbolPad._balanced(count, columns)
+                with self.subTest(count=count, columns=columns):
+                    self.assertLessEqual(balanced, columns)
+                    self.assertGreaterEqual(balanced, 1)
+                    self.assertEqual(-(-count // balanced),
+                                     -(-count // columns))

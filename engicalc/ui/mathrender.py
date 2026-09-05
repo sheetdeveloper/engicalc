@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import io
 import re
+import textwrap
 import tkinter as tk
 from tkinter import ttk
 
@@ -87,6 +88,64 @@ def photo(latex: str, fontsize: int = 14, colour: str = "#111111",
         _CACHE.clear()
     _CACHE[key] = image
     return image
+
+
+def render_calculation(blocks, fontsize: int = 15, dpi: int = 200,
+                       width_inches: float = 6.5):
+    """Draw a whole calculation as one picture, for pasting into a report.
+
+    ``blocks`` is the same ``(heading, expression, detail)`` sequence the
+    steps panel is built from, so the picture and the panel cannot show
+    different things.
+
+    Rendered at 200 dpi because a screen-resolution image looks soft once
+    Word scales it onto a page. Returns a PIL image.
+    """
+    from PIL import Image
+
+    figure = Figure(figsize=(width_inches, 100), dpi=dpi)
+    figure.patch.set_facecolor("white")
+
+    # Lay out top-down in figure coordinates, then crop to the ink at the
+    # end - simpler than measuring every line twice to size the canvas.
+    y = 0.995
+    # One text line as a fraction of the tall canvas: points -> inches -> a
+    # share of the 100 inch figure.
+    line_gap = (fontsize / 72.0) / 100.0
+    for heading, expression, detail in blocks:
+        if heading:
+            figure.text(0.02, y, heading, fontsize=fontsize * 0.72,
+                        color="#1f4e79", va="top", weight="bold")
+            y -= line_gap * 1.1
+        if expression is not None:
+            body = None
+            try:
+                body = sanitise(to_latex(expression))
+            except Exception:                       # noqa: BLE001
+                body = None
+            if body:
+                figure.text(0.05, y, f"${body}$", fontsize=fontsize,
+                            color="#111111", va="top")
+            else:
+                figure.text(0.05, y, str(expression), fontsize=fontsize * 0.85,
+                            color="#111111", va="top", family="monospace")
+            y -= line_gap * 2.0
+        if detail:
+            # Wrapped, or one long note stretches the whole picture wider
+            # than the page it is going onto - `bbox_inches="tight"` sizes
+            # the canvas to whatever the widest line turns out to be.
+            for source in str(detail).splitlines():
+                for line in textwrap.wrap(source, width=78) or [""]:
+                    figure.text(0.05, y, line, fontsize=fontsize * 0.68,
+                                color="#555555", va="top")
+                    y -= line_gap * 0.95
+        y -= line_gap * 0.5
+
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png", dpi=dpi, facecolor="white",
+                   bbox_inches="tight", pad_inches=0.12)
+    buffer.seek(0)
+    return Image.open(buffer).convert("RGB")
 
 
 def available() -> bool:

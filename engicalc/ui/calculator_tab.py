@@ -18,9 +18,10 @@ from matplotlib.figure import Figure
 
 from ..core.display import fmt
 from ..core.engine import OPERATIONS, calculate
+from ..core.parsing import parse_for_display
 from ..export.excel import export_expression
 from ..plotting.plot import draw as draw_plot, spec_from_result
-from . import mathfield, mathrender
+from . import clipboard, mathfield, mathrender
 from .symbol_pad import SymbolPad
 from .widgets import AsyncRunner, MONO_BIG, ReadOnlyText
 
@@ -129,6 +130,14 @@ class CalculatorTab(ttk.Frame):
         example.bind("<<ComboboxSelected>>",
                      lambda e: self.input_var.set(self.example_var.get()))
 
+        # The action row is packed before the panes and anchored to the
+        # bottom, so it always gets its full height. Packed after them it is
+        # last in line for space, and on a shorter window it was being given
+        # 16 pixels of the 31 it needs - the buttons were there, sliced in
+        # half, showing as four blank grey slivers.
+        actions = ttk.Frame(self)
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
+
         panes = ttk.PanedWindow(self, orient="horizontal")
         panes.pack(fill="both", expand=True, pady=(6, 0))
 
@@ -171,16 +180,23 @@ class CalculatorTab(ttk.Frame):
         self.steps_math.pack(fill="both", expand=True)
         panes.add(right, weight=4)
 
-        actions = ttk.Frame(self)
-        actions.pack(fill="x", pady=(8, 0))
         self.status = ttk.Label(actions, text="Ready", style="Hint.TLabel")
         self.status.pack(side="left")
         ttk.Button(actions, text="Export to Excel",
                    command=self.export).pack(side="right")
         ttk.Button(actions, text="Plot this",
                    command=self.send_to_graph).pack(side="right", padx=6)
-        ttk.Button(actions, text="Copy LaTeX",
-                   command=self.copy_latex).pack(side="right")
+        # One Copy control rather than three buttons: the row is already
+        # busy, and which format you want depends on where it is going.
+        copy_menu = ttk.Menubutton(actions, text="Copy  v")
+        menu = tk.Menu(copy_menu, tearoff=0)
+        menu.add_command(label="Copy as picture  (paste into Word)",
+                         command=self.copy_picture)
+        menu.add_command(label="Copy LaTeX", command=self.copy_latex)
+        menu.add_separator()
+        menu.add_command(label="Save as image...", command=self.save_picture)
+        copy_menu.configure(menu=menu)
+        copy_menu.pack(side="right")
         ttk.Button(actions, text="Save to history",
                    command=self.save).pack(side="right", padx=6)
         self._sync_options()
@@ -418,6 +434,63 @@ class CalculatorTab(ttk.Frame):
         self.clipboard_clear()
         self.clipboard_append(latex)
         self.status.configure(text="LaTeX copied to the clipboard")
+
+    def _picture_blocks(self) -> list:
+        """The whole calculation as (heading, expression, detail) rows.
+
+        The problem first, then the answer, then the working - the order it
+        would be written out by hand. Built from the same blocks the panels
+        draw, so the picture cannot say something different from the window.
+        """
+        blocks = []
+        try:
+            blocks.append(("Problem",
+                           parse_for_display(self.input_var.get()), None))
+        except Exception:                           # noqa: BLE001
+            blocks.append(("Problem", None, self.input_var.get()))
+        blocks.extend(self._result_blocks(self.result))
+        if self.result.steps:
+            blocks.append(("Working", None, None))
+            for step in self.result.steps:
+                blocks.append((step.title, step.expr, step.detail))
+        return blocks
+
+    def _picture(self):
+        return mathrender.render_calculation(self._picture_blocks())
+
+    def copy_picture(self) -> None:
+        """Copy the calculation as a picture, for pasting into a report."""
+        if self.result is None:
+            messagebox.showinfo("Nothing to copy", "Run a calculation first.")
+            return
+        try:
+            image = self._picture()
+        except Exception as exc:                    # noqa: BLE001
+            messagebox.showerror("Could not draw the calculation", str(exc))
+            return
+        try:
+            clipboard.copy_image(image, self.result.latex or None)
+        except clipboard.ClipboardError as exc:
+            messagebox.showerror("Could not copy", str(exc))
+            return
+        self.status.configure(
+            text="Copied as a picture - paste it straight into Word")
+
+    def save_picture(self) -> None:
+        if self.result is None:
+            messagebox.showinfo("Nothing to save", "Run a calculation first.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png", filetypes=[("PNG image", "*.png")],
+            initialfile="calculation.png")
+        if not path:
+            return
+        try:
+            self._picture().save(path)
+        except Exception as exc:                    # noqa: BLE001
+            messagebox.showerror("Could not save", str(exc))
+            return
+        self.status.configure(text=f"Saved {path}")
 
     def save(self, quiet: bool = False) -> None:
         if self.result is None:

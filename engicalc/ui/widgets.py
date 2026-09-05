@@ -29,6 +29,22 @@ def apply_theme(root: tk.Tk) -> None:
     style.configure("Hint.TLabel", font=("Segoe UI", 8), foreground="#666666",
                     background=BG)
     style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"))
+
+    # The symbol pad. White keys with a hairline border read as a keyboard;
+    # the theme's default grey-on-grey buttons at this size just look like
+    # empty boxes. Padding is small because the glyph inside is the label -
+    # there is no text needing room around it.
+    style.configure("Pad.TButton", padding=(1, 2), relief="flat",
+                    background="#ffffff", bordercolor="#d4d4dc",
+                    lightcolor="#ffffff", darkcolor="#ffffff",
+                    focusthickness=0, focuscolor="")
+    style.map("Pad.TButton",
+              background=[("pressed", "#d7e4f6"), ("active", "#eef3fc")],
+              bordercolor=[("active", "#8fb2e0")],
+              relief=[("pressed", "flat"), ("active", "flat")])
+    style.configure("PadGroup.TLabel", font=("Segoe UI", 8, "bold"),
+                    foreground="#7a7a86", background=BG)
+
     style.configure("Treeview", rowheight=22)
     root.configure(background=BG)
 

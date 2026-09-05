@@ -601,12 +601,19 @@ class MathField(tk.Canvas):
         self._image = None
         self._image_origin = (self.PAD_X, 0)
         self._image_baseline = 0.0
+        self._image_width = 0
         self._quiet = False          # set while syncing in from the text box
+        self._scroll_x = 0.0         # horizontal offset for long expressions
+        self._targets = []           # every caret position, for click-to-place
+        self._targets_key = None     # the layout those positions belong to
 
         self.bind("<Button-1>", self._on_click)
         self.bind("<FocusIn>", lambda e: self._redraw())
         self.bind("<FocusOut>", lambda e: self._redraw())
         self.bind("<Configure>", lambda e: self._redraw())
+        self.bind("<MouseWheel>", self._on_wheel)
+        self.bind("<Button-4>", self._on_wheel)
+        self.bind("<Button-5>", self._on_wheel)
         self.bind("<KeyPress>", self._on_key)
         for sequence, handler in (
                 ("<BackSpace>", self._on_backspace),
@@ -778,35 +785,77 @@ class MathField(tk.Canvas):
             self.on_change()
 
     # -- drawing ----------------------------------------------------------
+    def _caret_targets(self) -> list:
+        """Every place the caret can sit, as (row, index, x, y).
+
+        Found by asking the layout where the caret marker lands for each
+        candidate position in turn - about 150 ms for a typical expression,
+        so it is computed once per layout and kept until the content changes.
+        That is what makes clicking into the middle of something already
+        typed work, rather than only being able to hit an empty box.
+        """
+        key = to_latex(self.root_row)
+        if self._targets_key == key:
+            return self._targets
+
+        targets = []
+        for row in self._rows():
+            for index in range(len(row.items) + 1):
+                try:
+                    spot = caret_position(
+                        to_latex(self.root_row, row, index), self.fontsize)
+                except Exception:                   # noqa: BLE001
+                    spot = None
+                if spot is not None:
+                    targets.append((row, index, spot[0], spot[1]))
+        self._targets_key = key
+        self._targets = targets
+        return targets
+
     def _on_click(self, event):
         self.focus_set()
+        targets = self._caret_targets()
+        if not targets:
+            self.caret_row = self.root_row
+            self.caret_index = len(self.root_row.items)
+            self._redraw()
+            return "break"
+
         origin_x, origin_y = self._image_origin
-        latex = to_latex(self.root_row)
-        empties = [r for r in self._rows() if r.is_empty()]
-        if empties:
-            try:
-                spots = slot_positions(latex, self.fontsize)
-            except Exception:                       # noqa: BLE001
-                spots = []
-            scale = DPI / 72.0
-            best, best_distance = None, 1e9
-            for row, spot in zip(empties, spots):
-                x = origin_x + spot[0]
-                y = origin_y + self._image_baseline - spot[1]
-                distance = (x - event.x) ** 2 + (y - event.y) ** 2
-                if distance < best_distance:
-                    best, best_distance = row, distance
-            if best is not None and best_distance < (60 * scale) ** 2:
-                self.caret_row = best
-                self.caret_index = 0
-                self._redraw()
-                return "break"
-        self.caret_row = self.root_row
-        self.caret_index = len(self.root_row.items)
+        best, best_distance = None, None
+        for row, index, x, above_baseline in targets:
+            screen_x = origin_x + x
+            screen_y = origin_y + self._image_baseline - above_baseline
+            # Vertical distance counts for more, so a click in a numerator
+            # lands in the numerator rather than the denominator below it.
+            distance = (screen_x - event.x) ** 2 + \
+                (2.5 * (screen_y - event.y)) ** 2
+            if best_distance is None or distance < best_distance:
+                best, best_distance = (row, index), distance
+
+        self.caret_row, self.caret_index = best
         self._redraw()
         return "break"
 
-    def _redraw(self) -> None:
+    def _on_wheel(self, event):
+        """Scroll sideways through an expression wider than the box."""
+        step = 0
+        if getattr(event, "num", None) == 4:
+            step = -1
+        elif getattr(event, "num", None) == 5:
+            step = 1
+        elif getattr(event, "delta", 0):
+            step = -1 if event.delta > 0 else 1
+        if step:
+            self._scroll_x = self._clamp_scroll(self._scroll_x + step * 40)
+            self._redraw(follow_caret=False)
+        return "break"
+
+    def _clamp_scroll(self, value: float) -> float:
+        visible = max(self.winfo_width(), 1) - 2 * self.PAD_X
+        return max(0.0, min(value, max(0.0, self._image_width - visible)))
+
+    def _redraw(self, follow_caret: bool = True) -> None:
         self.delete("all")
         height = max(self.winfo_height(), 1)
         latex = to_latex(self.root_row)
@@ -819,27 +868,57 @@ class MathField(tk.Canvas):
                              font=("Consolas", 12), fill=self.colour)
             return
 
-        top = (height - image_height) / 2
-        self._image = photo
-        self._image_origin = (self.PAD_X, top)
+        self._image_width = width
         self._image_baseline = baseline
-        self.create_image(self.PAD_X, top, image=photo, anchor="nw")
+        spot = self._caret_spot() if self.focus_get() is self else None
+        if follow_caret and spot is not None:
+            self._scroll_x = self._clamp_scroll(self._keep_visible(spot[0]))
+        else:
+            self._scroll_x = self._clamp_scroll(self._scroll_x)
 
-        if self.focus_get() is self:
-            self._draw_caret(top)
+        top = (height - image_height) / 2
+        left = self.PAD_X - self._scroll_x
+        self._image = photo
+        self._image_origin = (left, top)
+        self.create_image(left, top, image=photo, anchor="nw")
 
-    def _draw_caret(self, top: float) -> None:
-        latex = to_latex(self.root_row, self.caret_row, self.caret_index)
+        if spot is not None:
+            self._draw_caret(top, left, spot)
+        if self._scroll_x > 0:
+            self._draw_edge_fade(height, "left")
+        if self._image_width - self._scroll_x > \
+                max(self.winfo_width(), 1) - 2 * self.PAD_X:
+            self._draw_edge_fade(height, "right")
+
+    def _keep_visible(self, caret_x: float) -> float:
+        """Scroll just enough to bring the caret back into view."""
+        visible = max(self.winfo_width(), 1) - 2 * self.PAD_X
+        margin = 24
+        if caret_x - self._scroll_x < margin:
+            return caret_x - margin
+        if caret_x - self._scroll_x > visible - margin:
+            return caret_x - visible + margin
+        return self._scroll_x
+
+    def _caret_spot(self):
         try:
-            spot = caret_position(latex, self.fontsize)
+            return caret_position(
+                to_latex(self.root_row, self.caret_row, self.caret_index),
+                self.fontsize)
         except Exception:                           # noqa: BLE001
-            spot = None
-        if spot is None:
-            return
+            return None
+
+    def _draw_caret(self, top: float, left: float, spot) -> None:
         x, above_baseline, glyph_size = spot
         scale = DPI / 72.0
         half = glyph_size * scale * 0.58
         centre = top + self._image_baseline - above_baseline - half * 0.30
-        self.create_line(self.PAD_X + x, centre - half,
-                         self.PAD_X + x, centre + half,
+        self.create_line(left + x, centre - half, left + x, centre + half,
                          fill="#2f6fd0", width=2)
+
+    def _draw_edge_fade(self, height: int, side: str) -> None:
+        """A hint that the expression continues past the edge of the box."""
+        width = max(self.winfo_width(), 1)
+        x = 0 if side == "left" else width - 14
+        self.create_rectangle(x, 0, x + 14, height, fill="#f0f0f4",
+                              outline="", stipple="gray25")
