@@ -737,6 +737,17 @@ class MathField(tk.Canvas):
 
     def _on_backspace(self, event):
         if self.caret_index > 0:
+            previous = self.caret_row.items[self.caret_index - 1]
+            if isinstance(previous, Group):
+                # Step into the shape rather than swallowing it whole. One
+                # press should not be able to remove a whole fraction, and
+                # deleting it from the inside empties it first - at which
+                # point the branch below takes it away.
+                target = previous.rows[-1]
+                self.caret_row = target
+                self.caret_index = len(target.items)
+                self._redraw()
+                return "break"
             self.caret_row.items.pop(self.caret_index - 1)
             self.caret_index -= 1
             self._changed()
@@ -756,6 +767,16 @@ class MathField(tk.Canvas):
 
     def _on_delete(self, event):
         if self.caret_index < len(self.caret_row.items):
+            item = self.caret_row.items[self.caret_index]
+            if isinstance(item, Group):
+                # Same as backspace: a whole shape is not one keystroke's
+                # worth of deletion. An equation that is a single fraction
+                # or integral would otherwise vanish at one press.
+                target = item.rows[0]
+                self.caret_row = target
+                self.caret_index = 0
+                self._redraw()
+                return "break"
             self.caret_row.items.pop(self.caret_index)
             self._changed()
         return "break"

@@ -78,6 +78,8 @@ If you add a feature, produce one of these rather than a new shape.
                           calculation can be pasted into Word as a picture.
     ui/matrixview.py      draws a matrix onto a canvas - typeset entries laid
                           out in a grid with the brackets drawn as lines.
+    ui/matrixgrid.py      the editable grid a matrix is typed into. Speaks
+                          text at the edges, so the core is unchanged.
     ui/pad.py             the symbol list. Buttons, the reference window and the
                           syntax docs are all generated from PAD, so they cannot
                           drift apart - add a symbol here and it appears in all
@@ -120,6 +122,13 @@ it is laid out as though it were absent, which is what makes that position valid
 for the image actually drawn. The placeholder is a literal `□` because mathtext
 has neither `\square` nor `\Box` - if you change it, change `PLACEHOLDER_CP`
 with it, or the boxes stop being locatable.
+
+**A PhotoImage belongs to one Tk interpreter.** Both image caches hold them,
+so a second `tk.Tk()` in the same process leaves cached images pointing at a
+dead interpreter and the next render dies with `image "pyimage1" doesn't
+exist`. The app only ever has one root; GUI tests must share one too. A test
+window also has to be real - a widget in a withdrawn window cannot take focus,
+so `event_generate` goes nowhere and key assertions pass vacuously.
 
 **Matrices never go through mathtext.** It has no array or matrix
 environment - `egin{bmatrix}`, `egin{array}` and SymPy's own matrix LaTeX

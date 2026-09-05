@@ -184,8 +184,11 @@ broken line in the middle should not blank the page.
 
 Built around **A x = b** - solving several equations at once, which is what
 matrices are for in engineering. A frame with a dozen joints gives a dozen
-equations that all have to hold, and this solves them in one step. Type or
-paste the coefficients one row per line.
+equations that all have to hold, and this solves them in one step.
+
+The coefficients go into a **grid of cells**, because that is what a matrix
+is - Tab across, Enter down, and buttons to add or remove a row or a column.
+Pasting a block copied out of Excel fills the grid and resizes it to fit.
 
 Also determinant, inverse, transpose, rank, eigenvalues (natural frequencies,
 buckling loads, principal stresses) and multiplication. Entries can be
@@ -288,7 +291,7 @@ Three exports:
         reference_window.py  searchable symbol and syntax reference
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 150 tests
+    tests/test_engicalc.py 159 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -346,7 +349,7 @@ them.
 
 ## Tests
 
-150 tests covering the parser (including that it refuses `__import__`), the
+159 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator

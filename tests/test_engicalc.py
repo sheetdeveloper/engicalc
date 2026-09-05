@@ -1419,7 +1419,7 @@ class TestEvaluationBar(unittest.TestCase):
         self.assertIn("2.4", bar)
 
     def test_it_renders(self):
-        """mathtext has no \vphantom and no \Bigg, so the exact spelling
+        r"""mathtext has no \vphantom and no \Bigg, so the exact spelling
         matters - most ways of writing this do not parse."""
         import matplotlib
         matplotlib.use("Agg")
@@ -1670,3 +1670,175 @@ class TestSymbolsAsRead(unittest.TestCase):
             for variable in formula.variables:
                 with self.subTest(symbol=variable.symbol):
                     self.assertTrue(unicode_symbol(variable.symbol))
+
+
+class TestDeleteKey(unittest.TestCase):
+    """Delete must not swallow a whole shape at one press.
+
+    When the equation is a single template - a fraction, a radical, an
+    integral from the pad - the root row holds exactly one Group, and
+    deleting that one item wiped the entire equation in one keystroke.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import matplotlib
+        matplotlib.use("Agg")
+        import tkinter as tk
+        try:
+            cls.root = tk.Tk()
+        except Exception as exc:                      # noqa: BLE001
+            raise unittest.SkipTest(f"no display: {exc}")
+        # Not withdrawn: Tk delivers key events to the focus widget, and a
+        # widget in a hidden window cannot take focus, so event_generate
+        # would go nowhere and every assertion would pass vacuously.
+        cls.root.geometry("700x160+40+40")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.root.destroy()
+
+    def setUp(self):
+        self._fields = []
+
+    def tearDown(self):
+        # One field per test, taken away afterwards. Left packed, they stack
+        # up in the window and a later one is never mapped - an unmapped
+        # widget cannot take focus, so its key events go nowhere and the
+        # assertions pass or fail for the wrong reason.
+        for field in self._fields:
+            field.destroy()
+        self.root.update()
+
+    def _field(self):
+        from engicalc.ui.mathfield import MathField
+
+        field = MathField(self.root, fontsize=15)
+        field.pack()
+        self._fields.append(field)
+        self.root.update()
+        field.focus_force()
+        self.root.update()
+        return field
+
+    def _delete_at_start(self, field, text):
+        field.set_text(text)
+        self.root.update()
+        field.caret_row = field.root_row
+        field.caret_index = 0
+        field._redraw()
+        self.root.update()
+        field.event_generate("<Delete>")
+        self.root.update()
+
+    def test_delete_does_not_remove_a_whole_shape(self):
+        from engicalc.ui.mathfield import to_text
+
+        field = self._field()
+        for text in ["sqrt(x + 1)", "(a+b)/(2c)"]:
+            with self.subTest(text=text):
+                self._delete_at_start(field, text)
+                self.assertNotEqual("", to_text(field.root_row))
+
+    def test_delete_steps_inside_the_shape(self):
+        field = self._field()
+        self._delete_at_start(field, "sqrt(x + 1)")
+        self.assertIsNot(field.caret_row, field.root_row,
+                         "the caret should now be inside the radical")
+
+    def test_backspace_does_not_remove_a_whole_shape_either(self):
+        from engicalc.ui.mathfield import to_text
+
+        field = self._field()
+        field.set_text("sqrt(x + 1)")
+        self.root.update()
+        field.caret_row = field.root_row
+        field.caret_index = len(field.root_row.items)
+        field._redraw()
+        self.root.update()
+        field.event_generate("<BackSpace>")
+        self.root.update()
+        self.assertNotEqual("", to_text(field.root_row))
+
+    def test_delete_still_removes_an_ordinary_character(self):
+        from engicalc.ui.mathfield import to_text
+
+        field = self._field()
+        field.set_text("2x+30")
+        self.root.update()
+        field.caret_row = field.root_row
+        field.caret_index = 2
+        field._redraw()
+        self.root.update()
+        field.event_generate("<Delete>")
+        self.root.update()
+        self.assertEqual("2x30", to_text(field.root_row))
+
+
+class TestMatrixGrid(unittest.TestCase):
+    """The matrix goes into a grid of cells, because that is what it is."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tkinter as tk
+        try:
+            cls.root = tk.Tk()
+        except Exception as exc:                      # noqa: BLE001
+            raise unittest.SkipTest(f"no display: {exc}")
+        cls.root.withdraw()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.root.destroy()
+
+    def _grid(self, rows=3, columns=3):
+        from engicalc.ui.matrixgrid import MatrixGrid
+        return MatrixGrid(self.root, rows, columns)
+
+    def test_the_grid_produces_text_the_parser_reads(self):
+        from engicalc.core.matrices import parse_matrix
+
+        grid = self._grid()
+        for r, row in enumerate([[2, 1, -1], [-3, -1, 2], [-2, 1, 2]]):
+            for c, value in enumerate(row):
+                grid.cells[r][c].set(str(value))
+        self.assertEqual(parse_matrix(grid.get_text()).tolist(),
+                         [[2, 1, -1], [-3, -1, 2], [-2, 1, 2]])
+
+    def test_a_pasted_block_resizes_the_grid(self):
+        """Two columns copied out of Excel arrive tab separated."""
+        from engicalc.core.matrices import parse_matrix
+
+        grid = self._grid()
+        grid.set_text("1\t2\t3\n4\t5\t6")
+        self.assertEqual((grid.rows, grid.columns), (2, 3))
+        self.assertEqual(parse_matrix(grid.get_text()).tolist(),
+                         [[1, 2, 3], [4, 5, 6]])
+
+    def test_resizing_keeps_what_was_already_typed(self):
+        from engicalc.core.matrices import parse_matrix
+
+        grid = self._grid(2, 2)
+        for r in range(2):
+            for c in range(2):
+                grid.cells[r][c].set(str(r * 2 + c + 1))
+        grid.resize_by(1, 0)
+        self.assertEqual(parse_matrix(grid.get_text()).tolist(),
+                         [[1, 2], [3, 4], [0, 0]])
+        grid.resize_by(-1, -1)
+        self.assertEqual(parse_matrix(grid.get_text()).tolist(),
+                         [[1], [3]])
+
+    def test_it_will_not_shrink_to_nothing(self):
+        grid = self._grid(1, 1)
+        grid.resize_by(-5, -5)
+        self.assertEqual((grid.rows, grid.columns), (1, 1))
+
+    def test_an_empty_cell_reads_as_zero(self):
+        """A half-filled grid should still solve rather than refuse."""
+        from engicalc.core.matrices import parse_matrix
+
+        grid = self._grid(2, 2)
+        grid.cells[0][0].set("5")
+        self.assertEqual(parse_matrix(grid.get_text()).tolist(),
+                         [[5, 0], [0, 0]])
