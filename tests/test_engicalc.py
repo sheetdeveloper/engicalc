@@ -9,6 +9,7 @@ import random
 import re
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1577,6 +1578,39 @@ class TestActionRows(unittest.TestCase):
             raise unittest.SkipTest(f"no display available: {exc}")
 
     @staticmethod
+    def _notebooks(widget, found):
+        """Every notebook inside *widget*, however deeply nested."""
+        for child in widget.winfo_children():
+            if child.winfo_class() == "TNotebook":
+                found.append(child)
+            TestActionRows._notebooks(child, found)
+        return found
+
+    def _check_pages(self, app, notebook, size, path=""):
+        """Select every page of *notebook*, then any nested inside it."""
+        for index in range(len(notebook.tabs())):
+            notebook.select(index)
+            app.update()
+            app.update_idletasks()
+            name = ((path + " / ") if path else "") \
+                + notebook.tab(index, "text").strip()
+            tab = notebook.nametowidget(notebook.tabs()[index])
+            clipped = [
+                b for b in self._buttons(tab, [])
+                if b.winfo_ismapped()
+                and b.winfo_height() < b.winfo_reqheight()]
+            with self.subTest(size=size, tab=name):
+                self.assertEqual(
+                    [], clipped,
+                    f"{len(clipped)} clipped on {name} at {size}: "
+                    + ", ".join(
+                        f"{b.cget('text')!r} "
+                        f"{b.winfo_height()}/{b.winfo_reqheight()}px"
+                        for b in clipped))
+            for inner in self._notebooks(tab, []):
+                self._check_pages(app, inner, size, name)
+
+    @staticmethod
     def _buttons(widget, found):
         for child in widget.winfo_children():
             if child.winfo_class() in ("TButton", "TMenubutton"):
@@ -1594,25 +1628,9 @@ class TestActionRows(unittest.TestCase):
                 app.geometry(size)
                 app.update()
                 app.update_idletasks()
-                for index in range(len(notebook.tabs())):
-                    notebook.select(index)
-                    app.update()
-                    app.update_idletasks()
-                    name = notebook.tab(index, "text").strip()
-                    tab = notebook.nametowidget(notebook.tabs()[index])
-                    clipped = [
-                        b for b in self._buttons(tab, [])
-                        if b.winfo_ismapped()
-                        and b.winfo_height() < b.winfo_reqheight()]
-                    with self.subTest(size=size, tab=name):
-                        self.assertEqual(
-                            [], clipped,
-                            f"{len(clipped)} clipped on {name} at {size}: "
-                            + ", ".join(
-                                f"{b.cget('text')!r} "
-                                f"{b.winfo_height()}/{b.winfo_reqheight()}px"
-                                for b in clipped))
+                self._check_pages(app, notebook, size)
         finally:
+            app.update_idletasks()
             app.destroy()
 
 
@@ -1687,27 +1705,48 @@ class TestSaveAndExport(unittest.TestCase):
         from engicalc.ui.interpolate_tab import InterpolateTab
         from engicalc.ui.matrix_tab import MatrixTab
         from engicalc.ui.sheet_tab import SheetTab
+        from engicalc.ui.simultaneous_tab import SimultaneousTab
         from engicalc.ui.statistics_tab import StatisticsTab
 
-        wanted = (SheetTab, StatisticsTab, MatrixTab, InterpolateTab)
-        found = {}
-        notebook = self.app.notebook
-        for index, name in enumerate(notebook.tabs()):
-            widget = notebook.nametowidget(name)
-            if isinstance(widget, wanted):
-                found[notebook.tab(index, "text").strip()] = widget
-        return found
+        wanted = (SheetTab, StatisticsTab, MatrixTab, InterpolateTab,
+                  SimultaneousTab)
 
-    @staticmethod
-    def _work_it_out(tab):
-        for method in ("compute", "calculate"):
+        def walk(widget, found):
+            # Sub-tabs count. The simultaneous solver lives inside the
+            # Calculator, and a tab that cannot be found here is a tab whose
+            # save and export are never tried.
+            for child in widget.winfo_children():
+                if isinstance(child, wanted):
+                    found[type(child).__name__] = child
+                walk(child, found)
+            return found
+
+        return walk(self.app.notebook, {})
+
+    def _work_it_out(self, tab):
+        """Make the tab produce an answer, however it names doing so."""
+        for method in ("compute", "calculate", "solve"):
             if hasattr(tab, method):
                 getattr(tab, method)()
+                break
+        else:
+            self.fail(f"{type(tab).__name__} has no way to work anything out")
+
+        # Some tabs answer on a background thread and deliver through the
+        # event loop, so the loop has to be pumped or the answer never
+        # arrives and the tab looks as though it refused.
+        if getattr(tab, "runner", None) is None:
+            return
+        for _ in range(200):
+            self.app.update()
+            if getattr(tab, "result", None) is not None:
                 return
+            time.sleep(0.02)
+        self.fail(f"{type(tab).__name__} produced no answer in time")
 
     def test_every_tab_offers_both(self):
         tabs = self.tabs()
-        self.assertEqual(len(tabs), 4, f"found {sorted(tabs)}")
+        self.assertEqual(len(tabs), 5, f"found {sorted(tabs)}")
         for name, tab in tabs.items():
             with self.subTest(tab=name):
                 self.assertTrue(hasattr(tab, "save"), f"{name} cannot save")
@@ -1775,6 +1814,101 @@ class TestSaveAndExport(unittest.TestCase):
                           for cell in row if cell.value not in (None, "")]
                 self.assertGreater(len(filled), 3,
                                    f"{name} exported an empty sheet")
+
+
+# --------------------------------------------------------------------------
+# The simultaneous solver's tab
+# --------------------------------------------------------------------------
+class TestSimultaneousTab(unittest.TestCase):
+    """The count is what this screen is for.
+
+    Three equations and four unknowns has no single answer, and being told
+    so while typing is more use than any number would be - so the count is
+    shown before anything is solved and says what to do about a shortfall.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import matplotlib
+        matplotlib.use("Agg")
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.destroy()
+        except Exception as exc:                      # noqa: BLE001
+            raise unittest.SkipTest(f"no display available: {exc}")
+
+    def setUp(self):
+        import tempfile
+        from engicalc.ui.app import EngiCalcApp
+
+        self.app = EngiCalcApp(
+            db_path=os.path.join(tempfile.mkdtemp(), "h.db"))
+        self.addCleanup(self._close)
+        self.tab = self.app.simultaneous_tab
+        self.app.update_idletasks()
+
+    def _close(self):
+        try:
+            self.app.update_idletasks()
+        except Exception:                             # noqa: BLE001
+            pass
+        self.app.destroy()
+
+    def _solve(self):
+        self.tab.solve()
+        for _ in range(200):
+            self.app.update()
+            if self.tab.result is not None:
+                return self.tab.result
+            time.sleep(0.02)
+        self.fail("no answer in time")
+
+    def test_it_lives_inside_the_calculator(self):
+        # A tenth top-level tab for something this close to the calculator
+        # would be one bar entry too many.
+        self.assertIs(self.app.calculator_pane.simultaneous, self.tab)
+        self.assertIs(self.app.calculator_pane.calculator,
+                      self.app.calculator_tab)
+
+    def test_the_count_says_what_to_do_about_a_shortfall(self):
+        self.tab.set_text("x + y = 10")
+        said = self.tab.count.cget("text")
+        self.assertIn("1 equation,", said)
+        self.assertIn("2 unknowns", said)
+        self.assertIn("Give 1 more equation", said)
+
+    def test_the_count_says_when_there_is_enough(self):
+        self.tab.set_text("x + y = 10\nx - y = 2")
+        self.assertIn("Enough to solve", self.tab.count.cget("text"))
+
+    def test_the_count_notices_too_many_equations(self):
+        self.tab.set_text("x = 1\nx = 2\ny = 3")
+        self.assertIn("more equation", self.tab.count.cget("text"))
+
+    def test_a_coupled_set_is_solved(self):
+        self.tab.set_text("\n".join([
+            "A = pi*0.15^2/4",
+            "v = 0.5/A",
+            "Re = v*0.15/7.5e-6",
+            "f = 0.3164/Re^0.25",
+            "dp = f*(20/0.15)*1.2*v^2/2"]))
+        result = self._solve()
+        values = {str(k): float(v) for k, v in result.results[0].items()}
+        self.assertAlmostEqual(values["Re"], 565884.0, delta=10.0)
+        self.assertAlmostEqual(values["dp"], 738.8, delta=1.0)
+        self.assertEqual([], result.warnings)
+
+    def test_the_examples_all_solve(self):
+        from engicalc.ui.simultaneous_tab import EXAMPLES
+
+        for name, text in EXAMPLES:
+            with self.subTest(example=name):
+                self.tab.set_text(text)
+                result = self._solve()
+                self.assertTrue(result.results,
+                                f"{name} produced no values: "
+                                f"{result.result_text}")
 
 
 # --------------------------------------------------------------------------

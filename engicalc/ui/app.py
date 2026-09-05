@@ -11,7 +11,7 @@ from .. import __version__
 from ..formulas.library import get_library
 from ..plotting.plot import spec_from_result
 from ..storage.history import DEFAULT_DB, History
-from .calculator_tab import CalculatorTab
+from .calculator_pane import CalculatorPane
 from .cards_tab import CardsTab
 from .graph_tab import GraphTab
 from .history_tab import HistoryTab
@@ -168,7 +168,11 @@ class EngiCalcApp(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True, padx=8, pady=8)
 
-        self.calculator_tab = CalculatorTab(self.notebook, self)
+        # The pane holds the two calculator sub-tabs; `calculator_tab` is
+        # still the calculator itself, so nothing that talks to it changes.
+        self.calculator_pane = CalculatorPane(self.notebook, self)
+        self.calculator_tab = self.calculator_pane.calculator
+        self.simultaneous_tab = self.calculator_pane.simultaneous
         self.graph_tab = GraphTab(self.notebook, self)
         self.library_tab = LibraryTab(self.notebook, self)
         self.cards_tab = CardsTab(self.notebook, self)
@@ -178,7 +182,7 @@ class EngiCalcApp(tk.Tk):
         self.statistics_tab = StatisticsTab(self.notebook, self)
         self.history_tab = HistoryTab(self.notebook, self)
 
-        self.notebook.add(self.calculator_tab, text="  Calculator  ")
+        self.notebook.add(self.calculator_pane, text="  Calculator  ")
         self.notebook.add(self.graph_tab, text="  Graph  ")
         self.notebook.add(self.library_tab, text="  Formula library  ")
         self.notebook.add(self.cards_tab, text="  Formula cards  ")
@@ -210,7 +214,8 @@ class EngiCalcApp(tk.Tk):
             self, on_insert=self._insert_from_reference)
 
     def _insert_from_reference(self, item) -> None:
-        self.notebook.select(self.calculator_tab)
+        self.notebook.select(self.calculator_pane)
+        self.calculator_pane.show_calculator()
         self.calculator_tab.insert_item(item)
 
     def open_formula(self, formula) -> None:
@@ -250,7 +255,8 @@ class EngiCalcApp(tk.Tk):
             if entry.variable:
                 self.calculator_tab.var_var.set(entry.variable)
             self.calculator_tab._sync_options()
-            self.notebook.select(self.calculator_tab)
+            self.notebook.select(self.calculator_pane)
+            self.calculator_pane.show_calculator()
             self.calculator_tab.compute()
 
     # -- dialogs ----------------------------------------------------------
