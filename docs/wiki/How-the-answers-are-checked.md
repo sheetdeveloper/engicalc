@@ -44,23 +44,49 @@ rather than condensing, which is a different curve; the dew point and wet
 bulb are withheld with the reason on screen, and everything that does not
 depend on that curve is still exactly right.
 
-## Why R134a is not here
+## R134a
 
-It was attempted and abandoned, which is worth explaining because
-"refrigerants" would be an obvious thing to expect.
+It is here now, and the story of getting it here is the best argument on
+this page for checking things.
 
-The saturation curve validated well - within 0.02% of the normal boiling
-point and exact at the critical point. But a refrigeration cycle needs
-enthalpies, and those come from a Helmholtz equation of state whose
-coefficients could not be reproduced reliably. The saturated densities came
-out 3.7% wrong for the liquid and a factor of fifty wrong for the vapour,
-which made the derived latent heat 9726 kJ/kg where the real figure is about
-199.
+The first attempt used a correlation reconstructed from memory. It agreed
+with the published saturation line to a fiftieth of a percent - the one
+number anybody looks up - and had the saturated vapour density wrong by a
+factor of fifty, giving a latent heat of 9726 kJ/kg where the answer is 199.
+It was thrown away rather than shipped.
 
-Note the shape of the liquid error: a flat 3.7% across the whole range. That
-is exactly the failure this project is built to avoid - densities in the
-right ballpark, all consistently off, every downstream enthalpy quietly
-wrong by the same few percent. So it is not shipped.
+The version that shipped is Tillner-Roth and Baehr's standard equation of
+state, and it is checked against things the first attempt would not have
+survived: the published ancillary saturation curve at thirteen temperatures
+from -40 C to 100 C (0.003%), the saturated densities at 0 C (0.002%), the
+latent heat at 0 C (198.60 against 198.6), the normal boiling point (-26.074
+against -26.07), and the analytic density derivative against a numerical
+one, since the pressure is that derivative and nothing else.
+
+It also caught a mistake in itself. Every saturation pressure came out
+0.080% low, and *flat* across ninety kelvin - which is a scale factor rather
+than a coefficient error, and pointed straight at the reducing density. A
+secondary source quotes it as 507.6 kg/m3; the standard gives
+4978.830171 mol/m3, which is 508.0.
+
+## Rearranging a formula
+
+Solving a formula for one of its variables goes through SymPy, and SymPy
+will hand back a closed form that does not solve the equation it came from.
+So the answer is put back into the original equation and the two sides have
+to agree; when they do not, the closed form is dropped and the formula is
+solved by iteration instead.
+
+The check is made against **the values actually given**, not against trial
+numbers, and that distinction is the whole of why it works. A rearrangement
+can be right for the numbers in front of it and wrong for others. Solving
+`x = (-b + sqrt(b^2 - 4ac)) / 2a` for `a` gives an `a` that makes x *a* root
+of the quadratic, which is the *plus* root only for some b and c. Judged on
+invented numbers it looks broken; judged on a real quadratic it is exactly
+right.
+
+864 answers - every formula solved for every variable it contains, with
+numbers put in and taken back out - satisfy the equations they came from.
 
 ## Sets of equations
 
@@ -114,3 +140,17 @@ all of which produced answers that looked entirely reasonable:
   freezing and was returning its own lower bound.
 
 None of these announced themselves. That is the argument for the checking.
+
+- **A closed form that did not solve its own equation.** Compound interest
+  rearranged for the number of compounding periods came back as a Lambert W
+  expression. A thousand pounds at five percent for ten years compounded
+  monthly comes to 1647.01, and asking which frequency does that gave
+  1.2 x 10^12 instead of 12.
+
+  What makes this one worth recording is that it survived its own check
+  first. Substituting ordinary floating-point numbers and then asking for
+  thirty digits recovers nothing - the rounding has already happened - and
+  `(1 + 0.05/1.2e12)` has three significant digits left in double precision.
+  Raised to the power 1.2e13 that turned a wrong answer of 1648.72 into
+  1647.0094976903, which is the right answer to fourteen digits. The numbers
+  now go into the check at thirty digits, and it fails as it should.

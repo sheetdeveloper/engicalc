@@ -197,11 +197,76 @@ def solve_formula(formula: Formula, target: str,
             value = float(sp.N(substituted))
         except (TypeError, ValueError):
             value = complex(sp.N(substituted))
+        if not _balances(formula, tgt, subs, value):
+            # The rearrangement does not solve the equation it came from at
+            # these values, so it is not the answer to this question. The
+            # numerical route makes no claim to a closed form and is the
+            # honest thing to fall back on.
+            return _numeric_solve(
+                formula, target, values, warnings,
+                because="The rearranged formula does not satisfy the "
+                        "original equation at these values, so it was not "
+                        "used.")
     else:
         warnings.append("Still symbolic - no value for: " + ", ".join(missing))
 
     return FormulaSolution(formula, target, sp.simplify(expr), value,
                            {str(k): sp.sstr(v) for k, v in subs.items()}, warnings)
+
+
+#: How far the two sides of the equation may differ, relative to their own
+#: size, before the rearrangement is not solving it. Floating point through a
+#: formula loses a few digits, so this is nowhere near the precision of the
+#: arithmetic - and a rearrangement that is actually wrong is wrong by whole
+#: orders of magnitude, not by parts per million.
+BALANCES = 1e-6
+
+
+def _precise(value):
+    """A number carried at thirty digits, so the arithmetic has room.
+
+    The value itself is no better known for it - a float is a float - but
+    the sums done with it are, and it is the sums that were going wrong.
+    """
+    try:
+        return sp.Float(value, 30)
+    except (TypeError, ValueError):
+        return value              # complex, or already exact
+
+
+def _balances(formula: Formula, target: sp.Symbol, subs: dict,
+              value) -> bool:
+    """Does putting the answer back into the equation balance it?
+
+    The one check that was missing. A closed form that does not satisfy the
+    equation it was derived from is not an answer, however plausible it
+    looks, and SymPy will hand one over without comment.
+
+    Judged on the values given rather than on invented ones. A rearrangement
+    can be right for the numbers in front of it and wrong for others - the
+    quadratic formula solved for `a` gives an `a` that makes x a root, which
+    is the *plus* root only for some b and c - so the numbers somebody
+    actually typed are the ones it has to be right for.
+    """
+    # Put the numbers in at more digits than a float carries. Substituting
+    # ordinary floats and then asking for thirty digits recovers nothing -
+    # the rounding has already happened - and on this formula it mattered:
+    # (1 + 0.05/1.2e12) has three significant digits left in float64, and
+    # raising it to the power 1.2e13 turned a wrong answer of 1648.72 into
+    # 1647.0094976903, which is the right answer to fourteen digits. The
+    # check waved it through.
+    both = {name: _precise(number) for name, number in subs.items()}
+    both[target] = _precise(value)
+    try:
+        left = complex(sp.N(formula.eq.lhs.subs(both), 30))
+        right = complex(sp.N(formula.eq.rhs.subs(both), 30))
+    except (TypeError, ValueError, ZeroDivisionError):
+        # Cannot be put to the test, which does not make it wrong.
+        return True
+    if left != left or right != right:                 # NaN
+        return False
+    scale = max(abs(left), abs(right), 1.0)
+    return abs(left - right) <= BALANCES * scale
 
 
 def _read_value(formula: Formula, name: str, raw: str, warnings: list):
@@ -264,11 +329,19 @@ def _timed(func, *args, timeout: float = 6.0):
 
 
 def _numeric_solve(formula: Formula, target: str, values: dict,
-                   warnings: list) -> FormulaSolution:
-    from ..core.parsing import parse_number
+                   warnings: list, because: str = "") -> FormulaSolution:
+    """Solve by iteration, for the formulas a closed form cannot serve.
 
+    Two ways to get here. Some formulas have no closed-form rearrangement at
+    all, and some produce one that turns out not to solve the equation -
+    *because* says which, since they are different things to be told.
+    """
     tgt = sp.Symbol(target)
-    subs = {sp.Symbol(k): parse_number(v) for k, v in values.items() if k != target}
+    # Read the same way the closed-form route reads them, units and all.
+    # Reading them differently here meant a value typed as `50 mm` worked
+    # on one path and not on the other.
+    subs = {sp.Symbol(k): _read_value(formula, k, v, warnings)
+            for k, v in values.items() if k != target}
     residual = formula.eq.lhs - formula.eq.rhs
     residual = residual.subs(subs)
     missing = sorted(s.name for s in residual.free_symbols if s.name != target)
@@ -277,7 +350,8 @@ def _numeric_solve(formula: Formula, target: str, values: dict,
             f"{formula.name} has no closed-form rearrangement for {target}, so "
             "every other variable needs a value. Missing: " + ", ".join(missing))
 
-    warnings.append("Solved numerically - no closed-form rearrangement exists.")
+    warnings.append(
+        because or "Solved numerically - no closed-form rearrangement exists.")
     for guess in (1.0, 0.5, 2.0, 10.0, 0.1, -1.0, 100.0, 1e-3):
         try:
             root = sp.nsolve(residual, tgt, guess)

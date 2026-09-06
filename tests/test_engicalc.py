@@ -240,6 +240,112 @@ class TestFormulaLibrary(unittest.TestCase):
         self.assertEqual(failures, [])
 
 
+class TestRearrangementIsChecked(unittest.TestCase):
+    """A closed form that does not solve its own equation is not an answer.
+
+    SymPy will hand one over without comment, and for one formula in the
+    library it did: compound interest solved for the number of compounding
+    periods came back as a Lambert W expression that gives 1.2e12 where the
+    answer is 12.
+    """
+
+    def _library(self):
+        return get_library()
+
+    def test_compound_interest_gives_the_compounding_frequency(self):
+        # A thousand pounds at five percent for ten years compounded monthly
+        # comes to 1647.01. Asking which frequency does that has to give 12.
+        formula = self._library().get("geometry_maths.compound_interest")
+        for principal, rate, years, times in ((1000, 0.05, 10, 12),
+                                              (5000, 0.08, 5, 4),
+                                              (250, 0.12, 3, 1),
+                                              (800, 0.10, 15, 365)):
+            amount = principal * (1 + rate / times) ** (times * years)
+            with self.subTest(times=times):
+                got = solve_formula(formula, "nc",
+                                    {"P": str(principal), "i": str(rate),
+                                     "t": str(years), "Aa": repr(amount)})
+                self.assertIsNotNone(got.value)
+                self.assertAlmostEqual(got.value, times,
+                                       delta=max(1e-5 * times, 1e-5))
+
+    def test_the_quadratic_keeps_its_closed_form(self):
+        # The other formula the audit flagged, which was not wrong. Solving
+        # x = (-b + sqrt(b^2 - 4ac))/2a for `a` gives an `a` that makes x a
+        # root - the *plus* root only for some b and c. On a real quadratic
+        # it is exactly right, so it must not be thrown away.
+        formula = self._library().get("geometry_maths.quadratic_root")
+        for a, b, c in ((1, -5, 6), (2, -7, 3), (1, 3, 2)):
+            root = float((-b + math.sqrt(b * b - 4 * a * c)) / (2 * a))
+            with self.subTest(a=a, b=b, c=c):
+                got = solve_formula(formula, "a",
+                                    {"b": str(b), "c": str(c),
+                                     "x": repr(root)})
+                self.assertAlmostEqual(got.value, a, places=9)
+                self.assertFalse(
+                    [w for w in got.warnings if "does not satisfy" in w],
+                    "a rearrangement that works was thrown away")
+
+    def test_an_answer_that_does_not_balance_is_spotted(self):
+        from engicalc.formulas.library import _balances
+
+        formula = self._library().get("geometry_maths.compound_interest")
+        given = {sp.Symbol("P"): 1000.0, sp.Symbol("i"): 0.05,
+                 sp.Symbol("t"): 10.0,
+                 sp.Symbol("Aa"): 1000 * (1 + 0.05 / 12) ** 120}
+        self.assertTrue(_balances(formula, sp.Symbol("nc"), given, 12.0))
+        self.assertFalse(_balances(formula, sp.Symbol("nc"), given,
+                                   1214660299856.7229))
+
+    def test_the_check_is_done_with_more_digits_than_a_float_has(self):
+        from engicalc.formulas.library import _balances, _precise
+
+        # This is what made the bug survive its own check. Substituting
+        # ordinary floats and then asking for thirty digits recovers
+        # nothing, and (1 + 0.05/1.2e12) has three significant digits left
+        # in float64. Raised to the power 1.2e13 that turned a wrong answer
+        # of 1648.72 into 1647.0094976903 - the right one to fourteen
+        # digits.
+        formula = self._library().get("geometry_maths.compound_interest")
+        bad = 1214660299856.7229
+        rough = {sp.Symbol("P"): 1000.0, sp.Symbol("i"): 0.05,
+                 sp.Symbol("t"): 10.0, sp.Symbol("nc"): bad}
+        careful = {name: _precise(value) for name, value in rough.items()}
+        self.assertAlmostEqual(
+            float(sp.N(formula.eq.rhs.subs(rough), 30)), 1647.0095, places=3)
+        self.assertAlmostEqual(
+            float(sp.N(formula.eq.rhs.subs(careful), 30)), 1648.7213,
+            places=3)
+        # And the check uses the careful one.
+        given = {k: v for k, v in rough.items() if k != sp.Symbol("nc")}
+        given[sp.Symbol("Aa")] = 1000 * (1 + 0.05 / 12) ** 120
+        self.assertFalse(_balances(formula, sp.Symbol("nc"), given, bad))
+
+    def test_the_fallback_says_which_of_the_two_reasons_it_is(self):
+        formula = self._library().get("geometry_maths.compound_interest")
+        amount = 1000 * (1 + 0.05 / 12) ** 120
+        got = solve_formula(formula, "nc",
+                            {"P": "1000", "i": "0.05", "t": "10",
+                             "Aa": repr(amount)})
+        said = " ".join(got.warnings)
+        self.assertIn("does not satisfy", said)
+        self.assertNotIn("no closed-form rearrangement exists", said)
+
+    def test_the_numerical_route_reads_units_the_same_way(self):
+        # It used to read the raw string with parse_number while the
+        # closed-form route went through the unit conversion, so a value
+        # typed as `50 mm` worked on one path and not on the other.
+        library = self._library()
+        formula = library.get("strength_of_materials.beam_udl_deflection")
+        metres = solve_formula(formula, "delta",
+                               {"w": "5000", "L": "4", "E": "200e9",
+                                "I": "8.5e-6"})
+        millimetres = solve_formula(formula, "delta",
+                                    {"w": "5000", "L": "4000 mm",
+                                     "E": "200e9", "I": "8.5e-6"})
+        self.assertAlmostEqual(metres.value, millimetres.value, places=12)
+
+
 class TestHistory(unittest.TestCase):
     def setUp(self):
         self.history = History(":memory:")
