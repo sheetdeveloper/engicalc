@@ -433,17 +433,116 @@ out. If it cannot reach that speed and still stop in the distance, it says
 how much room speeding up and braking need on their own rather than
 returning a negative cruise.
 
-## Mohr's circle
+## Stress state
 
-Give σx, σy and τxy and it draws the circle, marks the principal stresses,
-and gives the angles to them. Turn the axes and it shows where that pair of
-points sits, with the diameter joining them - which is the construction
-itself.
+Give σx, σy and τxy and it draws Mohr's circle, marks the principal
+stresses, and gives the angles to them. Turn the axes and it shows where
+that pair of points sits, with the diameter joining them - which is the
+construction itself.
 
-All of it is exact. There is nothing fitted and nothing iterated: the centre
-is the average direct stress, the radius follows from Pythagoras, and the
+All of that is exact. Nothing is fitted and nothing iterated: the centre is
+the average direct stress, the radius follows from Pythagoras, and the
 angles come out of an arctangent. The two-argument kind, so it knows which
 quadrant it is in - `atan(y/x)` cannot tell 1+1j from -1-1j.
+
+### Does it yield?
+
+Mohr's circle says what the stresses are and nothing about whether they
+matter, and the answer is not obvious: a state with no direct stress at all
+can be worse than one with a large direct stress, because in a ductile metal
+it is the **difference** between the principal stresses that does the damage
+rather than their size.
+
+Two criteria, drawn beside the circle in principal stress space:
+
+- **Tresca** - the largest shear reaches half the yield stress. A hexagon.
+- **von Mises** - the energy of changing shape reaches a limit. The ellipse
+  through the hexagon's corners.
+
+The hexagon is inside, which is what makes Tresca the safe one and is not
+visible in either formula. They differ by at most 15.5%, at pure shear,
+which is exactly where it matters most.
+
+One trap the tab does not fall into: with both in-plane stresses the same
+sign, Tresca is the larger of them **against zero**, not the gap between the
+two. The third principal stress is zero, not absent.
+
+Neither criterion says anything about brittle materials. A ductile metal
+yields when it is sheared and a brittle one breaks when it is pulled, so
+cast iron and concrete need a different criterion - and an answer here for
+one of those would be worse than none.
+
+### From a strain gauge rosette
+
+A gauge measures how much the metal stretched under it and nothing else, so
+three at known angles are needed to fix a state. Switch the tab to a rosette
+and give the three readings in microstrain, plus E and Poisson's ratio.
+
+Solved as a three-by-three system rather than by the two special formulae
+for the two common rosettes - those formulae are this with those angles
+substituted - so a rosette at any angles at all works the same way.
+
+Turning strain into stress needs Hooke's law in **two** dimensions: pulling
+a plate along x makes it thinner along y, so the stress along x depends on
+the strain along y too. Using E on its own instead of `E/(1-ν²)` gives an
+answer about ten per cent light and entirely plausible.
+
+## Pressure vessel
+
+A cylinder or a sphere, thin walled and thick, with the stress through the
+wall drawn.
+
+    cylinder    hoop = pr/t     along = pr/2t
+    sphere      both  = pr/2t
+
+A cylinder is twice as stressed round as along, which is why a sausage
+splits lengthways and why the seam that runs the length of a boiler drum is
+the one that matters. A sphere at the same pressure and wall carries half
+what a cylinder does, which is why gas is stored in spheres.
+
+Those hold while the stress does not vary much through the wall. When it
+does, **Lamé** gives it properly - and the tab gives both answers and the
+gap between them, because the interesting question is not what the thick
+answer is but at what thickness the thin one stops being good enough. A wall
+a third of the mean radius understates the hoop stress at the bore by 4%.
+
+The radial stress is not zero either: it is minus the pressure at the bore.
+On a thick vessel that is a large fraction of the hoop stress, so the
+equivalent stresses are worked out from all three principal stresses rather
+than from a plane state.
+
+## Truss
+
+Member forces in a pin-jointed frame. A truss is a drawing, and no
+arrangement of boxes lets you describe an arbitrary one, so it is written
+down as text - one line per thing:
+
+    node 0 0 pin
+    node 4000 0 roller
+    node 2000 3000
+    member 1 3
+    load 3 0 -10000
+
+Joints are numbered from one in the order they are written. There is a
+button that puts a Warren girder in the box, since a blank one is a hard
+place to start.
+
+Solved as one system of 2n equations rather than joint by joint, so there is
+no order to find and nothing to get stuck on. **Tension is positive**
+throughout.
+
+The count comes before the answer and is more use than any number: too few
+members and the frame is a mechanism that will fold; too many and it cannot
+be settled by statics at all, because it is then held by how much each bar
+stretches. Both are refused by name.
+
+**Zero-force members are found rather than spotted** - the other classic
+question, and the other thing people miss. They are not useless: they hold
+the rest straight and take load the moment the loading changes.
+
+In the drawing, red pulls and blue pushes and the thickness is how hard, so
+the way the frame carries its load is visible before any of the numbers are
+read.
 
 ## Moody
 
