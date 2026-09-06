@@ -55,21 +55,26 @@ PROPERTIES = [
 ]
 
 
-@lru_cache(maxsize=1)
-def _dome() -> tuple:
-    """The saturation dome, as (h liquid, h vapour, pressure).
+@lru_cache(maxsize=4)
+def dome(fluid) -> tuple:
+    """A fluid's saturation dome, as (h liquid, h vapour, pressure).
 
-    Worked out once. Each point on it is a full saturation solve and the
-    chart is redrawn on every keystroke, so doing it again each time would
-    be the slowest thing in the program by a wide margin.
+    Worked out once per fluid. Each point on it is a full saturation solve
+    and the chart is redrawn on every keystroke, so doing it again each time
+    would be the slowest thing in the program by a wide margin.
+
+    Takes the fluid rather than assuming one, because the cycle tab draws
+    the same dome and a second refrigerant should not need a second copy of
+    this.
     """
     liquid_h, vapour_h, pressures = [], [], []
-    top = r134a.T_CRITICAL - r134a.CRITICAL_MARGIN
+    bottom = fluid.T_TRIPLE + 20.0
+    top = fluid.T_CRITICAL - fluid.CRITICAL_MARGIN
     for step in range(90):
-        T = 233.15 + (top - 233.15) * step / 89.0
+        T = bottom + (top - bottom) * step / 89.0
         try:
-            liquid, vapour = r134a.saturated(T)
-        except r134a.R134aError:
+            liquid, vapour = fluid.saturated(T)
+        except Exception:                              # noqa: BLE001
             continue
         liquid_h.append(liquid.h / 1000.0)
         vapour_h.append(vapour.h / 1000.0)
@@ -315,7 +320,7 @@ class R134aTab(ttk.Frame):
         """Pressure against enthalpy, with the dome and the state on it."""
         try:
             self.axes.clear()
-            liquid_h, vapour_h, pressures = _dome()
+            liquid_h, vapour_h, pressures = dome(r134a)
             self.axes.plot(liquid_h, pressures, color="#1f4e79",
                            linewidth=1.3)
             self.axes.plot(vapour_h, pressures, color="#1f4e79",
@@ -326,6 +331,12 @@ class R134aTab(ttk.Frame):
             for one in self.states:
                 self.axes.plot([one.h / 1000.0], [one.p / 1000.0], "o",
                                color="#c0392b", markersize=7, zorder=5)
+            # The dome reaches down to the triple point, where the
+            # pressure is under half a kilopascal. Drawn to that the useful
+            # part of the chart is a band across the top, so the window
+            # stops at something a refrigerant is actually used at.
+            self.axes.set_ylim(max(min(pressures), 10.0),
+                               max(pressures) * 1.2)
             self.axes.set_yscale("log")
             self.axes.set_xlabel("specific enthalpy  kJ/kg", fontsize=8)
             self.axes.set_ylabel("pressure  kPa", fontsize=8)

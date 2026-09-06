@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from tkinter import ttk
 
+from .cycle_tab import CycleTab
 from .moistair_tab import MoistAirTab
 from .r134a_tab import R134aTab
 from .steam_tab import SteamTab
@@ -29,10 +30,12 @@ class PropertiesPane(ttk.Frame):
         self.steam = SteamTab(self.tabs, app)
         self.moist_air = MoistAirTab(self.tabs, app)
         self.r134a = R134aTab(self.tabs, app)
+        self.cycle = CycleTab(self.tabs, app)
 
         self.tabs.add(self.steam, text="  Water and steam  ")
         self.tabs.add(self.moist_air, text="  Moist air  ")
         self.tabs.add(self.r134a, text="  R134a  ")
+        self.tabs.add(self.cycle, text="  Refrigeration cycle  ")
 
     def show_steam(self) -> None:
         self.tabs.select(self.steam)
@@ -42,3 +45,6 @@ class PropertiesPane(ttk.Frame):
 
     def show_r134a(self) -> None:
         self.tabs.select(self.r134a)
+
+    def show_cycle(self) -> None:
+        self.tabs.select(self.cycle)

@@ -125,3 +125,69 @@ gives it as 4978.830171 mol/m3, which is 508.0. That twelfth of a percent
 came out as a twelfth of a percent in every saturation pressure the equation
 produced - dead flat across ninety kelvin, which is what made it look like a
 constant of nature rather than a mistake.
+
+# The refrigeration cycle
+
+Under **Properties**, beside R134a. Give it two temperatures and it works out
+the four states the refrigerant goes round, draws them on the
+pressure-enthalpy chart, and tells you what they come to.
+
+The four corners:
+
+1. **into the compressor** - out of the evaporator, dry saturated or
+   superheated by however much you say
+2. **into the condenser** - out of the compressor, at the condensing pressure
+3. **into the throttle** - out of the condenser, saturated liquid or
+   subcooled
+4. **into the evaporator** - out of the throttle, part flashed to gas
+
+Two of those four are not on the saturation line, and that is the part worth
+having done for you. The compressor exit is found at a pressure and an
+entropy, the throttle exit at a pressure and an enthalpy, and reading either
+off a table means interpolating twice. Reading the four states is where the
+errors in this calculation come from - not the arithmetic afterwards.
+
+## What you give it
+
+- The **evaporating and condensing temperatures**, which fix both pressures
+- **Superheat** at the compressor inlet and **subcooling** at the condenser
+  outlet, both in kelvin
+- The compressor's **isentropic efficiency** as a percentage
+- A **duty** in kilowatts, if you want the machine sized rather than the
+  answers per kilogram - and whether that duty is the cooling wanted in or
+  the heat wanted out, because a heat pump is bought for the other end of
+  itself
+
+## What comes out
+
+Refrigerating effect, compressor work and heat rejected, per kilogram. Both
+coefficients of performance. The Carnot coefficient between the same two
+temperatures and what fraction of it this cycle reaches - which is the
+number that says whether a disappointing COP is the machine's fault or the
+temperatures'.
+
+Then the pressure ratio, the discharge temperature and the dryness after the
+throttle. With a duty: mass flow, volume flow into the compressor,
+compressor power and condenser duty.
+
+## The two checks
+
+The heat rejected has to equal the heat taken in plus the work put in,
+because energy does not go anywhere else. And the heating coefficient of
+performance has to be exactly one more than the cooling one, for the same
+reason.
+
+Neither is imposed. Both are worked out from the four states independently
+and compared, so if the states are wrong the sums say so rather than
+agreeing with each other by construction.
+
+It also says when the answer is right but the machine is odd: a discharge
+temperature high enough to break down compressor oil, a pressure ratio past
+what one stage of compression normally does, or a compressor being fed
+saturated vapour - which is the textbook cycle and not what anybody builds.
+
+## Other refrigerants
+
+The cycle takes the fluid as a parameter rather than assuming one, so
+anything shaped like the R134a module can be run round it. Adding a second
+refrigerant is a second set of properties and no change to the cycle at all.

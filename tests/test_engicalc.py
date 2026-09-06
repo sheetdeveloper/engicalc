@@ -4062,6 +4062,181 @@ class TestR134a(unittest.TestCase):
         self.assertGreater(vapour.cp, vapour.cv)
 
 
+class TestStateLookups(unittest.TestCase):
+    """Finding a state by entropy or by enthalpy, which a cycle needs."""
+
+    def test_both_lookups_come_back_where_they_started(self):
+        from engicalc.core import r134a
+
+        for celsius, kpa in ((40, 500), (60, 1000), (100, 2000), (-20, 100)):
+            with self.subTest(celsius=celsius, kpa=kpa):
+                start = r134a.at_pressure_and_temperature(kpa * 1000.0,
+                                                          celsius + 273.15)
+                by_entropy = r134a.at_pressure_and_entropy(kpa * 1000.0,
+                                                           start.s)
+                by_enthalpy = r134a.at_pressure_and_enthalpy(kpa * 1000.0,
+                                                             start.h)
+                self.assertAlmostEqual(by_entropy.T, start.T, places=6)
+                self.assertAlmostEqual(by_enthalpy.T, start.T, places=6)
+
+    def test_inside_the_dome_it_finds_the_dryness(self):
+        from engicalc.core import r134a
+
+        # Both properties are linear in dryness between the two saturated
+        # states, so this is arithmetic rather than a search - and it has to
+        # give back exactly the dryness it was handed.
+        for celsius, dryness in ((0, 0.3), (-10, 0.8), (30, 0.5)):
+            with self.subTest(celsius=celsius, dryness=dryness):
+                wet = r134a.wet(celsius + 273.15, dryness)
+                self.assertAlmostEqual(
+                    r134a.at_pressure_and_entropy(wet.p, wet.s).quality,
+                    dryness, places=6)
+                self.assertAlmostEqual(
+                    r134a.at_pressure_and_enthalpy(wet.p, wet.h).quality,
+                    dryness, places=6)
+
+
+class TestRefrigerationCycle(unittest.TestCase):
+    """The four states, and the two sums that have to come out."""
+
+    def _fluid(self):
+        from engicalc.core import r134a
+        return r134a
+
+    def _ideal(self):
+        from engicalc.core.cycle import Cycle
+        return Cycle(fluid=self._fluid(), evaporating=263.15,
+                     condensing=313.15)
+
+    def test_the_textbook_cycle(self):
+        # -10 C to 40 C, dry saturated in, reversible compressor. The
+        # refrigerating effect is hg(-10) - hf(40) and the answer everybody
+        # gets is a COP of about four.
+        run = self._ideal()
+        liquid, vapour = self._fluid().saturated(263.15)
+        condensed, _ = self._fluid().saturated(313.15)
+        found = run.performance()
+        self.assertAlmostEqual(found["refrigerating effect"],
+                               vapour.h - condensed.h, places=6)
+        self.assertAlmostEqual(found["cooling COP"], 4.03, delta=0.05)
+
+    def test_the_energy_balance_closes(self):
+        # Heat out equals heat in plus work in. Worked out from the four
+        # states rather than imposed, so it is a check and not a
+        # restatement of how they were calculated.
+        from engicalc.core.cycle import Cycle
+
+        for superheat, subcool, efficiency in ((0, 0, 1.0), (5, 3, 0.7),
+                                               (10, 0, 0.85), (0, 8, 0.6)):
+            run = Cycle(fluid=self._fluid(), evaporating=263.15,
+                        condensing=313.15, superheat=superheat,
+                        subcool=subcool, efficiency=efficiency)
+            with self.subTest(superheat=superheat, efficiency=efficiency):
+                found = run.performance()
+                self.assertAlmostEqual(
+                    found["refrigerating effect"] + found["compressor work"],
+                    found["heat rejected"], places=6)
+                self.assertAlmostEqual(found["heating COP"],
+                                       found["cooling COP"] + 1.0, places=9)
+                self.assertEqual([], run.notes()[:0] or [])
+
+    def test_the_throttle_keeps_the_enthalpy(self):
+        # Which is the whole of what a throttle is, and why some of the
+        # liquid flashes off on the way through it.
+        _first, _second, third, fourth = self._ideal().states()
+        self.assertAlmostEqual(third.h, fourth.h, places=6)
+        self.assertGreater(fourth.quality, 0.0)
+        self.assertLess(fourth.quality, 1.0)
+
+    def test_a_reversible_compressor_keeps_the_entropy(self):
+        first, second, _third, _fourth = self._ideal().states()
+        self.assertAlmostEqual(second.s, first.s, places=6)
+        self.assertGreater(second.T, first.T)
+
+    def test_a_worse_compressor_costs_more_and_runs_hotter(self):
+        from engicalc.core.cycle import Cycle
+
+        better = Cycle(fluid=self._fluid(), evaporating=263.15,
+                       condensing=313.15, efficiency=0.9).performance()
+        worse = Cycle(fluid=self._fluid(), evaporating=263.15,
+                      condensing=313.15, efficiency=0.6).performance()
+        self.assertGreater(worse["compressor work"],
+                           better["compressor work"])
+        self.assertLess(worse["cooling COP"], better["cooling COP"])
+        self.assertGreater(worse["discharge temperature"],
+                           better["discharge temperature"])
+
+    def test_nothing_beats_carnot(self):
+        from engicalc.core.cycle import Cycle
+
+        # A law rather than a preference, so it is worth making the code
+        # prove it over a range rather than at one point.
+        for evaporating in (253.15, 263.15, 273.15, 283.15):
+            for condensing in (303.15, 313.15, 323.15, 333.15):
+                run = Cycle(fluid=self._fluid(), evaporating=evaporating,
+                            condensing=condensing, superheat=5.0,
+                            efficiency=0.75)
+                with self.subTest(evaporating=evaporating,
+                                  condensing=condensing):
+                    found = run.performance()
+                    self.assertLess(found["cooling COP"], found["Carnot COP"])
+                    self.assertGreater(found["fraction of Carnot"], 0.0)
+                    self.assertLess(found["fraction of Carnot"], 1.0)
+
+    def test_a_duty_sizes_the_machine(self):
+        from engicalc.core.cycle import Cycle
+
+        cooling = Cycle(fluid=self._fluid(), evaporating=263.15,
+                        condensing=313.15, superheat=5.0, subcool=3.0,
+                        efficiency=0.7, duty=5000.0).performance()
+        self.assertAlmostEqual(
+            cooling["mass flow"] * cooling["refrigerating effect"], 5000.0,
+            places=6)
+        self.assertAlmostEqual(
+            cooling["condenser duty"],
+            5000.0 + cooling["compressor power"], places=6)
+
+        # A heat pump is bought for the other end of itself.
+        heating = Cycle(fluid=self._fluid(), evaporating=268.15,
+                        condensing=318.15, superheat=5.0, subcool=2.0,
+                        efficiency=0.75, duty=8000.0,
+                        heating=True).performance()
+        self.assertAlmostEqual(heating["condenser duty"], 8000.0, places=6)
+
+    def test_superheat_and_subcooling_move_things_the_right_way(self):
+        from engicalc.core.cycle import Cycle
+
+        plain = Cycle(fluid=self._fluid(), evaporating=263.15,
+                      condensing=313.15).performance()
+        # Subcooling gets more cooling for the same work, because the
+        # refrigerant arrives at the throttle with less to flash off.
+        colder = Cycle(fluid=self._fluid(), evaporating=263.15,
+                       condensing=313.15, subcool=5.0).performance()
+        self.assertGreater(colder["refrigerating effect"],
+                           plain["refrigerating effect"])
+        self.assertGreater(colder["cooling COP"], plain["cooling COP"])
+        self.assertLess(colder["dryness after the throttle"],
+                        plain["dryness after the throttle"])
+
+    def test_the_cycles_that_are_not_cycles_are_refused(self):
+        from engicalc.core.cycle import Cycle, CycleError
+
+        for bad in (dict(evaporating=313.15, condensing=263.15),
+                    dict(evaporating=263.15, condensing=313.15,
+                         efficiency=1.5),
+                    dict(evaporating=263.15, condensing=313.15,
+                         efficiency=0.0),
+                    dict(evaporating=263.15, condensing=313.15,
+                         superheat=-5.0)):
+            with self.subTest(**bad):
+                with self.assertRaises(CycleError):
+                    Cycle(fluid=self._fluid(), **bad).states()
+
+    def test_it_mentions_a_compressor_fed_saturated_vapour(self):
+        said = " ".join(self._ideal().notes())
+        self.assertIn("superheat", said)
+
+
 class TestMotion(unittest.TestCase):
     """Straight-line motion, checked against itself and against arithmetic."""
 

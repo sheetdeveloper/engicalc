@@ -80,6 +80,13 @@ RHO_MAX = 1700.0
 #: the last fraction of a kelvin has no two phases in it to find.
 CRITICAL_MARGIN = 0.05
 
+#: How far off the saturation line a single-phase search starts. The
+#: pressure changes by about 30 kPa per kelvin near room temperature, so a
+#: thousandth of a kelvin is thirty pascals - well clear of the tolerance
+#: that decides a state is on the line, and far too small to be a different
+#: state.
+CLEAR_OF_THE_LINE = 1e-3
+
 #: The residual part: (n, d, t, c). Terms with c = 0 are plain powers; the
 #: rest carry a factor exp(-delta^c).
 RESIDUAL = (
@@ -192,6 +199,19 @@ def _pressure(T: float, rho: float) -> float:
     return rho * R * T * (1.0 + delta * phi_d)
 
 
+def _pressure_and_slope(T: float, rho: float) -> tuple:
+    """(p, dp/drho), both out of the one differentiation.
+
+    The slope costs nothing extra - it is the same residual evaluation with
+    the second density derivative used as well - and having it turns the
+    root finding from bisection into Newton.
+    """
+    delta, tau = rho / RHO_REDUCING, T_REDUCING / T
+    _phi, phi_d, phi_dd, *_rest = _residual(delta, tau)
+    return (rho * R * T * (1.0 + delta * phi_d),
+            R * T * (1.0 + 2.0 * delta * phi_d + delta * delta * phi_dd))
+
+
 def _gibbs_over_rt(T: float, rho: float) -> float:
     """g / RT, less the ideal-gas constants, which cancel between phases."""
     delta, tau = rho / RHO_REDUCING, T_REDUCING / T
@@ -274,28 +294,35 @@ def _turning_points(T: float) -> tuple:
     wanders through tens of gigapascals; there are several turning points
     in there and only the outermost pair bounds the part that is real.
     """
-    steps = 400
+    steps = 300
     lo, hi = 1e-3, RHO_MAX
     walk = [lo * (hi / lo) ** (index / steps) for index in range(steps + 1)]
-    slopes = [_dp_drho(T, rho) for rho in walk]
+    # The pressures alone, once. Asking for the slope at every point instead
+    # costs two of these apiece, and a cycle wants several saturation solves.
+    along = [_pressure(T, rho) for rho in walk]
 
-    def first_turn(order) -> float | None:
-        """The first place the slope of the isotherm crosses zero.
+    def first_turn(order, pressures) -> float | None:
+        """The first place the slope of the isotherm changes sign.
 
-        Bracketed on the slope itself. Spotting the change between two
-        consecutive differences and then bracketing between the densities
-        the second difference was taken across puts the bracket half a step
-        away from the crossing, and half the time it misses.
+        Where two consecutive differences disagree, the slope crosses zero
+        somewhere between the *outer* two densities. Bracketing between the
+        inner two is half a step away from the crossing and misses it half
+        the time, which is the mistake this had before.
         """
-        for (before, first), (after, second) in zip(order, order[1:]):
-            if first * second <= 0:
-                low, high = sorted((before, after))
-                return _bisect(lambda rho: _dp_drho(T, rho), low, high)
+        changes = [second - first
+                   for first, second in zip(pressures, pressures[1:])]
+        for index, (before, after) in enumerate(zip(changes, changes[1:])):
+            if before * after <= 0:
+                low, high = sorted((order[index], order[index + 2]))
+                try:
+                    return _bisect(lambda rho: _dp_drho(T, rho), low, high)
+                except R134aError:
+                    continue         # flat to within rounding; keep looking
         return None
 
-    pairs = list(zip(walk, slopes))
-    vapour_side = first_turn(pairs)
-    liquid_side = first_turn(list(reversed(pairs)))
+    vapour_side = first_turn(walk, along)
+    liquid_side = first_turn(list(reversed(walk)),
+                             list(reversed(along)))
     if vapour_side is None or liquid_side is None or \
             liquid_side <= vapour_side:
         raise R134aError(
@@ -327,7 +354,34 @@ def _bisect(f, lo: float, hi: float, tolerance: float = 1e-12) -> float:
 
 
 def _root_on_branch(T: float, p: float, lo: float, hi: float) -> float:
-    return _bisect(lambda rho: _pressure(T, rho) - p, lo, hi)
+    """The density on one branch of the isotherm where the pressure is *p*.
+
+    Newton, kept inside the bracket it started with. A step that would
+    leave the bracket is replaced by the bisection step, so this is as fast
+    as Newton where Newton behaves and as sure as bisection where it does
+    not - which matters, because the two ends of this bracket are spinodals
+    and the slope goes to nothing at both of them.
+    """
+    low, high = lo, hi
+    at_low = _pressure(T, low) - p
+    if at_low * (_pressure(T, high) - p) > 0:
+        raise R134aError("Nothing to solve for between those two.")
+
+    rho = 0.5 * (low + high)
+    for _step in range(90):
+        here, slope = _pressure_and_slope(T, rho)
+        gap = here - p
+        if at_low * gap <= 0:
+            high = rho
+        else:
+            low, at_low = rho, gap
+        moved = rho - gap / slope if slope else None
+        if moved is None or not low < moved < high:
+            moved = 0.5 * (low + high)
+        if abs(moved - rho) <= 1e-13 * max(abs(rho), 1e-9):
+            return moved
+        rho = moved
+    return rho
 
 
 @lru_cache(maxsize=512)
@@ -412,6 +466,59 @@ def latent_heat(T: float) -> float:
     """How much heat one kilogram takes to boil at *T*."""
     liquid, vapour = saturated(T)
     return vapour.h - liquid.h
+
+
+def _by_property(p: float, wanted: float, of, name: str) -> State:
+    """The state at pressure *p* where the property *of* equals *wanted*.
+
+    Inside the dome both enthalpy and entropy are linear in dryness, so the
+    answer there is arithmetic rather than a search. Outside it, the
+    temperature is solved for.
+    """
+    if p <= 0 or p > P_MAX:
+        raise R134aError(f"The equation covers up to {P_MAX / 1e6:g} MPa.")
+
+    if p < saturation_pressure(T_CRITICAL - CRITICAL_MARGIN):
+        boils_at = saturation_temperature(p)
+        liquid, vapour = saturated(boils_at)
+        low, high = of(liquid), of(vapour)
+        if low <= wanted <= high:
+            # Between the two, so it is wet and the dryness follows.
+            dryness = ((wanted - low) / (high - low)
+                       if high != low else 0.0)
+            return wet(boils_at, dryness)
+        # Started clear of the saturation line rather than on it. A state
+        # at (p, T) exactly on the line does not say which phase it is and
+        # is refused, which is right - and a thousandth of a kelvin either
+        # side is the same state to anybody, the dome having already caught
+        # the case that really is saturated.
+        if wanted > high:
+            lo, hi = boils_at + CLEAR_OF_THE_LINE, T_MAX
+        else:
+            lo, hi = T_MIN, boils_at - CLEAR_OF_THE_LINE
+    else:
+        lo, hi = T_MIN, T_MAX
+
+    def missing(T: float) -> float:
+        return of(at_pressure_and_temperature(p, T)) - wanted
+
+    try:
+        return at_pressure_and_temperature(
+            p, _bisect(missing, lo, hi - 1e-6, tolerance=1e-11))
+    except R134aError as exc:
+        raise R134aError(
+            f"No state at {p / 1000.0:.4g} kPa has {name} of "
+            f"{wanted:.6g} within the range the equation covers.") from exc
+
+
+def at_pressure_and_entropy(p: float, s: float) -> State:
+    """Where a reversible compression from *p* at entropy *s* comes out."""
+    return _by_property(p, s, lambda state: state.s, "an entropy")
+
+
+def at_pressure_and_enthalpy(p: float, h: float) -> State:
+    """Where a throttle to *p* comes out, since a throttle keeps enthalpy."""
+    return _by_property(p, h, lambda state: state.h, "an enthalpy")
 
 
 def at_pressure_and_temperature(p: float, T: float) -> State:
