@@ -32,17 +32,68 @@ and under the whole curve.
 
 ## Beam
 
-Shear force and bending moment for a simply supported beam or a cantilever,
-with a point load, a spread load, or both.
+Add as many loads as the beam carries: point loads, loads spread over any
+part of the span, and applied couples, in any mixture. Each row is one load
+and there is an Add button for each kind.
+
+A spread load can ramp. Give it a second intensity and it runs straight from
+one to the other, which covers the triangle liquid pressure puts on a wall
+and the trapezoid a sloping roof puts on a purlin. Leave it blank and the
+load is uniform.
+
+A point load can lean. The angle is measured from the beam, so ninety
+degrees is straight down and anything else has a component along the beam as
+well - which is held by the pinned support and drawn as an axial force
+diagram underneath the other two. Past ninety it leans back towards the near
+end, so one number covers every direction.
+
+Put the supports where they actually are. A beam held in from its ends
+overhangs, and the moment over the support is hogging - which the fixed pair
+at the ends this tab used to have could never show.
+
+Say what kind each support is:
+
+| Kind | Holds it up | Holds it back | Stops it turning |
+| --- | --- | --- | --- |
+| roller | yes | | |
+| pin | yes | yes | |
+| fixed | yes | yes | yes |
+| none | | | |
+
+A cantilever is a fixed end with none at the other. Which support is the pin
+is worth thinking about rather than accepting: under an inclined load it
+decides which part of the beam is pulled and which is pushed, and the two
+answers are not the same drawing.
+
+Above the diagrams the beam is drawn twice - as you described it, and again
+as a free body with the supports taken away and their reactions standing in
+their place. The second is the step the whole method turns on and the one
+people skip. Turn it off with the checkbox if you only want the beam.
 
 Everything is worked from the loads by summing along the beam, so the
-diagrams and the numbers beside them cannot disagree. Two checks come free:
-the shear and the moment both have to return to zero at the far end of a
-beam in equilibrium, and if they do not you are told the reactions are wrong
-rather than shown a plausible drawing.
+diagrams and the numbers beside them cannot disagree. Three checks come
+free: the shear, the moment and the axial force all have to return to zero
+at the far end of a beam in equilibrium, and if they do not you are told the
+reactions are wrong rather than shown a plausible drawing.
 
-Sign convention: upward loads positive, sagging moment positive, distances
-from the left-hand end.
+### What it will not do
+
+All of this comes out of equilibrium, and equilibrium settles a beam with
+two simple supports, or one built-in end, and nothing more. These are real
+beams and it cannot do them:
+
+- a propped cantilever - built in at one end, resting on something at the
+  other
+- a beam continuous over three or more supports
+- two pinned supports with a load leaning against them, which share the
+  thrust in a proportion equilibrium cannot work out
+
+Each is refused by name and by reason. They need the deflections as well as
+the forces, and this does not have them.
+
+Sign convention: upward loads positive, sagging moment positive,
+anticlockwise couples positive, tension positive, distances from the
+left-hand end.
 
 ## Mohr's circle
 
@@ -72,3 +123,23 @@ Above 4000 it is turbulent. Between them the transition is shaded and the
 answer is flagged as an estimate, because there the result depends on the
 pipe's history rather than on the numbers, and a chart that draws a
 confident line through it is drawing something nobody can predict.
+
+## Getting a chart out
+
+Every chart has four buttons under it.
+
+**Save chart** writes the picture. PNG for a report, and PDF or SVG sit
+beside it because a bending moment diagram that has to go on a drawing at A3
+should not be a photograph of one - the vector formats stay sharp at any
+size.
+
+**Copy chart** puts it on the clipboard, ready to paste straight into Word.
+
+**Copy numbers** puts the table underneath it on the clipboard as text.
+
+**Export** writes an Excel workbook with the numbers in it, and the chart
+alongside them. The picture is a picture - it does not recalculate - but a
+workbook of peak values with no diagram is rarely what anybody opens the
+file to see.
+
+The parametric study on the Simultaneous page has the same buttons.

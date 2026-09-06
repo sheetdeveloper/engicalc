@@ -14,6 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import numpy as np  # noqa: E402
 import sympy as sp  # noqa: E402
 
 from engicalc.core.engine import calculate, rearrange  # noqa: E402
@@ -313,6 +314,85 @@ class TestExport(unittest.TestCase):
             export_history(history.recent(), path, library=library)
             book = load_workbook(path)
             self.assertEqual(len(book.sheetnames), 2)
+
+
+class TestChartExport(unittest.TestCase):
+    """A chart you can only look at is half a result."""
+
+    def _figure(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        from matplotlib.figure import Figure
+
+        figure = Figure(figsize=(4, 3), dpi=80)
+        figure.patch.set_facecolor("white")
+        figure.add_subplot(111).plot([0, 1, 2], [0, 1, 0])
+        return figure
+
+    def test_a_chart_saves_in_every_format_offered(self):
+        from engicalc.ui import figures
+
+        # PDF and SVG sit beside PNG in the dialog on purpose: a bending
+        # moment diagram that has to go on a drawing at A3 should not be a
+        # photograph of one. Offering them and not writing them is worse
+        # than not offering them.
+        figure = self._figure()
+        with tempfile.TemporaryDirectory() as tmp:
+            for suffix in (".png", ".pdf", ".svg"):
+                path = os.path.join(tmp, "chart" + suffix)
+                figures._write(figure, path, dpi=figures.DPI)
+                self.assertGreater(os.path.getsize(path), 200, suffix)
+
+    def test_the_saved_chart_keeps_its_white_ground(self):
+        from PIL import Image
+
+        from engicalc.ui import figures
+
+        # Saved transparent, it pastes into Word and turns black in some
+        # versions of it.
+        image = figures.figure_image(self._figure()).convert("RGB")
+        self.assertEqual((255, 255, 255), image.getpixel((1, 1)))
+
+    def test_the_temporary_png_exists_then_does_not(self):
+        from engicalc.ui import figures
+
+        # A workbook holds the picture by filename until it is saved, so it
+        # has to outlive the call that made it and be gone afterwards.
+        with figures.temporary_png(self._figure()) as path:
+            self.assertTrue(os.path.exists(path))
+            self.assertGreater(os.path.getsize(path), 200)
+        self.assertFalse(os.path.exists(path))
+
+    def test_the_workbook_carries_the_chart_beside_the_numbers(self):
+        from openpyxl import load_workbook
+
+        from engicalc.export.excel import export_table
+        from engicalc.ui import figures
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "chart.xlsx")
+            with figures.temporary_png(self._figure()) as picture:
+                export_table(("Quantity", "Value", "Unit"),
+                             [["largest moment", 36.1, "kN m"]], path,
+                             title="Beam diagrams", sheet="Chart",
+                             picture=picture)
+            book = load_workbook(path)
+            sheet = book["Chart"]
+            self.assertEqual("largest moment", sheet.cell(4, 1).value)
+            self.assertEqual(1, len(sheet._images))
+
+    def test_a_picture_that_will_not_go_in_does_not_lose_the_numbers(self):
+        from openpyxl import load_workbook
+
+        from engicalc.export.excel import export_table
+
+        # The numbers are what was asked for; the chart is what was added.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "chart.xlsx")
+            export_table(("Quantity", "Value"), [["shear", 23.0]], path,
+                         picture=os.path.join(tmp, "not-a-file.png"))
+            sheet = load_workbook(path).active
+            self.assertEqual("shear", sheet.cell(4, 1).value)
 
 
 class TestPlotting(unittest.TestCase):
@@ -3041,6 +3121,224 @@ class TestBeamDiagrams(unittest.TestCase):
         with self.assertRaises(BeamError):
             analyse(Beam(length=3, supports=[0, 3],
                          loads=[PointLoad(5, -1000)]))
+
+    # -- loads over part of the span, ramps, overhangs and inclined forces --
+    def test_a_spread_load_over_part_of_the_span(self):
+        from engicalc.core.beams import Beam, Distributed, analyse
+
+        # This was wrong, and only wrong past the end of the load, so the
+        # examples that covered the whole beam never showed it: the moment
+        # went on accumulating as though the section were still underneath
+        # it, and a diagram that should close at zero finished at 80 kN m.
+        #
+        # 10 kN/m over the first 2 m of a 6 m span. 20 kN at 1 m, so the
+        # reactions are 16.667 and 3.333 kN, and the moment 4 m along is
+        # 3.333 x 2 = 6.667 kN m taken from the right-hand end.
+        result = analyse(Beam(length=6, supports=[0, 6],
+                              loads=[Distributed(0, 2, -10000)]))
+        self.assertAlmostEqual(result.reactions[0], 16666.666667, places=5)
+        self.assertAlmostEqual(result.reactions[6], 3333.333333, places=5)
+        index = int(np.argmin(np.abs(result.x - 4.0)))
+        self.assertAlmostEqual(float(result.moment[index]), 6666.666667,
+                               places=4)
+        self.assertAlmostEqual(float(result.moment[-1]), 0.0, places=6)
+        self.assertEqual([], result.notes)
+
+    def test_a_load_that_ramps_from_nothing(self):
+        from engicalc.core.beams import Beam, Distributed, analyse
+
+        # A triangle rising to 12 kN/m at the far end of a 6 m span. The
+        # whole load is 36 kN two thirds of the way along, so the reactions
+        # are W/3 and 2W/3, the shear crosses zero at L/sqrt(3), and the
+        # moment there is 16 sqrt(3) kN m.
+        result = analyse(Beam(length=6, supports=[0, 6],
+                              loads=[Distributed(0, 6, 0.0, -12000)]))
+        self.assertAlmostEqual(result.reactions[0], 12000.0, places=5)
+        self.assertAlmostEqual(result.reactions[6], 24000.0, places=5)
+        at, moment = result.max_moment
+        self.assertAlmostEqual(at, 6.0 / math.sqrt(3), places=2)
+        self.assertAlmostEqual(moment, 16000.0 * math.sqrt(3), delta=2.0)
+        self.assertEqual([], result.notes)
+
+    def test_a_trapezoid_with_no_net_force_still_has_a_moment(self):
+        from engicalc.core.beams import Distributed
+
+        # Which is why its moment is integrated rather than taken as force
+        # times centroid: the centroid of nothing is nowhere.
+        load = Distributed(0, 4, 3000.0, -3000.0)
+        self.assertAlmostEqual(load.force(), 0.0, places=9)
+        self.assertNotAlmostEqual(load.moment_about_left(), 0.0, places=3)
+
+    def test_supports_held_in_from_the_ends_hog_over_the_support(self):
+        from engicalc.core.beams import Beam, PointLoad, analyse
+
+        # The case a pair of supports nailed to the ends can never show. A
+        # 10 kN load on each 1 m overhang: the reactions are 10 kN each by
+        # symmetry and the moment over each support is -10 kN m, hogging.
+        result = analyse(Beam(length=6, supports=[1, 5],
+                              loads=[PointLoad(0, -10000),
+                                     PointLoad(6, -10000)]))
+        self.assertAlmostEqual(result.reactions[1], 10000.0, places=6)
+        self.assertAlmostEqual(result.reactions[5], 10000.0, places=6)
+        index = int(np.argmin(np.abs(result.x - 1.0)))
+        self.assertAlmostEqual(float(result.moment[index]), -10000.0,
+                               places=3)
+        # And nothing bends the beam beyond the supports at its free ends.
+        self.assertAlmostEqual(float(result.moment[0]), 0.0, places=6)
+        self.assertAlmostEqual(float(result.moment[-1]), 0.0, places=6)
+
+    def test_an_inclined_load_is_resolved_both_ways(self):
+        from engicalc.core.beams import Beam, analyse, inclined
+
+        # 10 kN at 60 degrees to the beam, at the middle of a 4 m span. The
+        # supports share the 8.66 kN across it; the 5 kN along it is held by
+        # the pin, and the beam is in tension between the two.
+        result = analyse(Beam(length=4, supports=[0, 4],
+                              loads=[inclined(2, 10000.0, 60.0)]))
+        self.assertAlmostEqual(result.reactions[0],
+                               10000.0 * math.sin(math.radians(60)) / 2,
+                               places=5)
+        self.assertAlmostEqual(result.reactions["axial at 0"], -5000.0,
+                               places=5)
+        before = int(np.argmin(np.abs(result.x - 1.0)))
+        after = int(np.argmin(np.abs(result.x - 3.0)))
+        self.assertAlmostEqual(float(result.axial[before]), 5000.0, places=5)
+        self.assertAlmostEqual(float(result.axial[after]), 0.0, places=6)
+        self.assertEqual([], result.notes)
+
+    def test_a_load_leaning_the_other_way_pushes_the_beam(self):
+        from engicalc.core.beams import Beam, analyse, inclined
+
+        # Past ninety degrees it leans back towards the near end, so the
+        # same beam is in compression instead. One number covers every
+        # direction, which is the point of measuring from the beam.
+        result = analyse(Beam(length=4, supports=[0, 4],
+                              loads=[inclined(2, 10000.0, 120.0)]))
+        before = int(np.argmin(np.abs(result.x - 1.0)))
+        self.assertAlmostEqual(float(result.axial[before]), -5000.0,
+                               places=5)
+
+    def test_an_ordinary_vertical_load_has_no_axial_force_at_all(self):
+        from engicalc.core.beams import Beam, analyse, inclined
+
+        # cos(90 degrees) is 6e-17, not nought. Left as it came, every
+        # vertical load put a thread of axial force through the beam and the
+        # tab drew a diagram of its own rounding error.
+        result = analyse(Beam(length=4, supports=[0, 4],
+                              loads=[inclined(2, 10000.0, 90.0)]))
+        self.assertEqual(0.0, float(np.max(np.abs(result.axial))))
+        self.assertNotIn("axial at 0", result.reactions)
+        self.assertFalse([row for row in result.rows()
+                          if "axial" in row[0]])
+
+    def test_a_wall_holds_a_leaning_load_three_ways(self):
+        from engicalc.core.beams import Beam, analyse, inclined
+
+        # Force, thrust and couple, which is what makes a built-in end
+        # worth more than a pinned one.
+        result = analyse(Beam(length=3, supports=[0], kind="cantilever",
+                              loads=[inclined(3, 10000.0, 30.0)]))
+        across = 10000.0 * math.sin(math.radians(30))
+        self.assertAlmostEqual(result.reactions[0], across, places=5)
+        self.assertAlmostEqual(result.reactions["axial at 0"],
+                               -10000.0 * math.cos(math.radians(30)),
+                               places=5)
+        self.assertAlmostEqual(result.reactions["moment at 0"],
+                               across * 3, places=5)
+
+    # -- what kind of support each one is -----------------------------------
+    def test_which_support_is_the_pin_decides_which_half_is_pulled(self):
+        from engicalc.core.beams import Beam, Support, analyse, inclined
+
+        # The choice the old form hid behind "simply supported". The same
+        # beam under the same load: pinned on the left the near half is in
+        # tension, pinned on the right the far half is in compression, and
+        # the reactions holding it up are identical either way.
+        load = [inclined(2, 10000.0, 60.0)]
+        left = analyse(Beam(length=6, loads=load,
+                            supports=[Support(0, "pin"),
+                                      Support(6, "roller")]))
+        right = analyse(Beam(length=6, loads=load,
+                             supports=[Support(0, "roller"),
+                                       Support(6, "pin")]))
+        self.assertAlmostEqual(left.reactions[0], right.reactions[0],
+                               places=6)
+        near = int(np.argmin(np.abs(left.x - 1.0)))
+        far = int(np.argmin(np.abs(left.x - 4.0)))
+        self.assertAlmostEqual(float(left.axial[near]), 5000.0, places=5)
+        self.assertAlmostEqual(float(left.axial[far]), 0.0, places=6)
+        self.assertAlmostEqual(float(right.axial[near]), 0.0, places=6)
+        self.assertAlmostEqual(float(right.axial[far]), -5000.0, places=5)
+
+    def test_a_propped_cantilever_is_refused_rather_than_guessed(self):
+        from engicalc.core.beams import (Beam, BeamError, PointLoad, Support,
+                                         analyse)
+
+        # Four unknowns and three equations. It is a real beam and a common
+        # one, and it cannot be done from equilibrium - so it says so rather
+        # than producing a number that looks like an answer.
+        with self.assertRaises(BeamError) as caught:
+            analyse(Beam(length=6, loads=[PointLoad(3, -10000)],
+                         supports=[Support(0, "fixed"),
+                                   Support(6, "roller")]))
+        self.assertIn("indeterminate", str(caught.exception))
+
+    def test_two_pins_cannot_share_a_thrust(self):
+        from engicalc.core.beams import (Beam, BeamError, Support,
+                                         analyse, inclined)
+
+        with self.assertRaises(BeamError) as caught:
+            analyse(Beam(length=6, loads=[inclined(3, 10000.0, 60.0)],
+                         supports=[Support(0, "pin"), Support(6, "pin")]))
+        self.assertIn("roller", str(caught.exception))
+
+    def test_two_pins_are_fine_with_nothing_pushing_along_the_beam(self):
+        from engicalc.core.beams import Beam, PointLoad, Support, analyse
+
+        # Indeterminate only in the direction nothing is acting in, and a
+        # refusal there would be pedantry rather than honesty.
+        result = analyse(Beam(length=6, loads=[PointLoad(3, -10000)],
+                              supports=[Support(0, "pin"),
+                                        Support(6, "pin")]))
+        self.assertAlmostEqual(result.reactions[0], 5000.0, places=6)
+
+    def test_a_beam_on_one_roller_is_a_mechanism(self):
+        from engicalc.core.beams import (Beam, BeamError, PointLoad, Support,
+                                         analyse)
+
+        with self.assertRaises(BeamError):
+            analyse(Beam(length=6, loads=[PointLoad(3, -10000)],
+                         supports=[Support(0, "roller")]))
+
+    def test_three_supports_are_more_than_statics_can_do(self):
+        from engicalc.core.beams import (Beam, BeamError, PointLoad, Support,
+                                         analyse)
+
+        with self.assertRaises(BeamError):
+            analyse(Beam(length=6, loads=[PointLoad(3, -10000)],
+                         supports=[Support(0, "pin"), Support(3, "roller"),
+                                   Support(6, "roller")]))
+
+    def test_plain_distances_still_mean_what_they_meant(self):
+        from engicalc.core.beams import Beam, analyse, inclined
+
+        # A beam described as two numbers is a pin on the left and a roller
+        # on the right, the way it always was, so nothing written against
+        # the old shape had to change.
+        result = analyse(Beam(length=6, supports=[0, 6],
+                              loads=[inclined(2, 10000.0, 60.0)]))
+        self.assertIn("axial at 0", result.reactions)
+        held = Beam(length=6, supports=[0, 6]).held
+        self.assertEqual(["pin", "roller"], [s.kind for s in held])
+        wall = Beam(length=3, supports=[0], kind="cantilever").held
+        self.assertEqual(["fixed"], [s.kind for s in wall])
+
+    def test_a_support_off_the_end_is_refused(self):
+        from engicalc.core.beams import Beam, BeamError, PointLoad, analyse
+
+        with self.assertRaises(BeamError):
+            analyse(Beam(length=3, supports=[0, 7],
+                         loads=[PointLoad(1, -1000)]))
 
 
 class TestMohrsCircle(unittest.TestCase):

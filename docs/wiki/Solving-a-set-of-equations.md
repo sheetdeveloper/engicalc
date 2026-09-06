@@ -52,13 +52,25 @@ residual reported, relative to the size of the terms it came from.
 
 ## Studies
 
-Leave the set one equation short and the name nothing pins down becomes an
-input. The **Study** page then solves the whole set once for each value of
-it, and tabulates and plots the results.
+The **Study** page solves the whole set once for each value of one name, and
+tabulates and plots the results. Pick the name, give it a range and a number
+of steps, and press Run.
 
-So instead of `A = pi*0.15^2/4`, write `A = pi*d^2/4` and leave `d` free.
-The picker offers `d`; give it a range and a number of steps, and you get
-the pressure drop at every duct size rather than at one of them.
+Two kinds of name can be swept. One the set leaves free - written
+`A = pi*d^2/4` with nothing saying what `d` is - and one it fixes with a
+plain line like `d = 0.15`. In the second case each value of the sweep goes
+in place of that line rather than beside it, so the set stays solvable at
+every step instead of over-determined at every step. You get the pressure
+drop at every duct size rather than at one of them, without touching the
+equations.
+
+A name the equations *work out* is never offered. Fixing a velocity or a
+pressure drop is not sweeping an input; it is over-determining the set in a
+roundabout way.
+
+Picking a name also fills the range in around whatever it currently is, so
+Run does something sensible on the first press. It is a guess - half the
+value either side - and it can be typed over.
 
 Each value is solved from the equations as written rather than from the
 previous answer. That is slower, and it is right: a set with two solutions

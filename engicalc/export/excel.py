@@ -419,8 +419,13 @@ def export_expression(result, path: str, values: dict | None = None) -> str:
 
 
 def export_table(headings, rows, path: str, title: str = "Data",
-                 sheet: str = "Data") -> str:
-    """Plain table export (used for sweeps computed in Python)."""
+                 sheet: str = "Data", picture: str | None = None) -> str:
+    """Plain table export (used for sweeps computed in Python).
+
+    *picture* is a PNG to put beside the numbers. A table of shear and
+    moment is not what anybody looks at first, and a workbook that has the
+    diagram in it can be sent as it is.
+    """
     wb = Workbook()
     ws = wb.active
     ws.title = sheet
@@ -433,8 +438,36 @@ def export_table(headings, rows, path: str, title: str = "Data",
             cell.font = BODY
     for index in range(1, len(headings) + 1):
         ws.column_dimensions[get_column_letter(index)].width = 18
+    if picture:
+        _add_picture(ws, picture,
+                     f"{get_column_letter(len(headings) + 2)}3")
     _save(wb, path)
     return path
+
+
+#: How wide a chart is put into a sheet, in pixels. About 17 cm on a page,
+#: which is a portrait A4 with its margins.
+PICTURE_WIDTH = 640
+
+
+def _add_picture(ws, path: str, anchor: str) -> None:
+    """Put the PNG at *path* into the sheet, scaled to a sensible width.
+
+    Quietly skipped if it will not go in. An export that fails because the
+    decoration could not be placed has thrown away the numbers, which are
+    the part that was asked for.
+    """
+    try:
+        from openpyxl.drawing.image import Image as SheetImage
+
+        drawing = SheetImage(path)
+        if drawing.width:
+            drawing.height = int(drawing.height * PICTURE_WIDTH
+                                 / drawing.width)
+            drawing.width = PICTURE_WIDTH
+        ws.add_image(drawing, anchor)
+    except Exception:                                  # noqa: BLE001
+        pass
 
 
 def _save(wb, path: str) -> None:

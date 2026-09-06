@@ -30,7 +30,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from ..export.excel import export_table
-from . import clipboard, mathfield, mathrender
+from . import clipboard, figures, mathfield, mathrender
 from .symbol_pad import SymbolPad
 from .widgets import AsyncRunner, MONO, ReadOnlyText, ScrollFrame
 
@@ -259,6 +259,10 @@ class SimultaneousTab(ttk.Frame):
                               lambda e: self._draw_study())
         ttk.Button(plot_row, text="Export...",
                    command=self.export_study).pack(side="right")
+        ttk.Button(plot_row, text="Copy chart",
+                   command=self.copy_study_chart).pack(side="right", padx=6)
+        ttk.Button(plot_row, text="Save chart...",
+                   command=self.save_study_chart).pack(side="right")
 
         self.figure = Figure(figsize=(4.4, 2.6), dpi=100)
         self.figure.patch.set_facecolor("white")
@@ -402,11 +406,30 @@ class SimultaneousTab(ttk.Frame):
         if not path:
             return
         try:
-            export_table(self.study_headings, self.study_rows, path,
-                         title="Parametric study", sheet="Study")
-            self.status.configure(text="Study exported")
+            with figures.temporary_png(self.figure) as picture:
+                export_table(self.study_headings, self.study_rows, path,
+                             title="Parametric study", sheet="Study",
+                             picture=picture)
+            self.status.configure(text="Study exported, chart and all")
         except Exception as exc:                       # noqa: BLE001
             messagebox.showerror("Export failed", str(exc))
+
+    def save_study_chart(self) -> None:
+        try:
+            path = figures.save_figure(self.figure, "study")
+        except Exception as exc:                       # noqa: BLE001
+            messagebox.showerror("Could not save", str(exc))
+            return
+        if path:
+            self.status.configure(text="Chart saved")
+
+    def copy_study_chart(self) -> None:
+        try:
+            figures.copy_figure(self.figure)
+        except Exception as exc:                       # noqa: BLE001
+            messagebox.showerror("Could not copy", str(exc))
+            return
+        self.status.configure(text="Chart copied")
 
     # -- the typeset rows ---------------------------------------------------
     def _add_field(self, text: str = "", after=None):
