@@ -56,6 +56,8 @@ the area it measures shaded underneath and the working beside it.*
 | **Trusses** - every joint solved at once, ties red and struts blue | **Pressure vessels** - thin walled and thick, and where the two part |
 | ![Geometry](docs/screenshots/geometry.png) | ![Material chart](docs/screenshots/materials.png) |
 | **Geometry** - triangles, arcs and crossings, with both answers where there are two | **Material charts** - properties as ranges, with a selection line laid across |
+| ![Curved beam](docs/screenshots/curved.png) | ![Axial](docs/screenshots/axial.png) |
+| **Curved beams** - a hook or a clamp, where M y / I is not conservative | **Axial members** - stepped and composite bars, held at both ends and heated |
 | ![Worksheet](docs/screenshots/sheet.png) | ![Formula cards](docs/screenshots/formula_cards.png) |
 | **Worksheets** - named steps down the page, each using the ones above it | **Formula cards** - the library to browse rather than to solve |
 | ![Differential equations](docs/screenshots/ode.png) | ![Inequalities](docs/screenshots/inequality.png) |
@@ -486,6 +488,45 @@ the data is checked against the app's own algebra - yield below tensile
 strength, service temperature below melting point, and volumetric heat
 capacity and thermal diffusivity inside the bands every solid falls in.
 Thirty-six materials, zero failures.
+
+**Curved beams.** A crane hook, a C-clamp, a chain link, the frame of a
+punch press. Bend a straight beam and the stress goes linearly across the
+depth with nothing at the centroid; bend a bar that was curved to start
+with and neither is true. The fibres on the inside of the curve were
+shorter to begin with, so the same rotation strains them more, and the
+stress comes out as a hyperbola in the radius rather than a straight line
+in the depth.
+
+Two things follow, and they are what the tab is for. **The neutral axis is
+not at the centroid** - it moves in toward the centre of curvature. And
+**the inside stress can be far higher than a straight-beam calculation
+gives**: on a hook whose radius is about the depth of its section it is
+half as much again, and the inside is the fibre a hook is judged on. Using
+M y / I there is not conservative, it is optimistic, which is the wrong
+direction to be wrong in. Both answers are drawn on the same axes so the
+gap between them is visible, and it closes as the radius grows - past about
+eight times the depth there is a couple of per cent in it and the tab says
+so.
+
+**Axial members.** Bars held at both ends, and what heating them does. Heat
+a steel bar lying on a bench and it gets longer and carries nothing; heat
+the same bar between two walls and it gets no longer at all and carries a
+force that **does not depend on how long it is** - a metre or a kilometre,
+the strain that was prevented is the same and so is the stress.
+
+In series, a stepped bar or several bars end to end with loads where they
+meet; in parallel, a bolt through a sleeve or a column with steel in it,
+sharing the load in proportion to their stiffnesses. Held at both ends it
+is statically indeterminate and solved by the force method, the same as the
+beams.
+
+Three kinds of support, because conflating any two of them gives a wrong
+answer that looks reasonable. **Fixed** is attached: it can pull as well as
+push. **Free** is nothing there. **A wall** can only push - it carries
+nothing until the bar has grown far enough to touch it, and nothing again
+if the load pulls the bar away from it. A bar left a millimetre short of
+the wall is genuinely one problem or the other, and which is not decided by
+whoever set it.
 
 **Geometry.** The other half of geometry from the section tab: not what a
 shape's properties are, but what the shape *is*. Three parts of a triangle

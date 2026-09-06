@@ -102,6 +102,31 @@ class Part:
         """How much of this part lies on the line at *level*."""
         return _width_of_polygon(self.outline(), level)
 
+    def over_radius(self, offset: float) -> float:
+        """Integral of dA/r over this part, where r is *offset* plus y.
+
+        The one quantity a curved beam needs and a straight one never asks
+        for. Done here by integrating the width over the depth, split at
+        every level where the outline turns a corner, because between two
+        corners the width is a straight line and Gauss handles that
+        exactly. The shapes with a closed form override this.
+        """
+        _l, _r, bottom, top = self.bounds()
+        if offset + bottom <= 0:
+            raise SectionError(
+                "Part of the section is at or past the centre of curvature, "
+                "where the radius is zero and the stress would be infinite. "
+                "The radius has to be bigger than the section is deep.")
+        edges = sorted({y for _x, y in self.outline()}
+                       | {bottom, top})
+        total = 0.0
+        for low, high in zip(edges, edges[1:]):
+            if high - low < 1e-15:
+                continue
+            total += _gauss(lambda y: self.width_at(y) / (offset + y),
+                            low, high)
+        return total
+
 
 @dataclass
 class Rectangle(Part):
@@ -137,6 +162,15 @@ class Rectangle(Part):
     def width_at(self, level: float) -> float:
         _l, _r, bottom, top = self.bounds()
         return self.width if bottom <= level <= top else 0.0
+
+    def over_radius(self, offset: float) -> float:
+        # b ln(r_outer / r_inner), which is the one every textbook quotes.
+        _l, _r, bottom, top = self.bounds()
+        if offset + bottom <= 0:
+            raise SectionError(
+                "Part of the section is at or past the centre of curvature. "
+                "The radius has to be bigger than the section is deep.")
+        return self.width * math.log((offset + top) / (offset + bottom))
 
 
 @dataclass
@@ -184,6 +218,20 @@ class Circle(Part):
         # (2/3)(r^2 - a^2)^(3/2), which is one of the tidier results in the
         # subject and the reason this is closed form at all.
         return area, (2.0 / 3.0) * rest ** 3 + area * self.y
+
+    def over_radius(self, offset: float) -> float:
+        # 2 pi (d - sqrt(d^2 - a^2)), with d the radius to the centre.
+        # Worth having in closed form rather than integrating: the width
+        # of a circle has a vertical tangent at top and bottom, and a
+        # quadrature that does not know that converges slowly there.
+        away = offset + self.y
+        radius = self.diameter / 2.0
+        if away - radius <= 0:
+            raise SectionError(
+                "Part of the section is at or past the centre of curvature. "
+                "The radius has to be bigger than the section is deep.")
+        return 2.0 * math.pi * (away - math.sqrt(away * away
+                                                 - radius * radius))
 
     def width_at(self, level: float) -> float:
         radius = self.diameter / 2.0
@@ -388,6 +436,38 @@ def _centre_of(part: Part) -> tuple:
 # --------------------------------------------------------------------------
 # The section
 # --------------------------------------------------------------------------
+#: Eight-point Gauss-Legendre on [-1, 1]. Exact for a polynomial up to the
+#: fifteenth degree, which is far more than the width of a section between
+#: two of its corners ever is - that is a straight line.
+_GAUSS = (
+    (-0.9602898564975363, 0.1012285362903763),
+    (-0.7966664774136267, 0.2223810344533745),
+    (-0.5255324099163290, 0.3137066458778873),
+    (-0.1834346424956498, 0.3626837833783620),
+    (0.1834346424956498, 0.3626837833783620),
+    (0.5255324099163290, 0.3137066458778873),
+    (0.7966664774136267, 0.2223810344533745),
+    (0.9602898564975363, 0.1012285362903763),
+)
+
+
+def _gauss(f, low: float, high: float, pieces: int = 8) -> float:
+    """Integrate f from low to high.
+
+    Split into a few pieces as well, because the integrand is a width over
+    a radius and the radius part is not polynomial - it is smooth, but
+    over a deep section it curves enough to be worth the extra points.
+    """
+    total = 0.0
+    step = (high - low) / pieces
+    for piece in range(pieces):
+        start = low + piece * step
+        middle, half = start + step / 2.0, step / 2.0
+        total += half * sum(weight * f(middle + half * spot)
+                            for spot, weight in _GAUSS)
+    return total
+
+
 @dataclass
 class Properties:
     """Everything a section has to say about itself."""
@@ -584,6 +664,19 @@ class Section:
             area += part.sign * piece
             moment += part.sign * first
         return area, moment
+
+    def over_radius(self, radius: float) -> float:
+        """Integral of dA/r for the whole section, at a centroid radius.
+
+        A hole takes its own share away, which is exactly right and is why
+        a hole needs no special handling here either.
+        """
+        if not self.parts:
+            raise SectionError("There is nothing in the section yet.")
+        found = self.properties()
+        offset = radius - found.cy
+        return sum(part.sign * part.over_radius(offset)
+                   for part in self.parts)
 
     def width_at(self, level: float) -> float:
         """How much metal is on the line at *level*.

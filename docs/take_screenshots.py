@@ -281,6 +281,24 @@ def main() -> None:
     geo.angle_A.set("30")
     grab(app, "geometry.png")
 
+    # The curved beam on a hook-like radius, where the inside fibre
+    # carries half as much again as a straight-beam sum gives - which is
+    # the whole reason the tab is there.
+    hook = app.graph_pane.charts["Curved beam"]
+    app.graph_pane.tabs.select(hook)
+    hook.radius.set("100")
+    grab(app, "curved.png")
+
+    # And the axial tab on a stepped bar held at both ends, which is the
+    # case statics alone cannot do.
+    bars = app.graph_pane.charts["Axial"]
+    app.graph_pane.tabs.select(bars)
+    bars.bar_rows[0].values["rise"].set("0")
+    bars.bar_rows[0].values["load"].set("100")
+    bars.add_bar(length="800", area="300", modulus="210", expansion="12",
+                 rise="0", load="0")
+    grab(app, "axial.png")
+
     for label, name in (("Stress and strain", "tensile.png"),
                         ("Section", "section.png"),
                         ("Motion", "motion.png"),

@@ -22,9 +22,9 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Arc, Rectangle
 
-from ..core import (beams, buckling, geometry, materials, motion, moody,
-                    section_table, sections, tensile, torsion,
-                    trusses, vessels)
+from ..core import (axial, beams, buckling, curved, geometry, materials,
+                    motion, moody, section_table, sections, tensile,
+                    torsion, trusses, vessels)
 from ..core.display import fmt_number
 from ..core import mohr
 from ..core.mohr import Mohr
@@ -2809,6 +2809,311 @@ def _slug(name: str) -> str:
     return name.lower().replace(" ", "_")
 
 
+# --------------------------------------------------------------------------
+class CurvedTab(ChartTab):
+    """A bar that was curved before it was bent.
+
+    The tab exists for one number: how much higher the stress on the inside
+    of the curve is than a straight-beam calculation says. On a crane hook
+    it is half as much again, and the inside is the fibre a hook fails at.
+    """
+
+    title = "Curved beam"
+    hint = "a hook, a clamp, a chain link - where My/I is not conservative"
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        ttk.Label(first, text="Section").pack(side="left")
+        self.section_name = tk.StringVar(value="Rectangle 50 x 100")
+        self.shapes = {
+            "Rectangle 50 x 100": lambda: sections.Section(
+                [sections.Rectangle(width=50.0, height=100.0)]),
+            "Round, 60 dia": lambda: sections.Section(
+                [sections.Circle(diameter=60.0)]),
+            "Trapezoid 60/30 x 100": lambda: sections.Section(
+                [sections.Polygon(points=[(-30.0, -50.0), (30.0, -50.0),
+                                          (15.0, 50.0), (-15.0, 50.0)])]),
+            FROM_SECTION_TAB: None,
+        }
+        chooser = ttk.Combobox(first, state="readonly", width=22,
+                               textvariable=self.section_name,
+                               values=list(self.shapes))
+        chooser.pack(side="left", padx=(4, 14))
+        chooser.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        self.radius = self.field(first, "Radius to the centroid", "150", "mm")
+
+        second = ttk.Frame(parent)
+        second.pack(fill="x", pady=(6, 0))
+        self.moment = self.field(second, "Moment", "5", "kN m")
+        self.normal = self.field(second, "Direct force", "0", "kN")
+        ttk.Label(second, style="Hint.TLabel",
+                  text="a moment that opens the curve is positive, and puts "
+                       "the inside into tension").pack(side="left",
+                                                       padx=(6, 0))
+
+    def linked(self, charts: dict) -> None:
+        self.section_tab = charts.get("Section")
+
+    def section(self):
+        chosen = self.section_name.get()
+        builder = self.shapes.get(chosen)
+        if builder is not None:
+            return builder()
+        beside = getattr(self, "section_tab", None)
+        if beside is None:
+            raise ParseError("The Section tab is not open yet.")
+        try:
+            return beside.section()
+        except Exception as exc:                       # noqa: BLE001
+            raise ParseError(f"The section next door will not build: {exc}")
+
+    def draw(self) -> tuple:
+        bar = curved.Curved(
+            section=self.section(),
+            radius=self.number(self.radius, "the radius"),
+            moment=self.number(self.moment, "the moment") * 1e6,
+            normal=self.number(self.normal, "the direct force") * 1e3)
+        found = bar.properties()
+        radii, real, straight = found.profile()
+
+        self.figure.clear()
+        axes = self.figure.add_subplot(111)
+        axes.plot(real, radii, color="#c00000", linewidth=1.8,
+                  label="curved - the real one")
+        axes.plot(straight, radii, "--", color="#1f4e79", linewidth=1.3,
+                  label="straight beam, M y / I")
+        axes.axvline(0.0, color="#666666", linewidth=0.8)
+        axes.axhline(found.neutral, color="#107C41", linewidth=1.0,
+                     linestyle=":")
+        axes.annotate(f"  neutral axis, r = {found.neutral:.4g}",
+                      (0.0, found.neutral), fontsize=6.5, color="#107C41",
+                      va="bottom")
+        axes.axhline(bar.radius, color="#888888", linewidth=0.8,
+                     linestyle="-.")
+        axes.annotate(f"  centroid, r = {bar.radius:.4g}",
+                      (0.0, bar.radius), fontsize=6.5, color="#666666",
+                      va="top")
+        axes.set_xlabel("stress  N/mm^2", fontsize=8)
+        axes.set_ylabel("radius from the centre of curvature  mm",
+                        fontsize=8)
+        axes.grid(True, alpha=0.25, linestyle=":")
+        axes.tick_params(labelsize=7)
+        axes.legend(loc="best", fontsize=7)
+        return found.rows(), found.notes()
+
+    def layout(self) -> None:
+        self.figure.tight_layout()
+
+
+# --------------------------------------------------------------------------
+class AxialRow:
+    """One bar in the axial table."""
+
+    #: (name, what the heading says, how wide). The name and the heading
+    #: are separate on purpose: they were one string, and renaming a
+    #: heading to say its unit renamed the field the code looks up.
+    COLUMNS = (("length", "length mm", 9), ("area", "area mm2", 9),
+               ("modulus", "E GPa", 8), ("expansion", "alpha", 8),
+               ("rise", "dT K", 7), ("load", "load kN at its far end", 16))
+
+    def __init__(self, tab, parent, length="1000", area="500",
+                 modulus="210", expansion="12", rise="50", load="0"):
+        self.tab = tab
+        self.frame = ttk.Frame(parent)
+        self.frame.pack(fill="x", pady=1)
+        self.values = {}
+        for (name, _heading, width), start in zip(
+                self.COLUMNS,
+                (length, area, modulus, expansion, rise, load)):
+            variable = tk.StringVar(value=start)
+            entry = ttk.Entry(self.frame, textvariable=variable, width=width,
+                              font=MONO)
+            entry.pack(side="left", padx=2)
+            variable.trace_add("write", lambda *a: tab.refresh())
+            self.values[name] = variable
+        ttk.Button(self.frame, text="x", width=2,
+                   command=self.remove).pack(side="left", padx=(6, 0))
+
+    def remove(self) -> None:
+        self.frame.destroy()
+        if self in self.tab.bar_rows:
+            self.tab.bar_rows.remove(self)
+        self.tab.refresh()
+
+    def read(self, index: int):
+        def number(name, what):
+            value = parse_number(self.values[name].get())
+            if value is None:
+                raise ParseError(f"Bar {index + 1}: enter {what}.")
+            return float(value)
+
+        bar = axial.Bar(
+            length=number("length", "a length"),
+            area=number("area", "an area"),
+            modulus=number("modulus", "a modulus") * 1000.0,
+            expansion=number("expansion", "an expansion coefficient"),
+            rise=number("rise", "a temperature change"),
+            name=f"bar {index + 1}")
+        return bar, number("load", "a load") * 1000.0
+
+
+class AxialTab(ChartTab):
+    """Bars held at both ends, and what heating them does.
+
+    Heat a steel bar on a bench and it gets longer. Heat it between two
+    walls and it gets no longer at all and carries a force that does not
+    depend on how long it is.
+    """
+
+    title = "Axial"
+    hint = "stepped and composite bars, held at both ends, and heated"
+
+    ARRANGEMENTS = ("in series - end to end",
+                    "in parallel - sharing the load")
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        self.arrangement = tk.StringVar(value=self.ARRANGEMENTS[0])
+        box = ttk.Combobox(first, state="readonly", width=28,
+                           textvariable=self.arrangement,
+                           values=self.ARRANGEMENTS)
+        box.pack(side="left", padx=(0, 14))
+        box.bind("<<ComboboxSelected>>", lambda e: self._arranged())
+
+        self.series_row = ttk.Frame(first)
+        ttk.Label(self.series_row, text="Left").pack(side="left")
+        self.left = tk.StringVar(value="fixed")
+        for kind in axial.HELD:
+            if kind == "wall":
+                continue
+            ttk.Radiobutton(self.series_row, text=kind, value=kind,
+                            variable=self.left,
+                            command=self.refresh).pack(side="left", padx=2)
+        ttk.Label(self.series_row, text="   right").pack(side="left")
+        self.right = tk.StringVar(value="fixed")
+        for kind in axial.HELD:
+            ttk.Radiobutton(self.series_row, text=kind, value=kind,
+                            variable=self.right,
+                            command=self.refresh).pack(side="left", padx=2)
+        self.gap = self.field(self.series_row, "gap", "0", "mm", width=7)
+
+        self.parallel_row = ttk.Frame(first)
+        self.load = self.field(self.parallel_row, "Load on all of them",
+                               "0", "kN")
+
+        self.table = ttk.Frame(parent)
+        self.table.pack(fill="x", pady=(8, 0))
+        headings = ttk.Frame(self.table)
+        headings.pack(fill="x")
+        for _name, heading, width in AxialRow.COLUMNS:
+            ttk.Label(headings, text=heading, width=width,
+                      style="Hint.TLabel").pack(side="left", padx=2)
+        self.body = ttk.Frame(self.table)
+        self.body.pack(fill="x")
+
+        self.bar_rows = []
+        ttk.Button(parent, text="Add a bar",
+                   command=self.add_bar).pack(anchor="w", pady=(6, 0))
+        self.add_bar(length="1000", area="500", modulus="210",
+                     expansion="12", rise="50", load="0")
+        self._arranged()
+
+    def _arranged(self) -> None:
+        series = self.arrangement.get() == self.ARRANGEMENTS[0]
+        self.series_row.pack_forget()
+        self.parallel_row.pack_forget()
+        (self.series_row if series else self.parallel_row).pack(side="left")
+        self.refresh()
+
+    def add_bar(self, **spec) -> None:
+        self.bar_rows.append(AxialRow(self, self.body, **spec))
+        self.refresh()
+
+    def draw(self) -> tuple:
+        if not self.bar_rows:
+            raise ParseError("Add a bar.")
+        read = [row.read(index) for index, row in enumerate(self.bar_rows)]
+        bars = [bar for bar, _load in read]
+
+        if self.arrangement.get() == self.ARRANGEMENTS[0]:
+            # The load on a row is applied at that bar's far end.
+            loads = [0.0] + [load for _bar, load in read]
+            got = axial.Series(bars=bars, loads=loads,
+                               left=self.left.get(), right=self.right.get(),
+                               gap=self.number(self.gap, "the gap")).solve()
+            self._draw_series(got)
+        else:
+            got = axial.Parallel(
+                bars=bars,
+                load=self.number(self.load, "the load") * 1000.0).solve()
+            self._draw_parallel(got)
+
+        rows = got.rows()
+        notes = [got.note] if got.note else []
+        heated = [bar for bar in bars if bar.rise]
+        if heated and got.touching:
+            worst = max(abs(force) / bar.area
+                        for bar, force in zip(bars, got.forces))
+            notes.append(
+                f"The worst stress is {worst:.4g} N/mm2 and no length "
+                f"appears in it anywhere - a metre or a kilometre, the "
+                f"strain that was prevented is the same and so is the "
+                f"stress.")
+        return rows, notes
+
+    def _draw_series(self, got) -> None:
+        self.figure.clear()
+        axes = self.figure.add_subplot(111)
+        along = [0.0]
+        for bar in got.bars:
+            along.append(along[-1] + bar.length)
+        for index, force in enumerate(got.forces):
+            colour = "#c00000" if force > 0 else "#1f4e79"
+            axes.fill_between([along[index], along[index + 1]], 0, force,
+                              color=colour, alpha=0.35)
+            axes.plot([along[index], along[index + 1]], [force, force],
+                      color=colour, linewidth=1.8)
+            axes.annotate(f"{force / 1000:.3g} kN",
+                          (0.5 * (along[index] + along[index + 1]), force),
+                          fontsize=7, ha="center",
+                          va="bottom" if force >= 0 else "top")
+        axes.axhline(0.0, color="#333333", linewidth=1.0)
+        for spot in along:
+            axes.axvline(spot, color="#cccccc", linewidth=0.7,
+                         linestyle=":")
+        axes.set_xlabel("along the bars  mm", fontsize=8)
+        axes.set_ylabel("force  N        red pulls, blue pushes",
+                        fontsize=8)
+        axes.grid(True, alpha=0.2, linestyle=":")
+        axes.tick_params(labelsize=7)
+
+    def _draw_parallel(self, got) -> None:
+        self.figure.clear()
+        axes = self.figure.add_subplot(111)
+        names = [bar.name or f"bar {n + 1}"
+                 for n, bar in enumerate(got.bars)]
+        spots = range(len(got.forces))
+        colours = ["#c00000" if force > 0 else "#1f4e79"
+                   for force in got.forces]
+        axes.bar(list(spots), [force / 1000.0 for force in got.forces],
+                 color=colours, alpha=0.6)
+        for spot, force in zip(spots, got.forces):
+            axes.annotate(f"{force / 1000:.3g} kN", (spot, force / 1000.0),
+                          fontsize=7, ha="center",
+                          va="bottom" if force >= 0 else "top")
+        axes.set_xticks(list(spots))
+        axes.set_xticklabels(names, fontsize=7)
+        axes.axhline(0.0, color="#333333", linewidth=1.0)
+        axes.set_ylabel("force  kN       red pulls, blue pushes", fontsize=8)
+        axes.grid(True, axis="y", alpha=0.2, linestyle=":")
+        axes.tick_params(labelsize=7)
+
+    def layout(self) -> None:
+        self.figure.tight_layout()
+
+
 CHARTS = [
     ("  Stress and strain  ", TensileTab),
     ("  Beam  ", BeamTab),
@@ -2819,6 +3124,8 @@ CHARTS = [
     ("  Stress state  ", MohrTab),
     ("  Pressure vessel  ", VesselTab),
     ("  Truss  ", TrussTab),
+    ("  Curved beam  ", CurvedTab),
+    ("  Axial  ", AxialTab),
     ("  Geometry  ", GeometryTab),
     ("  Material chart  ", MaterialsTab),
     ("  Moody  ", MoodyTab),

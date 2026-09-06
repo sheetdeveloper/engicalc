@@ -5009,6 +5009,313 @@ class TestMohrsCircle(unittest.TestCase):
         self.assertAlmostEqual(state.theta_p, 45.0, places=9)
 
 
+class TestAxialMembers(unittest.TestCase):
+    """Bars held at both ends, and what heating them does."""
+
+    @staticmethod
+    def _steel(length=1000.0, rise=50.0):
+        from engicalc.core import axial
+        return axial.Bar(length=length, area=500.0, modulus=210000.0,
+                         expansion=12.0, rise=rise, name="steel")
+
+    def test_a_restrained_bar_does_not_care_how_long_it_is(self):
+        from engicalc.core import axial
+
+        # E alpha dT, with no length in it anywhere. That is the whole
+        # result: the strain that was prevented is the same whatever the
+        # length, so the stress is too.
+        wanted = -axial.restrained_stress(210000.0, 12.0, 50.0)
+        for length in (10.0, 1000.0, 1e6):
+            with self.subTest(length=length):
+                got = axial.Series(bars=[self._steel(length)]).solve()
+                self.assertAlmostEqual(got.stresses()[0], wanted, places=6)
+        self.assertAlmostEqual(wanted, -126.0, places=9)
+
+    def test_a_free_end_carries_nothing_and_grows(self):
+        from engicalc.core import axial
+
+        got = axial.Series(bars=[self._steel()], right="free").solve()
+        self.assertAlmostEqual(got.forces[0], 0.0, places=9)
+        self.assertAlmostEqual(got.stretches[0], 1000 * 12e-6 * 50, places=9)
+
+    def test_a_gap_is_taken_up_before_anything_is_carried(self):
+        from engicalc.core import axial
+
+        # Free growth is 0.6 mm. Half of it into the gap leaves half the
+        # force; more gap than growth leaves none at all.
+        for gap, wanted in ((0.0, -63000.0), (0.3, -31500.0), (0.9, 0.0)):
+            with self.subTest(gap=gap):
+                got = axial.Series(bars=[self._steel()], right="wall",
+                                   gap=gap).solve()
+                self.assertAlmostEqual(got.forces[0], wanted, places=6)
+                self.assertEqual(got.touching, gap < 0.6)
+
+    def test_a_wall_can_only_push(self):
+        from engicalc.core import axial
+
+        # Pulled away from it, the wall carries nothing - which is the
+        # difference between a wall and a support the bar is attached to,
+        # and the reason they are not the same setting.
+        bars = [axial.Bar(length=1000.0, area=500.0, modulus=210000.0,
+                          name="steel")]
+        wall = axial.Series(bars=bars, loads=[0.0, -50000.0],
+                            right="wall").solve()
+        self.assertAlmostEqual(wall.reactions[1], 0.0, places=6)
+        self.assertFalse(wall.touching)
+
+        attached = axial.Series(bars=bars, loads=[0.0, -50000.0],
+                                right="fixed").solve()
+        self.assertAlmostEqual(attached.reactions[1], 50000.0, places=6)
+        self.assertTrue(attached.touching)
+
+    def test_a_stepped_bar_shares_the_load_by_stiffness(self):
+        from engicalc.core import axial
+
+        one = axial.Bar(length=500.0, area=1000.0, modulus=200000.0,
+                        name="left")
+        two = axial.Bar(length=800.0, area=400.0, modulus=200000.0,
+                        name="right")
+        got = axial.Series(bars=[one, two],
+                           loads=[0.0, 100000.0, 0.0]).solve()
+        share = one.stiffness / (one.stiffness + two.stiffness)
+        self.assertAlmostEqual(got.forces[0], 100000.0 * share, places=6)
+        self.assertAlmostEqual(got.forces[1], -100000.0 * (1 - share),
+                               places=6)
+        # Held at both ends, so the far end goes nowhere at all.
+        self.assertAlmostEqual(got.movement[-1], 0.0, places=9)
+        # And the reactions carry the load between them.
+        self.assertAlmostEqual(
+            got.reactions[0] + got.reactions[1] + 100000.0, 0.0, places=6)
+
+    def test_a_bolt_and_a_sleeve_load_each_other_with_no_load_on_them(self):
+        from engicalc.core import axial
+
+        # The aluminium wants to grow twice as much as the steel and
+        # cannot, so one ends up in tension and the other in compression
+        # and they add to nothing.
+        bolt = axial.Bar(length=200.0, area=150.0, modulus=210000.0,
+                         expansion=12.0, rise=60.0, name="steel bolt")
+        sleeve = axial.Bar(length=200.0, area=600.0, modulus=70000.0,
+                           expansion=23.0, rise=60.0, name="sleeve")
+        got = axial.Parallel(bars=[bolt, sleeve], load=0.0).solve()
+        self.assertAlmostEqual(sum(got.forces), 0.0, places=6)
+        self.assertGreater(got.forces[0], 0.0)
+        self.assertLess(got.forces[1], 0.0)
+        # They end the same length, which is the condition that solved it.
+        self.assertAlmostEqual(got.stretches[0], got.stretches[1], places=12)
+        # By hand.
+        together = bolt.stiffness + sleeve.stiffness
+        moved = (bolt.stiffness * bolt.free_growth
+                 + sleeve.stiffness * sleeve.free_growth) / together
+        self.assertAlmostEqual(
+            got.forces[0], bolt.stiffness * (moved - bolt.free_growth),
+            places=6)
+
+    def test_bars_in_parallel_share_a_load_by_stiffness(self):
+        from engicalc.core import axial
+
+        bars = [axial.Bar(length=300.0, area=200.0, modulus=210000.0,
+                          name="steel"),
+                axial.Bar(length=300.0, area=600.0, modulus=70000.0,
+                          name="aluminium")]
+        got = axial.Parallel(bars=bars, load=90000.0).solve()
+        self.assertAlmostEqual(sum(got.forces), 90000.0, places=6)
+        together = sum(bar.stiffness for bar in bars)
+        for bar, force in zip(bars, got.forces):
+            with self.subTest(bar=bar.name):
+                self.assertAlmostEqual(
+                    force, 90000.0 * bar.stiffness / together, places=6)
+
+    def test_the_refusals(self):
+        from engicalc.core import axial
+
+        with self.assertRaises(axial.AxialError):
+            axial.Series(bars=[self._steel()], left="free",
+                         right="free").solve()
+        with self.assertRaises(axial.AxialError):
+            # A gap against something that is not a wall.
+            axial.Series(bars=[self._steel()], gap=2.0).solve()
+        with self.assertRaises(axial.AxialError):
+            axial.Series(bars=[], loads=[]).solve()
+        with self.assertRaises(axial.AxialError):
+            # Side by side, they have to start the same length.
+            axial.Parallel(bars=[self._steel(200.0), self._steel(300.0)],
+                           load=0.0).solve()
+
+
+class TestCurvedBeams(unittest.TestCase):
+    """Bending a bar that was curved to start with.
+
+    The stress goes hyperbolic rather than linear and the neutral axis
+    moves in toward the centre of curvature. The inside fibre carries more
+    than a straight-beam calculation says, which means My/I there is not
+    conservative - it is optimistic.
+    """
+
+    @staticmethod
+    def _rectangle(width=50.0, height=100.0):
+        from engicalc.core import sections
+        return sections.Section([sections.Rectangle(width=width,
+                                                    height=height)])
+
+    def test_the_integral_is_exact_for_a_rectangle(self):
+        from engicalc.core import sections
+
+        # R_n = h / ln(r_outer / r_inner), which every textbook quotes and
+        # which the general routine has to reproduce.
+        for radius, width, height in ((150.0, 50.0, 100.0),
+                                      (500.0, 30.0, 60.0),
+                                      (60.0, 20.0, 40.0)):
+            with self.subTest(radius=radius, height=height):
+                section = self._rectangle(width, height)
+                neutral = (section.properties().area
+                           / section.over_radius(radius))
+                hand = height / math.log((radius + height / 2)
+                                         / (radius - height / 2))
+                self.assertAlmostEqual(neutral / hand, 1.0, places=12)
+
+    def test_the_integral_is_exact_for_a_circle(self):
+        from engicalc.core import sections
+
+        # R_n = a^2 / (2(R - sqrt(R^2 - a^2))). Worth having in closed
+        # form: the width of a circle has a vertical tangent top and
+        # bottom, and quadrature that does not know that converges slowly.
+        for radius, diameter in ((100.0, 40.0), (250.0, 90.0), (60.0, 50.0)):
+            with self.subTest(radius=radius, diameter=diameter):
+                section = sections.Section([sections.Circle(
+                    diameter=diameter)])
+                neutral = (section.properties().area
+                           / section.over_radius(radius))
+                a = diameter / 2.0
+                hand = a * a / (2.0 * (radius - math.sqrt(radius * radius
+                                                          - a * a)))
+                self.assertAlmostEqual(neutral / hand, 1.0, places=12)
+
+    def test_a_hole_takes_away_exactly_its_own_share(self):
+        from engicalc.core import sections
+
+        solid = sections.Section([sections.Rectangle(width=60.0,
+                                                     height=80.0)])
+        hole = sections.Section([sections.Circle(diameter=30.0)])
+        holed = sections.Section([sections.Rectangle(width=60.0,
+                                                     height=80.0),
+                                  sections.Circle(diameter=30.0,
+                                                  solid=False)])
+        self.assertAlmostEqual(
+            solid.over_radius(200.0) - holed.over_radius(200.0),
+            hole.over_radius(200.0), places=12)
+
+    def test_the_stresses_carry_the_force_and_the_moment(self):
+        from engicalc.core import curved
+
+        # The check that the distribution is the right one rather than a
+        # plausible curve. Neither is put in by hand: the stresses are
+        # integrated over the section and have to come to exactly what was
+        # applied.
+        for radius, moment, normal in ((150.0, 5e6, 0.0),
+                                       (150.0, 5e6, 30000.0),
+                                       (60.0, -2e6, 10000.0),
+                                       (300.0, 0.0, 25000.0)):
+            with self.subTest(radius=radius, moment=moment, normal=normal):
+                got = curved.Curved(section=self._rectangle(),
+                                    radius=radius, moment=moment,
+                                    normal=normal).properties()
+                force, carried, scale = got.balances()
+                # Against the scale of what is flowing through the
+                # section, not against zero: these are differences of
+                # large numbers that nearly cancel. A millionth is the
+                # midpoint rule over four thousand strips, not the
+                # formula - the formula is exact.
+                self.assertLess(abs(force - normal) / scale, 1e-6)
+                self.assertLess(abs(carried - moment) / (scale * got.depth),
+                                1e-6)
+
+    def test_a_built_up_section_carries_its_moment_too(self):
+        from engicalc.core import curved, sections
+
+        # An I section, so the general integral is exercised rather than
+        # the closed form for a rectangle.
+        section = sections.Section([
+            sections.Rectangle(width=100.0, height=12.0, y=94.0),
+            sections.Rectangle(width=8.0, height=176.0, y=0.0),
+            sections.Rectangle(width=100.0, height=12.0, y=-94.0)])
+        got = curved.Curved(section=section, radius=400.0,
+                            moment=2e7).properties()
+        force, carried, scale = got.balances()
+        self.assertLess(abs(force) / scale, 1e-6)
+        self.assertAlmostEqual(carried / 2e7, 1.0, places=6)
+
+    def test_the_neutral_axis_always_moves_toward_the_centre(self):
+        from engicalc.core import curved
+
+        # And by less and less as the bar straightens out.
+        shifts = []
+        for ratio in (0.6, 1.0, 2.0, 10.0, 100.0):
+            got = curved.Curved(section=self._rectangle(),
+                                radius=ratio * 100.0, moment=1.0).properties()
+            self.assertGreater(got.shift, 0.0)
+            self.assertLess(got.neutral, got.curved.radius)
+            shifts.append(got.shift)
+        self.assertEqual(shifts, sorted(shifts, reverse=True))
+
+    def test_it_becomes_the_straight_beam_answer(self):
+        from engicalc.core import curved
+
+        # The check that ties the whole thing to something already known.
+        # A bar curved to a thousand times its depth is a straight one.
+        for ratio, within in ((8.0, 0.05), (50.0, 0.01), (1000.0, 0.001)):
+            with self.subTest(ratio=ratio):
+                got = curved.Curved(section=self._rectangle(),
+                                    radius=ratio * 100.0,
+                                    moment=5e6).properties()
+                for radius in (got.inner, got.outer):
+                    self.assertAlmostEqual(got.factor(radius), 1.0,
+                                           delta=within)
+
+    def test_the_inside_carries_more_than_a_straight_beam_says(self):
+        from engicalc.core import curved
+
+        # The reason the tab exists. On a hook whose radius is about its
+        # own depth it is half as much again, and the inside is where a
+        # hook is judged.
+        got = curved.Curved(section=self._rectangle(), radius=100.0,
+                            moment=5e6).properties()
+        self.assertGreater(got.factor(got.inner), 1.5)
+        self.assertLess(got.factor(got.outer), 0.8)
+        self.assertGreater(abs(got.inner_stress), abs(got.outer_stress))
+
+    def test_an_opening_moment_puts_the_inside_into_tension(self):
+        from engicalc.core import curved
+
+        # Which is what a load on a crane hook does, and the sign
+        # convention the whole module is written in.
+        got = curved.Curved(section=self._rectangle(), radius=150.0,
+                            moment=5e6).properties()
+        self.assertGreater(got.inner_stress, 0.0)
+        self.assertLess(got.outer_stress, 0.0)
+
+    def test_a_direct_force_alone_is_spread_evenly(self):
+        from engicalc.core import curved
+
+        # No moment, so no hyperbola - just the load over the area, the
+        # same at both fibres.
+        got = curved.Curved(section=self._rectangle(), radius=200.0,
+                            normal=25000.0).properties()
+        self.assertAlmostEqual(got.inner_stress, 25000.0 / 5000.0, places=9)
+        self.assertAlmostEqual(got.outer_stress, 25000.0 / 5000.0, places=9)
+
+    def test_a_radius_smaller_than_the_section_is_refused(self):
+        from engicalc.core import curved
+
+        # Part of it would be at or past the centre of curvature, where
+        # the radius is nothing and the stress would be infinite.
+        for radius in (40.0, 50.0, -10.0):
+            with self.subTest(radius=radius):
+                with self.assertRaises(curved.CurvedError):
+                    curved.Curved(section=self._rectangle(), radius=radius,
+                                  moment=1.0).properties()
+
+
 class TestRefrigerants(unittest.TestCase):
     """Ammonia and propane, beside R134a, from their own reference equations.
 

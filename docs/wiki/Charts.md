@@ -372,6 +372,143 @@ A column free at one end is twice as slender as its length suggests, which
 makes a free-standing post the worst of the four by a factor of sixteen on
 the Euler load.
 
+## Curved beam
+
+A crane hook, a C-clamp, a chain link, the frame of a punch press.
+
+Bend a straight beam and the stress goes linearly across the depth with
+nothing at the centroid. Bend a bar that was curved to start with and
+neither is true.
+
+The reason is short. When the bar rotates through a small angle, every
+fibre changes length by the same amount - but the fibres on the inside of
+the curve were shorter to begin with, so the same change is a bigger
+strain. Stress follows strain, so the stress is higher on the inside than
+the linear answer says and lower on the outside, and it is a hyperbola in
+the radius rather than a straight line in the depth.
+
+### Two things follow
+
+**The neutral axis is not at the centroid.** It moves in toward the centre
+of curvature, to the radius where the area divided by the radius averages
+out. On a rectangle 100 deep at a radius of 150 it moves 5.73 mm, and that
+small shift is the whole of the difference.
+
+**The inside stress can be far higher than a straight-beam sum gives.** On
+a hook whose radius is about the depth of its own section it is half as
+much again - and the inside is the fibre a hook is judged on. Using M y / I
+there is not conservative. It is optimistic, which is the wrong direction
+to be wrong in.
+
+Both answers are drawn on the same axes, so the gap is visible rather than
+described. It closes as the radius grows:
+
+    R / depth      inside      outside
+      0.6          2.89 x       0.57 x
+      1.0          1.52 x       0.73 x
+      2.0          1.20 x       0.85 x
+      4.0          1.09 x       0.92 x
+      8.0          1.04 x       0.96 x
+     50            1.007 x      0.993 x
+
+Past about eight times the depth there is a couple of per cent in it and
+the straight-beam formula is what anybody would use. The tab says which
+side of that you are on.
+
+### The one integral it needs
+
+Everything above comes out of the area divided by the radius, added up over
+the section. That is closed form for the two shapes nearly every section is
+built from:
+
+    rectangle    b ln(r_outer / r_inner)
+    circle       2 pi (d - sqrt(d^2 - a^2))
+
+and integrated off the shape itself for anything else, split at every level
+where the outline turns a corner - because between two corners the width is
+a straight line, which eight-point Gauss handles exactly. A hole takes its
+own share away, the same way it does everywhere else in the section work.
+
+Checked against a four-hundred-thousand strip integration on a built-up I
+section: agreement to thirteen figures.
+
+### How it is checked
+
+Three ways, none of which would survive a sign error.
+
+**The stresses have to carry what was applied.** Integrate them over the
+real section and the net force has to be exactly the direct force put in,
+and the moment exactly the moment. Neither is set by hand. Both come out
+to within a millionth of the scale of what is flowing through the section -
+and that residual is the strip integration, not the formula, which is
+exact.
+
+**It has to become the straight-beam answer.** Curve a bar to a thousand
+times its own depth and it is a straight bar; the two answers agree to a
+tenth of a per cent, and to three per cent by eight times the depth.
+
+**The neutral axis always moves toward the centre**, and by less and less
+as the bar straightens. Both are asserted rather than assumed.
+
+The moment sign is worth stating: **positive opens the curve**, which is
+what a load on a crane hook does, and which puts the inside into tension.
+
+A direct force through the centroid can be given as well as a moment,
+because a hook carries both. On its own it spreads evenly over the area,
+with no hyperbola in it at all.
+
+## Axial
+
+Bars held at both ends, and what heating them does.
+
+Heat a steel bar lying on a bench and it gets longer and carries no force.
+Heat the same bar between two walls and it gets no longer at all and
+carries a force that **does not depend on how long it is**. A metre or a
+kilometre, the stress is E alpha dT and there is no length in it anywhere,
+because the strain that was prevented is the same either way.
+
+Two arrangements, which are the two ways bars get put together.
+
+**In series** - a stepped bar, or several bars end to end, each with its
+own size and material, with loads applied where they meet. One redundant if
+both ends are held, none if one end is free.
+
+**In parallel** - a bolt through a sleeve, a concrete column with steel in
+it, three hangers under one beam. They share the load in proportion to
+their stiffnesses and all end the same length, which is the condition that
+makes it solvable.
+
+### Three kinds of support, and why it matters
+
+    fixed   attached to it. It can pull as well as push, so the end goes
+            nowhere whatever happens.
+    free    nothing there. The bar moves as much as it likes and heating
+            it puts no force in it at all.
+    wall    something it can only push against. It carries nothing until
+            the bar has grown far enough to touch, and nothing again if
+            the load pulls the bar away from it.
+
+Conflating any two of these gives a wrong answer that looks perfectly
+reasonable, which is why they are three settings and not two. A bar left a
+millimetre short of a wall carries nothing until it has grown that
+millimetre and then behaves as if it were held, so the answer is genuinely
+one thing or the other - and which one is not decided by whoever set the
+problem. Take a bar with 0.6 mm of free growth in it:
+
+    gap 0.0 mm     -63.0 kN, and the end goes nowhere
+    gap 0.3 mm     -31.5 kN, and the end moves exactly 0.3
+    gap 0.9 mm       0    , and the end moves its full 0.6
+
+### The one nobody expects
+
+A steel bolt through an aluminium sleeve, both heated 60 K, with no load on
+the assembly at all. The aluminium wants to grow twice as much as the steel
+and cannot, so the bolt ends up in tension and the sleeve in compression -
+and the two add to exactly nothing, which is what "no load on it" means.
+
+No load, and forces in it anyway. That is the whole of why a composite bar
+is not a straight-line problem.
+
 ## Motion
 
 Distance, velocity and acceleration against time, stacked on one time axis.
