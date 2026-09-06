@@ -180,27 +180,54 @@ class SweepRow:
         return None
 
 
-def free_names(text: str, given: dict | None = None) -> list:
-    """The names a set of equations does not pin down.
+def fixed_names(text: str, given: dict | None = None) -> dict:
+    """Names pinned by a plain `d = 0.15`, and what they are pinned to.
 
-    A set with one name free is one that can be swept, which is why this is
-    worth asking separately from solving.
+    These can be swept by replacing that line, which means a complete
+    working set can be swept as it stands. Asking somebody to delete the
+    line that fixes the diameter in order to vary the diameter is a strange
+    way round.
+    """
+    found = {}
+    for equation in parse_set(text, given).equations:
+        if equation.lhs.is_Symbol and not equation.rhs.free_symbols:
+            try:
+                found[equation.lhs.name] = float(sp.N(equation.rhs))
+            except (TypeError, ValueError):
+                continue
+    return found
+
+
+def free_names(text: str, given: dict | None = None) -> list:
+    """The names worth sweeping, whether or not the set pins them down.
+
+    Two kinds. A name nothing fixes - the set is one equation short and it
+    is the one with nothing pinning it - and a name fixed by a plain
+    `d = 0.15`, which can be swept by putting a different value in that
+    line's place.
+
+    A name the equations *work out* is never offered. Fixing a velocity or a
+    pressure drop is not sweeping an input; it is over-determining the set in
+    a roundabout way.
     """
     parsed = parse_set(text, given)
-    if parsed.freedom <= 0:
-        # Already pinned down. Fixing anything else would over-determine it,
-        # so there is nothing here to sweep however the equations are shaped.
-        return []
+    fixed = fixed_names(text, given)
 
-    # A name the equations work *out* is the subject of one of them. What is
-    # left is what they take as input, and that is what there is any point
-    # sweeping.
+    # A name the equations work out is the subject of one of them - but a
+    # line that only assigns a constant is pinning a value, not working one
+    # out, so those stay on the table.
     subjects = {equation.lhs.name for equation in parsed.equations
-                if equation.lhs.is_Symbol}
+                if equation.lhs.is_Symbol and equation.rhs.free_symbols}
     inputs = [s.name for s in parsed.unknowns if s.name not in subjects]
-    # If nothing is written as `name = ...` then no name is more an input
-    # than any other, and any of them can be the one that is fixed.
-    return inputs or [s.name for s in parsed.unknowns]
+
+    if parsed.freedom > 0:
+        # Something is genuinely free; offer that first, then the pinned
+        # values, since the free one is what the set was written around.
+        loose = [n for n in inputs if n not in fixed]
+        return loose + [n for n in inputs if n in fixed]
+    # Fully determined: only the pinned values can be varied, and only by
+    # replacing the line that pins them.
+    return [n for n in inputs if n in fixed]
 
 
 def sweep(text: str, variable: str, values, given: dict | None = None) -> list:
@@ -214,12 +241,32 @@ def sweep(text: str, variable: str, values, given: dict | None = None) -> list:
     name = (variable or "").strip()
     if not name:
         raise ParseError("Say which name to sweep.")
+
+    # A line that already fixes this name is replaced rather than added to.
+    # Adding one would leave the set over-determined at every step, with two
+    # equations saying different things about the same value.
+    kept = []
+    for chunk in re.split(r"[;\n]+", text or ""):
+        stripped = chunk.strip()
+        if stripped and not stripped.startswith("#"):
+            try:
+                parsed = parse_input(
+                    stripped, extra_symbols=symbols_in(text)).expr
+                if (isinstance(parsed, sp.Eq) and parsed.lhs.is_Symbol
+                        and parsed.lhs.name == name
+                        and not parsed.rhs.free_symbols):
+                    continue                  # this is the line being swept
+            except Exception:                 # noqa: BLE001
+                pass
+        kept.append(chunk)
+    body = "\n".join(kept)
+
     rows = []
     for value in values:
         line = f"{name} = {value}"
         try:
             rows.append(SweepRow(float(value),
-                                 result=solve_set(f"{text}\n{line}", given)))
+                                 result=solve_set(f"{body}\n{line}", given)))
         except ParseError as exc:
             rows.append(SweepRow(float(value), error=str(exc)))
         except Exception as exc:                      # noqa: BLE001

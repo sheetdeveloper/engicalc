@@ -24,8 +24,8 @@ import sympy as sp
 
 from ..core.display import fmt, fmt_number
 from ..core.parsing import ParseError, parse_number
-from ..core.system import (free_names, parse_set, solve_set, spread,
-                           sweep, sweep_table)
+from ..core.system import (fixed_names, free_names, parse_set, solve_set,
+                           spread, sweep, sweep_table)
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
@@ -230,6 +230,8 @@ class SimultaneousTab(ttk.Frame):
         self.sweep_box = ttk.Combobox(controls, width=8, state="readonly",
                                       textvariable=self.sweep_name)
         self.sweep_box.pack(side="left", padx=4)
+        self.sweep_box.bind("<<ComboboxSelected>>",
+                            lambda e: self._suggest_range())
         self.sweep_from = tk.StringVar(value="0.1")
         self.sweep_to = tk.StringVar(value="0.3")
         self.sweep_steps = tk.StringVar(value="9")
@@ -279,12 +281,41 @@ class SimultaneousTab(ttk.Frame):
         self.sweep_box.configure(values=names)
         if names and self.sweep_name.get() not in names:
             self.sweep_name.set(names[0])
+            self._suggest_range()
         if not names:
             self.study_note.configure(
-                text="Every name here is worked out by the equations, so "
-                     "there is nothing to sweep. Take one equation out - the "
-                     "one that fixes the value you want to vary - and the "
-                     "name it fixed becomes the input.")
+                text="Nothing here can be varied. Every name is worked out "
+                     "by the equations rather than given to them, and an "
+                     "answer is not an input.")
+
+    def _suggest_range(self) -> None:
+        """Put a range around whatever the name is at the moment.
+
+        A sweep from 0.1 to 0.3 is no use for a temperature of 350 K, and
+        working out the right range by hand before you can press Run is the
+        sort of thing that stops people pressing it. Half the value either
+        side is a guess, but it is a guess in the right place, and it can be
+        typed over.
+        """
+        name = self.sweep_name.get().strip()
+        if not name:
+            return
+        try:
+            value = fixed_names(self.get_text()).get(name)
+        except Exception:                             # noqa: BLE001
+            value = None
+        if not value:
+            # Either nothing fixes it - so there is no current value to
+            # centre on - or it is fixed at zero, and half of zero either
+            # side is not a range.
+            return
+        low, high = sorted((value * 0.5, value * 1.5))
+        self.sweep_from.set(fmt_number(low, 4))
+        self.sweep_to.set(fmt_number(high, 4))
+        self.study_note.configure(
+            text=f"{name} is {fmt_number(value, 6)} at the moment. Run "
+                 f"solves the whole set again at each value in the range, "
+                 f"putting each one in place of the line that fixes it.")
 
     def run_study(self) -> None:
         name = self.sweep_name.get().strip()

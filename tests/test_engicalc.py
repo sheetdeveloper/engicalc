@@ -2874,6 +2874,44 @@ class TestSweep(unittest.TestCase):
 
         self.assertEqual(free_names("x + y = 10\nx - y = 2"), [])
 
+    def test_a_value_the_set_already_fixes_can_still_be_swept(self):
+        from engicalc.core.system import free_names
+
+        # Deleting the line that fixes the diameter in order to vary the
+        # diameter is a strange way round, and nobody guessed it.
+        self.assertEqual(free_names(self.DUCT + "\nd = 0.15"), ["d"])
+
+    def test_what_the_equations_work_out_is_never_offered(self):
+        from engicalc.core.system import free_names
+
+        # `v` is worked out by an equation, so fixing it would be
+        # over-determining the set in a roundabout way. Only `d` was given.
+        self.assertNotIn("v", free_names(self.DUCT + "\nd = 0.15"))
+
+    def test_sweeping_replaces_the_line_that_fixed_the_value(self):
+        from engicalc.core.system import spread, sweep
+
+        # Not added alongside it - two lines saying the diameter is two
+        # different things is over-determined at every step of the sweep.
+        rows = sweep(self.DUCT + "\nd = 0.15", "d", spread(0.1, 0.3, 5))
+        self.assertTrue(all(row.ok for row in rows),
+                        [row.error for row in rows])
+        self.assertAlmostEqual(rows[1].get("dp"), 738.8, delta=1.0)
+        # And the same answers as sweeping the set without that line, which
+        # is what it used to take.
+        loose = sweep(self.DUCT, "d", spread(0.1, 0.3, 5))
+        for fixed, free in zip(rows, loose):
+            self.assertAlmostEqual(fixed.get("dp"), free.get("dp"), places=6)
+
+    def test_the_value_it_is_fixed_at_is_readable(self):
+        from engicalc.core.system import fixed_names
+
+        # This is what the range is centred on, so it has to be the value
+        # actually written rather than whatever solves out.
+        found = fixed_names(self.DUCT + "\nd = 0.15")
+        self.assertAlmostEqual(found["d"], 0.15)
+        self.assertNotIn("v", found)
+
     def test_it_solves_once_for_each_value(self):
         from engicalc.core.system import spread, sweep
 
