@@ -19,10 +19,12 @@ from tkinter import filedialog, messagebox, ttk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from matplotlib.patches import Arc, Rectangle
 
-from ..core import (beams, buckling, motion, moody, section_table,
-                    sections, tensile, torsion, trusses, vessels)
+from ..core import (beams, buckling, materials, motion, moody,
+                    section_table, sections, tensile, torsion,
+                    trusses, vessels)
 from ..core.display import fmt_number
 from ..core import mohr
 from ..core.mohr import Mohr
@@ -30,6 +32,27 @@ from ..core.parsing import ParseError, parse_number
 from ..export.excel import export_table
 from . import figures
 from .widgets import MONO, ScrollFrame
+
+
+#: What a material picker says when nothing is picked.
+BY_HAND = "typed in"
+
+
+def material_picker(tab, parent, label: str = "Material"):
+    """A box offering the grades, which fills the fields beside it.
+
+    Only grades. A class is a range and a calculation wants a number;
+    handing over the middle of 250 to 1500 N/mm2 would look like an answer
+    and be worse than nothing.
+    """
+    ttk.Label(parent, text=label).pack(side="left")
+    chosen = tk.StringVar(value=BY_HAND)
+    box = ttk.Combobox(parent, state="readonly", width=22,
+                       textvariable=chosen,
+                       values=[BY_HAND] + materials.names(grades=True))
+    box.pack(side="left", padx=(4, 14))
+    box.bind("<<ComboboxSelected>>", lambda e: tab.take_material())
+    return chosen
 
 
 def _sideways_label(axes, label: str) -> None:
@@ -418,6 +441,7 @@ class BeamTab(ChartTab):
         chooser.pack(side="left", padx=(4, 14))
         chooser.bind("<<ComboboxSelected>>", lambda e: self.refresh())
         self.modulus = self.field(second, "E", "210", "GPa")
+        self.material = material_picker(self, second, "of")
         self.section_hint = ttk.Label(second, text="", style="Hint.TLabel")
         self.section_hint.pack(side="left", padx=(4, 0))
 
@@ -454,6 +478,13 @@ class BeamTab(ChartTab):
 
     def add_load(self, **spec) -> None:
         self.load_rows.append(LoadRow(self, self.load_table.body, **spec))
+        self.refresh()
+
+    def take_material(self) -> None:
+        """Fill the modulus from the material picked."""
+        material = materials.find(self.material.get())
+        if material is not None and material.has("youngs"):
+            self.modulus.set(f"{material.typical('youngs'):.6g}")
         self.refresh()
 
     def linked(self, charts: dict) -> None:
@@ -1827,11 +1858,23 @@ class ColumnTab(ChartTab):
 
         second = ttk.Frame(parent)
         second.pack(fill="x", pady=(6, 0))
+        self.material = material_picker(self, second)
         self.modulus = self.field(second, "E", "210", "GPa")
         self.yield_stress = self.field(second, "Yield", "275", "N/mm2")
         self.load = self.field(second, "Carrying", "900", "kN")
         self.about = ttk.Label(second, text="", style="Hint.TLabel")
         self.about.pack(side="left", padx=(10, 0))
+
+    def take_material(self) -> None:
+        """Fill the modulus and the yield stress from the material picked."""
+        material = materials.find(self.material.get())
+        if material is None:
+            return
+        if material.has("youngs"):
+            self.modulus.set(f"{material.typical('youngs'):.6g}")
+        if material.has("yield"):
+            self.yield_stress.set(f"{material.typical('yield'):.6g}")
+        self.refresh()
 
     def linked(self, charts: dict) -> None:
         self.section_tab = charts.get("Section")
@@ -2069,6 +2112,192 @@ class TrussTab(ChartTab):
         return found.rows(), found.notes()
 
 
+# --------------------------------------------------------------------------
+class MaterialsTab(ChartTab):
+    """Two properties against each other, with a selection line on them."""
+
+    title = "Material chart"
+    hint = "properties on log axes, with a performance index laid across"
+
+    NO_INDEX = "none - just the chart"
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        labels = {key: name for key, (name, _u, _k)
+                  in materials.PROPERTIES.items()}
+        self._label_to_key = {name: key for key, name in labels.items()}
+        choices = sorted(labels.values())
+
+        ttk.Label(first, text="Across").pack(side="left")
+        self.across = tk.StringVar(value=labels["density"])
+        for variable, default in ((self.across, labels["density"]),):
+            box = ttk.Combobox(first, state="readonly", width=26,
+                               textvariable=variable, values=choices)
+            box.pack(side="left", padx=(4, 14))
+            box.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        ttk.Label(first, text="up").pack(side="left")
+        self.up = tk.StringVar(value=labels["youngs"])
+        box = ttk.Combobox(first, state="readonly", width=26,
+                           textvariable=self.up, values=choices)
+        box.pack(side="left", padx=(4, 14))
+        box.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+
+        self.level = tk.StringVar(value="classes")
+        for text in ("classes", "grades", "both"):
+            ttk.Radiobutton(first, text=text, value=text,
+                            variable=self.level,
+                            command=self.refresh).pack(side="left", padx=2)
+
+        second = ttk.Frame(parent)
+        second.pack(fill="x", pady=(6, 0))
+        ttk.Label(second, text="Index").pack(side="left")
+        self.index = tk.StringVar(value=materials.INDICES[1][0])
+        box = ttk.Combobox(second, state="readonly", width=34,
+                           textvariable=self.index,
+                           values=[self.NO_INDEX]
+                                  + [i[0] for i in materials.INDICES])
+        box.pack(side="left", padx=(4, 14))
+        box.bind("<<ComboboxSelected>>", lambda e: self._index_changed())
+        ttk.Label(second, text="line through").pack(side="left")
+        self.through = tk.StringVar(value="Carbon steel")
+        self.through_box = ttk.Combobox(second, state="readonly", width=26,
+                                        textvariable=self.through,
+                                        values=materials.names())
+        self.through_box.pack(side="left", padx=(4, 0))
+        self.through_box.bind("<<ComboboxSelected>>",
+                              lambda e: self.refresh())
+        self.written = ttk.Label(second, text="", style="Hint.TLabel")
+        self.written.pack(side="left", padx=(12, 0))
+
+    def _index_changed(self) -> None:
+        """Picking an index sets the two axes it is about."""
+        found = self._index()
+        if found:
+            labels = {key: name for key, (name, _u, _k)
+                      in materials.PROPERTIES.items()}
+            self.across.set(labels[found[1]])
+            self.up.set(labels[found[2]])
+        self.refresh()
+
+    def _index(self):
+        for entry in materials.INDICES:
+            if entry[0] == self.index.get():
+                return entry
+        return None
+
+    def _keys(self) -> tuple:
+        return (self._label_to_key[self.across.get()],
+                self._label_to_key[self.up.get()])
+
+    def _wanted(self) -> list:
+        across, up = self._keys()
+        grades = {"classes": False, "grades": True}.get(self.level.get())
+        return [material for material in materials.all_materials()
+                if material.has(across) and material.has(up)
+                and (grades is None or material.grade == grades)]
+
+    def draw(self) -> tuple:
+        across, up = self._keys()
+        shown = self._wanted()
+        if not shown:
+            raise ParseError(
+                f"Nothing here records both {self.across.get().lower()} and "
+                f"{self.up.get().lower()}.")
+
+        self.figure.clear()
+        axes = self.figure.add_subplot(111)
+        for material in shown:
+            self._bubble(axes, material, across, up)
+
+        index = self._index()
+        self.written.configure(text=index[5] if index else "")
+        rows = []
+        if index and index[1] == across and index[2] == up:
+            rows = self._draw_index(axes, index, shown)
+
+        axes.set_xscale("log")
+        axes.set_yscale("log")
+        axes.set_xlabel(f"{self.across.get()}  "
+                        f"{materials.PROPERTIES[across][1]}", fontsize=8)
+        axes.set_ylabel(f"{self.up.get()}  "
+                        f"{materials.PROPERTIES[up][1]}", fontsize=8)
+        axes.grid(True, which="both", alpha=0.25, linestyle=":")
+        axes.tick_params(labelsize=7)
+        handles = [Line2D([], [], color=colour, linewidth=6, alpha=0.5,
+                          label=family)
+                   for family, colour in materials.FAMILIES.items()
+                   if any(m.family == family for m in shown)]
+        axes.legend(handles=handles, loc="lower right", fontsize=6.5,
+                    framealpha=0.85)
+        return rows, self._notes(shown, across, up)
+
+    def _bubble(self, axes, material, across, up) -> None:
+        """One material, as the range it actually covers.
+
+        A box rather than a point, because the range is the information. A
+        material that draws long in one direction is one whose grade has to
+        be pinned down before the number is used.
+        """
+        low_x, high_x = material.span(across)
+        low_y, high_y = material.span(up)
+        # A property that does not move would draw as a line of no width,
+        # so it is given a little - which still reads as "this one is
+        # fixed" beside a neighbour three decades long.
+        low_x, high_x = low_x * 0.98, high_x * 1.02
+        low_y, high_y = low_y * 0.98, high_y * 1.02
+        colour = materials.FAMILIES.get(material.family, "#666666")
+        axes.add_patch(Rectangle(
+            (low_x, low_y), high_x - low_x, high_y - low_y,
+            facecolor=colour, edgecolor=colour, alpha=0.30, linewidth=1.0))
+        axes.annotate(material.name,
+                      ((low_x * high_x) ** 0.5, (low_y * high_y) ** 0.5),
+                      fontsize=5.5, ha="center", va="center", color=colour)
+
+    def _draw_index(self, axes, index, shown) -> list:
+        """The straight edge, and what is above it."""
+        across, up = self._keys()
+        through = materials.find(self.through.get())
+        if through is None or not (through.has(across) and through.has(up)):
+            through = max(shown,
+                          key=lambda m: materials.index_value(m, index))
+            self.through.set(through.name)
+
+        span = (min(m.span(across)[0] for m in shown) * 0.6,
+                max(m.span(across)[1] for m in shown) * 1.6)
+        line_x, line_y = materials.guideline(index, through, span)
+        axes.plot(line_x, line_y, "--", color="#333333", linewidth=1.3)
+        axes.annotate(f"{index[5]}  -  better above",
+                      (line_x[1], line_y[1]), fontsize=6.5, ha="right",
+                      va="bottom", color="#333333")
+
+        wanted = materials.index_value(through, index)
+        rows = [("index", index[5], ""),
+                ("line through", through.name, ""),
+                ("its value", wanted, "")]
+        better = [(value, material) for value, material
+                  in materials.ranked(index)
+                  if material in shown and value >= wanted]
+        for value, material in better[:14]:
+            rows.append((material.name, value / wanted,
+                         "times better" if material is not through
+                         else "the line"))
+        return rows
+
+    def _notes(self, shown, across, up) -> list:
+        said = [f"{len(shown)} materials, each drawn as the range it "
+                f"covers. A long box is a material whose grade has to be "
+                f"pinned down before the number is used."]
+        widest = max(shown, key=lambda m: m.spread(up))
+        if widest.spread(up) > 3:
+            said.append(
+                f"{widest.name} spans a factor of "
+                f"{widest.spread(up):.0f} in {self.up.get().lower()} - "
+                f"which is what processing does to it, and why the class "
+                f"is a range and a grade is not.")
+        return said
+
+
 CHARTS = [
     ("  Stress and strain  ", TensileTab),
     ("  Beam  ", BeamTab),
@@ -2079,5 +2308,6 @@ CHARTS = [
     ("  Stress state  ", MohrTab),
     ("  Pressure vessel  ", VesselTab),
     ("  Truss  ", TrussTab),
+    ("  Material chart  ", MaterialsTab),
     ("  Moody  ", MoodyTab),
 ]

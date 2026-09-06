@@ -5009,6 +5009,168 @@ class TestMohrsCircle(unittest.TestCase):
         self.assertAlmostEqual(state.theta_p, 45.0, places=9)
 
 
+class TestMaterials(unittest.TestCase):
+    """A table of numbers in a program has to justify itself.
+
+    Property data cannot be checked the way a section can - a yield
+    strength is not derivable from anything - but several relations have to
+    hold across it, and each one catches a transcription error in two or
+    three properties at once.
+    """
+
+    def test_the_whole_database_is_self_consistent(self):
+        from engicalc.core import materials
+
+        # G = E/2(1+nu), yield below tensile strength, service below
+        # melting, and the volumetric heat capacity and thermal diffusivity
+        # inside the bands every solid falls in.
+        off = materials.reconcile()
+        self.assertEqual([], off, "\n".join(f"{name}: {why}"
+                                            for name, why in off))
+
+    def test_the_elastic_constants_agree_with_the_librarys_own_formula(self):
+        from engicalc.core import materials
+        from engicalc.formulas.library import get_library, solve_formula
+
+        # The relation is a formula in this program, so the data can be
+        # checked against the program's own algebra rather than against a
+        # number written twice.
+        formula = get_library().get("strength_of_materials.shear_modulus")
+        for material in materials.all_materials():
+            if not {"youngs", "shear", "poisson"} <= set(material.values):
+                continue
+            with self.subTest(material=material.name):
+                got = solve_formula(
+                    formula, "G",
+                    {"E": repr(material.typical("youngs")),
+                     "nu": repr(material.typical("poisson"))})
+                self.assertAlmostEqual(
+                    got.value / material.typical("shear"), 1.0,
+                    delta=materials.ELASTIC_TOLERANCE)
+
+    def test_the_two_kinds_of_property_behave_differently(self):
+        from engicalc.core import materials
+
+        # The distinction the whole database is built on. What processing
+        # changes is wide; what bonding decides is not.
+        steel = materials.find("Carbon steel")
+        self.assertLess(steel.spread("youngs"), 1.2)
+        self.assertLess(steel.spread("density"), 1.2)
+        self.assertLess(steel.spread("specific_heat"), 1.2)
+        self.assertGreater(steel.spread("yield"), 4.0)
+        self.assertGreater(steel.spread("toughness"), 4.0)
+
+    def test_a_grade_is_tighter_than_the_class_it_belongs_to(self):
+        from engicalc.core import materials
+
+        # Which is the point of having both levels.
+        family = materials.find("Carbon steel")
+        grade = materials.find("S275 steel")
+        self.assertLess(grade.spread("yield"), family.spread("yield"))
+        low, high = family.span("yield")
+        self.assertLessEqual(low, grade.typical("yield"))
+        self.assertLessEqual(grade.typical("yield"), high)
+
+    def test_the_typical_value_is_the_middle_of_the_range(self):
+        from engicalc.core import materials
+
+        # The geometric middle. These properties span orders of magnitude
+        # and are read on logarithmic axes, so halfway between 1 and 100 is
+        # 10 rather than 50.
+        material = materials.find("Carbon steel")
+        low, high = material.span("yield")
+        self.assertAlmostEqual(material.typical("yield"),
+                               math.sqrt(low * high), places=9)
+
+    def test_every_class_and_grade_has_a_family_and_a_source(self):
+        from engicalc.core import materials
+
+        for material in materials.all_materials():
+            with self.subTest(material=material.name):
+                self.assertIn(material.family, materials.FAMILIES)
+                self.assertTrue(material.source)
+
+    def test_a_property_nobody_recorded_is_refused_rather_than_guessed(self):
+        from engicalc.core import materials
+
+        with self.assertRaises(materials.MaterialError):
+            materials.find("Concrete").span("resistivity")
+
+    # -- the charts --------------------------------------------------------
+    def test_the_index_slope_is_the_ratio_of_its_exponents(self):
+        from engicalc.core import materials
+
+        # On logarithmic axes a contour of y^a/x^b is a line of slope b/a.
+        # A light stiff beam maximises E^(1/2)/rho, so the famous slope of
+        # two is not a convention - it falls out of the exponents.
+        beam = [i for i in materials.INDICES
+                if i[0] == "Light, stiff beam"][0]
+        self.assertAlmostEqual(beam[4] / beam[3], 2.0, places=9)
+        through = materials.find("Carbon steel")
+        span = (100.0, 10000.0)
+        line_x, line_y = materials.guideline(beam, through, span)
+        rise = math.log(line_y[1] / line_y[0])
+        run = math.log(line_x[1] / line_x[0])
+        self.assertAlmostEqual(rise / run, 2.0, places=9)
+
+    def test_the_guideline_passes_through_the_material_it_names(self):
+        from engicalc.core import materials
+
+        index = materials.INDICES[1]
+        through = materials.find("Aluminium alloy")
+        line_x, line_y = materials.guideline(index, through, (10.0, 20000.0))
+        # Interpolate the line at that material's own density, on log axes.
+        share = (math.log(through.typical("density") / line_x[0])
+                 / math.log(line_x[1] / line_x[0]))
+        at = line_y[0] * (line_y[1] / line_y[0]) ** share
+        self.assertAlmostEqual(at / through.typical("youngs"), 1.0,
+                               places=6)
+
+    def test_the_indices_give_the_answers_they_are_famous_for(self):
+        from engicalc.core import materials
+
+        # Wood and carbon fibre beat steel for a light stiff beam, which is
+        # the single best known result on these charts and the reason
+        # aircraft spars were made of spruce.
+        beam = [i for i in materials.INDICES
+                if i[0] == "Light, stiff beam"][0]
+        order = [material.name for _v, material
+                 in materials.ranked(beam, grades=False)]
+        steel = order.index("Carbon steel")
+        for better in ("Softwood, along the grain", "CFRP, quasi-isotropic"):
+            self.assertLess(order.index(better), steel)
+
+        # And magnesium tops a light strong beam.
+        strong = [i for i in materials.INDICES
+                  if i[0] == "Light, strong beam"][0]
+        self.assertEqual(
+            materials.ranked(strong, grades=False)[0][1].name,
+            "Magnesium alloy")
+
+    def test_a_material_missing_a_property_scores_nothing(self):
+        from engicalc.core import materials
+
+        # Rather than infinitely well, which is what dividing by a missing
+        # denominator would give.
+        index = [i for i in materials.INDICES
+                 if i[0] == "Light, strong beam"][0]
+        glass = materials.find("Soda-lime glass")
+        self.assertFalse(glass.has("yield"))
+        self.assertEqual(materials.index_value(glass, index), 0.0)
+        self.assertNotIn(glass, [m for _v, m in materials.ranked(index)])
+
+    def test_only_grades_are_offered_to_a_calculation(self):
+        from engicalc.core import materials
+
+        # A class is a range and a calculation wants a number; handing over
+        # the middle of 250 to 1500 would look like an answer.
+        grades = materials.names(grades=True)
+        self.assertIn("S275 steel", grades)
+        self.assertNotIn("Carbon steel", grades)
+        for name in grades:
+            self.assertTrue(materials.find(name).grade)
+
+
 class TestFailureTheories(unittest.TestCase):
     """Tresca and von Mises, against the states with known answers."""
 

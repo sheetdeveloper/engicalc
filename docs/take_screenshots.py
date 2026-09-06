@@ -163,6 +163,7 @@ def main() -> None:
                         ("Stress state", "mohr.png"),
                         ("Pressure vessel", "vessel.png"),
                         ("Truss", "truss.png"),
+                        ("Material chart", "materials.png"),
                         ("Moody", "moody.png")):
         app.graph_pane.tabs.select(app.graph_pane.charts[label])
         grab(app, name)

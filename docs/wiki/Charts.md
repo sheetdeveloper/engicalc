@@ -580,3 +580,101 @@ workbook of peak values with no diagram is rarely what anybody opens the
 file to see.
 
 The parametric study on the Simultaneous page has the same buttons.
+
+## Material chart
+
+Two properties on logarithmic axes, every material drawn as the range it
+actually covers, coloured by family - and a performance index laid across it
+as a straight edge, with everything above the edge better.
+
+The method is Ashby's. The data is not: it is assembled here from material
+standards and manufacturers' figures, nothing is taken from a commercial
+materials database, and every row says where it came from.
+
+### Two levels, because two questions get asked
+
+A **class** - "carbon steel", "aluminium alloy" - carries wide ranges,
+because the class is that wide. Steel yields anywhere from 250 to
+1500 N/mm² depending entirely on what was done to it. Those ranges are what
+the chart is drawn from, and there the width is the information rather than
+a compromise: a chart spanning five orders of magnitude is not troubled by a
+factor of two, and a long box tells you the grade has to be pinned down
+before the number is used.
+
+A **grade** - S275, 6082-T6, 316L - carries tight values with the condition
+they apply at, and is what gets pulled into a calculation. Only grades are
+offered to the Beam and Column tabs, because a class is a range and handing
+over the middle of 250 to 1500 would look like an answer.
+
+### Two kinds of property
+
+    structure-insensitive   density, modulus, specific heat, expansion,
+                            melting point - set by bonding and crystal
+                            structure, so a plain carbon steel is
+                            205-215 GPa whatever was done to it
+    structure-sensitive     yield, tensile strength, hardness, toughness -
+                            set by microstructure, which is what processing
+                            exists to change
+
+The first are quoted as values and the second as ranges. Quoting the second
+as values would be fiction, and there is a test asserting the data actually
+behaves this way.
+
+### How the data checks itself
+
+A yield strength is not derivable from anything, so this cannot be checked
+the way the section table can. But several relations have to hold, and each
+catches a transcription error in two or three properties at once:
+
+- **G = E/2(1+ν)** - which is a formula in the library, so the data is
+  checked against this program's own algebra. It holds to within 3% on every
+  row that records all three, and under 1.5% on most.
+- Yield below tensile strength.
+- Service temperature below melting point.
+- Volumetric heat capacity ρc between 1 and 4.5 MJ/m³K, and thermal
+  diffusivity k/ρc between 1e-8 and 3e-4 m²/s - the bands every solid falls
+  in, which catches a density and a specific heat that disagree.
+
+Porous families are exempt from the ρc band, and the reason is written down
+rather than the tolerance widened until nothing fails. Softwood is about a
+third cellulose and two thirds air and lands at 0.82 - a third of the way
+into the band rather than outside it. Widening the band would have removed
+the check.
+
+Thirty-six materials, zero failures.
+
+### Performance indices
+
+An index comes out of the mechanics, not out of the chart. The lightest beam
+of a given stiffness: stiffness goes as `Et³` and mass as `ρt`, so
+eliminating the thickness leaves mass proportional to `ρ/E^½` - and the
+material to pick is whichever maximises `E^½/ρ`. On log axes that is
+constant along a line of **slope 2**, so the whole selection is one straight
+edge on one chart.
+
+| for | maximise | slope |
+| --- | --- | --- |
+| light stiff tie | E/ρ | 1 |
+| light stiff beam | E^½/ρ | 2 |
+| light stiff panel | E^⅓/ρ | 3 |
+| light strong beam | σy^⅔/ρ | 3/2 |
+| springs | σy²/E | ½ |
+| damage tolerance | K_IC/σy | 1 |
+
+The slope is nothing more than the ratio of the two exponents, and there is
+a test that derives it that way rather than writing it down.
+
+It gives the answers these charts are famous for: **wood and carbon fibre
+beat steel for a light stiff beam** - which is why aircraft spars were made
+of spruce - and magnesium tops a light strong beam.
+
+### What it is not
+
+Indicative data for choosing between materials and for teaching the method.
+For anything that matters, the certificate for the actual batch is the
+authority and this is not.
+
+Fracture toughness is on the chart at class level, where the spread is the
+message. It is deliberately not offered as a single grade value, because
+K_IC without a temperature and a thickness is close to meaningless and is
+the one entry that would read authoritative and not be.
