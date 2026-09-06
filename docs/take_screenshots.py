@@ -129,6 +129,9 @@ def main() -> None:
     app.properties_pane.show_r134a()
     grab(app, "r134a.png")
 
+    app.properties_pane.show_cycle()
+    grab(app, "cycle.png")
+
     # -- trendlines, on data that is not straight -------------------------
     top_tab(app, "Data")
     data = app.statistics_tab
@@ -155,13 +158,24 @@ def main() -> None:
     beam.refresh()
     grab(app, "beam.png")
 
+    # The vessel is taken thick walled. On the default thin one the Lame
+    # curves and the thin-wall lines agree to a hundredth of a percent, so
+    # the picture is four flat lines on top of each other - which is the
+    # right answer and a useless picture of what the tab is for.
+    vessel = app.graph_pane.charts["Pressure vessel"]
+    app.graph_pane.tabs.select(vessel)
+    vessel.bore.set("100")
+    vessel.wall.set("40")
+    vessel.pressure.set("60")
+    vessel.refresh()
+    grab(app, "vessel.png")
+
     for label, name in (("Stress and strain", "tensile.png"),
                         ("Section", "section.png"),
                         ("Motion", "motion.png"),
                         ("Torsion", "torsion.png"),
                         ("Columns", "columns.png"),
                         ("Stress state", "mohr.png"),
-                        ("Pressure vessel", "vessel.png"),
                         ("Truss", "truss.png"),
                         ("Material chart", "materials.png"),
                         ("Moody", "moody.png")):

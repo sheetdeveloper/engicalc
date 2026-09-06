@@ -40,16 +40,20 @@ the area it measures shaded underneath and the working beside it.*
 | **All working** - the rule stated, then applied | **Trendlines** - six shapes, scored so they compare |
 | ![Steam](docs/screenshots/steam.png) | ![Moist air](docs/screenshots/moistair.png) |
 | **Steam tables** computed from IAPWS-IF97, with the chart beside them | **Moist air** - the psychrometric chart, read off exactly |
-| ![A study](docs/screenshots/study.png) | ![Interpolation](docs/screenshots/interpolate.png) |
-| **Parametric studies** - the same set solved down a column of values | **Interpolation** - between the rows of a table, working shown |
+| ![A study](docs/screenshots/study.png) | ![Complex numbers](docs/screenshots/complex.png) |
+| **Parametric studies** - the same set solved down a column of values | **Complex numbers** - rectangular, polar and the Argand diagram |
 | ![Stress and strain](docs/screenshots/tensile.png) | ![Beam](docs/screenshots/beam.png) |
 | **Stress and strain** - modulus, proof stress and UTS read off a test | **Beam diagrams** - free body, shear, moment and deflection |
-| ![Mohr](docs/screenshots/mohr.png) | ![Moody](docs/screenshots/moody.png) |
-| **Mohr's circle** - exact, with the construction drawn | **Moody chart** - Colebrook solved, not approximated |
+| ![Stress state](docs/screenshots/mohr.png) | ![Moody](docs/screenshots/moody.png) |
+| **Stress state** - Mohr's circle, then whether the material stands it | **Moody chart** - Colebrook solved, not approximated |
 | ![Section properties](docs/screenshots/section.png) | ![Motion](docs/screenshots/motion.png) |
 | **Section properties** - centroid and second moment, from the dimensions | **Motion** - distance, velocity and acceleration on one time axis |
-| ![R134a](docs/screenshots/r134a.png) | ![Complex numbers](docs/screenshots/complex.png) |
-| **R134a** - the standard equation of state, and the p-h diagram | **Complex numbers** - rectangular, polar and the Argand diagram |
+| ![R134a](docs/screenshots/r134a.png) | ![Refrigeration cycle](docs/screenshots/cycle.png) |
+| **R134a** - the standard equation of state, and the p-h diagram | **The refrigeration cycle** - four states, the COP, the duty |
+| ![Torsion](docs/screenshots/torsion.png) | ![Columns](docs/screenshots/columns.png) |
+| **Torsion** - shear stress and twist, from the power at a speed | **Columns** - Euler, Rankine and Perry-Robertson on one chart |
+| ![Truss](docs/screenshots/truss.png) | ![Pressure vessel](docs/screenshots/vessel.png) |
+| **Trusses** - every joint solved at once, ties red and struts blue | **Pressure vessels** - thin walled and thick, and where the two part |
 
 ---
 
@@ -330,6 +334,112 @@ a different curve and not one this has. Where that happens the dew point and
 wet bulb are left out with the reason on screen; everything that does not
 depend on that curve is still exactly right.
 
+**R134a** is the Tillner-Roth and Baehr equation of state - the reference
+formulation, the one the published tables are generated from - solved rather
+than tabulated, with the p-h diagram beside it. The saturation line is found
+by Maxwell construction: the pressure at which the liquid and the vapour have
+the same pressure and the same Gibbs energy. Nothing sets the saturation
+pressure directly, so agreeing with the published ancillary equation is a
+result and not an arrangement, and it agrees to **0.003%** across the
+thirteen temperatures the paper lists. Saturated densities land within
+0.002%, the latent heat at 0 C comes out 198.60 kJ/kg against a published
+198.6, and the normal boiling point falls at -26.074 C against -26.07.
+
+**The refrigeration cycle** puts four states on that diagram - compressor in
+and out, condenser out, evaporator in - and gives the COP, the work, and the
+mass flow needed for a duty. Isentropic efficiency, superheat and subcooling
+are all optional and left out rather than assumed. The same four states run
+as a heat pump, since a heat pump is this cycle read for what it rejects
+instead of what it absorbs.
+
+
+### Charts
+
+Eleven engineering calculations that are better looked at than listed. Each
+one draws, states its numbers beside the drawing, and exports the figure as
+PNG, SVG or PDF or copies it straight to the clipboard.
+
+**Beam diagrams.** Any number of point loads, couples, spread loads and ramps,
+at angles, on supports you put where you want them - pinned, roller or built
+in. It draws the free body, then the axial force, shear force, bending moment
+and deflection under each other on one length axis. Two supports are solved by
+statics; three or more, or a built-in end, are **statically indeterminate** and
+solved by the force method, releasing the extra restraints and putting back
+whatever forces close the gaps they open. The five textbook deflection cases
+come out to within five parts in a million, and the indeterminate ones to
+better than 0.01%.
+
+**Section properties.** Area, centroid, second moment about both axes, the
+product moment, the principal axes and the section moduli, from rectangles,
+circles, polygons and fillets added together - or from a **section table** of
+48 rolled profiles: universal beams and columns, channels, angles, hollow
+sections and pipe. Every row in that table is checked against the geometry it
+claims, which is a check on the data rather than on the arithmetic: the
+published area and second moment have to fall out of the published dimensions.
+The median disagreement is 0.12%, and two rows whose published dimensions did
+not reproduce their published properties were removed rather than fudged.
+
+The shear stress through the depth is drawn too - VQ/It, worked from the
+actual shape rather than from a formula for a rectangle. It gives 3V/2A for a
+rectangle and 4V/3A for a circle exactly, because those are what the general
+method reduces to.
+
+The section feeds the beam tab, and the beam tab feeds the stress state tab.
+
+**Torsion.** Shear stress and angle of twist in a shaft, from a torque or
+from the power at a speed. It will size a shaft for an allowable stress or an
+allowable twist, and split a torque between shafts in parallel. It refuses
+non-circular sections rather than applying a circular formula to them.
+
+**Columns.** Euler, Rankine-Gordon and Perry-Robertson drawn together against
+slenderness, with the yield cut-off, so you can see where Euler stops meaning
+anything. Eight end conditions.
+
+**Motion.** Distance, velocity and acceleration on one time axis, built out of
+phases - accelerate, hold, decelerate - with the SUVAT equations solved for
+whatever was left out.
+
+**Stress state.** Mohr's circle drawn exactly, with the construction on it,
+from stresses or from a **strain gauge rosette** - 45, 60 or 120 degree. Then
+whether the material stands it: Tresca and von Mises worked from all three
+principal stresses rather than the plane-stress shortcut, with both loci drawn
+and the state plotted on them.
+
+**Pressure vessels.** Thin-walled and thick-walled (Lame) side by side, so the
+error in the thin-wall assumption is visible rather than assumed away, with
+the stress distribution through the wall drawn. Cylinders and spheres, and it
+will size a wall for an allowable stress.
+
+**Trusses.** The whole frame solved at once - two equilibrium equations per
+joint as one linear system - rather than joint by joint in an order you have
+to find. Ties red, struts blue, thickness by force. It states whether the
+frame is determinate before it solves it, and every joint balances to within
+a hundred-billionth of a newton.
+
+**Material charts.** Two properties on logarithmic axes, every material drawn
+as the range it actually covers rather than as a point, coloured by family,
+with a performance index laid across as a straight edge and everything above
+the edge better. The method is Ashby's; the data is assembled here from
+standards and manufacturers' figures, and each row says where it came from.
+
+It is held at two levels because two different questions get asked. A class -
+"carbon steel" - carries wide ranges, because the class is that wide, and
+those ranges are what the chart is drawn from. A grade - S275, 6082-T6, 316L -
+carries tight values with the condition they apply at, and is what gets pulled
+into a calculation. Only grades are offered to the beam and column tabs,
+because handing over the middle of 250 to 1500 N/mm2 would look like an
+answer.
+
+The data checks itself: G = E/2(1+v) - which is a formula in this program, so
+the data is checked against the app's own algebra - yield below tensile
+strength, service temperature below melting point, and volumetric heat
+capacity and thermal diffusivity inside the bands every solid falls in.
+Thirty-six materials, zero failures.
+
+**Moody chart.** Colebrook solved rather than approximated, with the operating
+point marked.
+
+**Stress and strain.** Modulus, proof stress and UTS read off a tensile test.
 
 ### Worksheet
 

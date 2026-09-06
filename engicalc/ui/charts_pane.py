@@ -2207,6 +2207,7 @@ class MaterialsTab(ChartTab):
 
         self.figure.clear()
         axes = self.figure.add_subplot(111)
+        self._labels = []
         for material in shown:
             self._bubble(axes, material, across, up)
 
@@ -2224,6 +2225,10 @@ class MaterialsTab(ChartTab):
                         f"{materials.PROPERTIES[up][1]}", fontsize=8)
         axes.grid(True, which="both", alpha=0.25, linestyle=":")
         axes.tick_params(labelsize=7)
+        # The names are placed last, because where they overlap depends on
+        # the axes, and the axes are not settled until everything is on.
+        axes.autoscale_view()
+        self._spread_labels(axes)
         handles = [Line2D([], [], color=colour, linewidth=6, alpha=0.5,
                           label=family)
                    for family, colour in materials.FAMILIES.items()
@@ -2250,9 +2255,72 @@ class MaterialsTab(ChartTab):
         axes.add_patch(Rectangle(
             (low_x, low_y), high_x - low_x, high_y - low_y,
             facecolor=colour, edgecolor=colour, alpha=0.30, linewidth=1.0))
-        axes.annotate(material.name,
-                      ((low_x * high_x) ** 0.5, (low_y * high_y) ** 0.5),
-                      fontsize=5.5, ha="center", va="center", color=colour)
+        self._labels.append((material.name, (low_x * high_x) ** 0.5,
+                             (low_y * high_y) ** 0.5, colour))
+
+    #: How big a label is allowed to look, in points.
+    LABEL_POINTS = 5.5
+
+    def _spread_labels(self, axes) -> None:
+        """Move the names apart until they can all be read.
+
+        Metals genuinely cluster in the top corner of a modulus against
+        density chart - that is the fact the chart exists to show - so the
+        names land on top of each other and none of them can be read. They
+        are pushed apart here in screen space rather than in data space,
+        because overlapping is a screen fact and has nothing to do with the
+        units; and each one that moves keeps a thin line back to the box it
+        belongs to, so nudging a name never reassigns it.
+        """
+        if not self._labels:
+            return
+        to_screen = axes.transData.transform
+        to_data = axes.transData.inverted().transform
+        wide = self.LABEL_POINTS * self.figure.dpi / 72.0
+        placed = [list(to_screen((x, y))) for _n, x, y, _c in self._labels]
+        anchors = [tuple(spot) for spot in placed]
+        sizes = [(0.56 * wide * len(name) + 2.0, wide + 2.0)
+                 for name, _x, _y, _c in self._labels]
+
+        for _pass in range(60):
+            moved = False
+            for i in range(len(placed)):
+                for j in range(i + 1, len(placed)):
+                    across = abs(placed[i][0] - placed[j][0])
+                    up = abs(placed[i][1] - placed[j][1])
+                    room_x = (sizes[i][0] + sizes[j][0]) / 2.0
+                    room_y = (sizes[i][1] + sizes[j][1]) / 2.0
+                    if across >= room_x or up >= room_y:
+                        continue
+                    # Push along whichever axis needs the least movement,
+                    # so a name travels the shortest distance from the
+                    # material it names.
+                    short_x, short_y = room_x - across, room_y - up
+                    if short_y <= short_x * (room_y / room_x):
+                        step = short_y / 2.0 + 0.5
+                        way = 1.0 if placed[i][1] >= placed[j][1] else -1.0
+                        placed[i][1] += step * way
+                        placed[j][1] -= step * way
+                    else:
+                        step = short_x / 2.0 + 0.5
+                        way = 1.0 if placed[i][0] >= placed[j][0] else -1.0
+                        placed[i][0] += step * way
+                        placed[j][0] -= step * way
+                    moved = True
+            if not moved:
+                break
+
+        for (name, _x, _y, colour), spot, anchor in zip(
+                self._labels, placed, anchors):
+            at = to_data(spot)
+            gone = math.hypot(spot[0] - anchor[0], spot[1] - anchor[1])
+            if gone > wide:
+                start = to_data(anchor)
+                axes.plot([start[0], at[0]], [start[1], at[1]],
+                          color=colour, linewidth=0.4, alpha=0.55,
+                          zorder=2)
+            axes.annotate(name, at, fontsize=self.LABEL_POINTS, ha="center",
+                          va="center", color=colour, zorder=3)
 
     def _draw_index(self, axes, index, shown) -> list:
         """The straight edge, and what is above it."""
