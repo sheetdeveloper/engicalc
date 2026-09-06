@@ -4076,6 +4076,133 @@ class TestSectionProperties(unittest.TestCase):
             Section().properties()
 
 
+class TestShearInASection(unittest.TestCase):
+    """tau = V Q / (I t), against the two answers everybody knows.
+
+    Everything here is in newtons and millimetres, which is what the section
+    module works in - so a second moment in mm^4 and a force in N give a
+    stress in N/mm^2 with nothing to convert.
+    """
+
+    FORCE = 100e3
+
+    def test_a_rectangle_peaks_at_three_halves_of_the_average(self):
+        from engicalc.core.sections import solid_rectangle
+
+        section = solid_rectangle(100.0, 200.0)
+        found = section.properties()
+        worst, level = section.worst_shear(self.FORCE)
+        self.assertAlmostEqual(worst, 3 * self.FORCE / (2 * found.area),
+                               delta=1e-3)
+        # At the neutral axis, and exactly there.
+        self.assertAlmostEqual(level, found.cy, delta=1.0)
+        self.assertAlmostEqual(section.shear_stress(self.FORCE, found.cy),
+                               3 * self.FORCE / (2 * found.area), places=9)
+
+    def test_a_rectangle_is_parabolic_and_zero_at_the_edges(self):
+        from engicalc.core.sections import solid_rectangle
+
+        # tau = 3V/2A (1 - (2y/h)^2), so at half the depth it is three
+        # quarters of the peak - which a linear guess would not give.
+        section = solid_rectangle(100.0, 200.0)
+        peak = 3 * self.FORCE / (2 * section.properties().area)
+        self.assertAlmostEqual(section.shear_stress(self.FORCE, 50.0),
+                               0.75 * peak, places=9)
+        self.assertAlmostEqual(section.shear_stress(self.FORCE, 100.0), 0.0,
+                               places=9)
+        self.assertAlmostEqual(section.shear_stress(self.FORCE, -100.0), 0.0,
+                               places=9)
+
+    def test_a_round_bar_peaks_at_four_thirds_of_the_average(self):
+        from engicalc.core.sections import solid_round
+
+        section = solid_round(100.0)
+        found = section.properties()
+        worst, _level = section.worst_shear(self.FORCE)
+        self.assertAlmostEqual(worst / (self.FORCE / found.area), 4.0 / 3.0,
+                               places=4)
+
+    def test_the_first_moment_is_the_one_in_the_formula(self):
+        from engicalc.core.sections import solid_rectangle
+
+        # Q at the neutral axis of a rectangle is b h^2 / 8. Checking Q on
+        # its own matters because a wrong Q and a wrong I can cancel in the
+        # ratio and still give the right peak.
+        section = solid_rectangle(100.0, 200.0)
+        found = section.properties()
+        area, first = section.above(found.cy)
+        self.assertAlmostEqual(first - found.cy * area,
+                               100.0 * 200.0 ** 2 / 8.0, places=6)
+
+    def test_an_i_section_steps_where_the_flange_meets_the_web(self):
+        from engicalc.core.sections import i_section
+
+        # Nothing changes across that line except the width, which drops
+        # from the flange to the web - so the stress jumps by the same
+        # ratio. It is why the web carries the shear and the flanges the
+        # bending.
+        section = i_section(303.4, 165.0, 6.0, 10.2, 8.9)
+        found = section.properties()
+        junction = found.cy + (303.4 / 2.0 - 10.2)
+        inside = section.shear_stress(self.FORCE, junction - 0.5)
+        outside = section.shear_stress(self.FORCE, junction + 0.5)
+        self.assertGreater(inside / outside, 5.0)
+
+        # And the step is the width doing it. Q is nearly the same either
+        # side - it is the half millimetre of metal between the two levels
+        # and nothing else - so the stresses go inversely with the widths,
+        # to within how much that half millimetre changes Q.
+        narrow = section.width_at(junction - 0.5)
+        wide = section.width_at(junction + 0.5)
+        self.assertAlmostEqual(inside / outside, wide / narrow,
+                               delta=0.1 * wide / narrow)
+
+    def test_the_web_of_an_i_section_carries_nearly_all_of_it(self):
+        from engicalc.core.sections import i_section
+
+        section = i_section(303.4, 165.0, 6.0, 10.2, 8.9)
+        levels, stresses = section.shear_profile(self.FORCE, 400)
+        carried = [stress * section.width_at(level)
+                   for level, stress in zip(levels, stresses)]
+        in_web = [value for level, value in zip(levels, carried)
+                  if section.width_at(level) < 30.0]
+        self.assertGreater(sum(in_web) / sum(carried), 0.9)
+
+    def test_a_hole_takes_area_away_rather_than_adding_it(self):
+        from engicalc.core.sections import Rectangle, Section
+
+        # A box is the outer rectangle less the inner one, and the shear
+        # has to see it that way round.
+        box = Section(parts=[Rectangle(width=100.0, height=200.0),
+                             Rectangle(width=80.0, height=180.0,
+                                       solid=False)])
+        self.assertAlmostEqual(box.width_at(0.0), 20.0, places=9)
+        area, _first = box.above(0.0)
+        self.assertAlmostEqual(area, 100.0 * 100.0 - 80.0 * 90.0, places=6)
+
+    def test_the_shear_is_proportional_to_the_force(self):
+        from engicalc.core.sections import i_section
+
+        section = i_section(303.4, 165.0, 6.0, 10.2, 8.9)
+        one, _level = section.worst_shear(self.FORCE)
+        two, _level = section.worst_shear(2.0 * self.FORCE)
+        self.assertAlmostEqual(two, 2.0 * one, places=6)
+
+    def test_the_two_stresses_never_peak_in_the_same_place(self):
+        from engicalc.core.sections import solid_rectangle
+
+        # Which is the reason this exists. Bending is largest at the top
+        # and bottom and nothing in the middle; shear is the other way
+        # round.
+        section = solid_rectangle(100.0, 200.0)
+        found = section.properties()
+        _worst, level = section.worst_shear(self.FORCE)
+        self.assertAlmostEqual(level, found.cy, delta=1.0)
+        self.assertAlmostEqual(found.stress_at(0.0, 0.0, 1e6), 0.0,
+                               places=9)
+        self.assertGreater(abs(found.stress_at(0.0, found.top, 1e6)), 0.0)
+
+
 class TestSectionTable(unittest.TestCase):
     """A table of numbers in a program has to justify itself."""
 

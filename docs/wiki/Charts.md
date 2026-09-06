@@ -199,6 +199,43 @@ having them.
 Rectangular hollow sections are rounded outside and inside too. Square
 corners read those about 3% stiff.
 
+### Shear stress
+
+Give the section a shear force as well as a moment and it works out the
+other stress:
+
+    tau = V Q / (I t)
+
+`Q` is the first moment about the neutral axis of everything beyond the
+level being asked about, and `t` is how much metal is there to carry it.
+Both are questions about the **level** rather than about the section, which
+is why the section answers them one level at a time rather than once at the
+start.
+
+It is drawn beside the shape, sharing the vertical axis, so the step lines
+up with the flange it steps at.
+
+**The two stresses never peak in the same place.** Bending is largest at the
+top and bottom and nothing at the neutral axis; shear is exactly the other
+way round. A section checked for one has not been checked for the other, and
+the tab says so.
+
+Two results fall out that are worth knowing:
+
+- On a **rectangle** the distribution is parabolic and peaks at `3V/2A` -
+  half again the average, not the average, which is the mistake worth not
+  making.
+- On a **round bar** it peaks at `4V/3A`.
+- On an **I section** it jumps where the flange meets the web, because `t`
+  drops from the flange width to the web thickness with nothing else
+  changing. On a 305x165x40 UB the step is nearly tenfold and **the web
+  carries 97% of the shear** - which is why webs are what buckle and why
+  `V/(D x t_web)` is the quick check people use. That quick check is about
+  10% unconservative; the real peak is higher.
+
+The Beam tab reports it too, from its own largest shear force, once it has
+been given a section.
+
 ### Bending stress
 
 Not `M y / I`. That is the stress in a section with an axis of symmetry,

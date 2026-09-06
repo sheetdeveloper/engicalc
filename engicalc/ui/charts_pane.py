@@ -632,6 +632,12 @@ class BeamTab(ChartTab):
                 ("Z, the governing one", properties.z / 1e3, "cm^3"),
                 ("largest bending stress", stress, "N/mm^2")]
 
+        # The shear is the other half, and it peaks where the bending does
+        # not - so a section passed on bending alone has not been checked.
+        _where, shear = result.max_shear
+        worst, _level = section.worst_shear(abs(shear))
+        rows.append(("largest shear stress", abs(worst), "N/mm^2"))
+
         at_drop, drop = result.max_deflection
         rows.append(("largest deflection", drop * 1000.0,
                      f"mm, at {at_drop:g} m"))
@@ -1089,6 +1095,7 @@ class SectionTab(ChartTab):
         shapes.bind("<<ComboboxSelected>>", lambda e: self._shape_changed())
 
         self.moment = self.field(first, "Bending moment", "120", "kN m")
+        self.shear = self.field(first, "shear", "100", "kN")
 
         # The dimension boxes are rebuilt when the shape changes, because
         # which of them there are is part of what a shape is.
@@ -1180,8 +1187,20 @@ class SectionTab(ChartTab):
         section = self.section()
         found = section.properties()
 
+        force = parse_number(self.shear.get().strip() or "0")
+        force = float(force or 0.0) * 1000.0        # kN to newtons
+
         self.figure.clear()
-        axes = self.figure.add_subplot(111)
+        if force:
+            # Side by side, sharing the height axis, so the step in the
+            # shear lines up with the flange it steps at.
+            grid = self.figure.add_gridspec(1, 2, wspace=0.05,
+                                            width_ratios=[1.0, 1.0])
+            axes = self.figure.add_subplot(grid[0])
+            self._draw_shear(self.figure.add_subplot(grid[1], sharey=axes),
+                             section, force)
+        else:
+            axes = self.figure.add_subplot(111)
         self._draw_section(axes, section, found)
 
         rows = list(found.rows())
@@ -1198,9 +1217,45 @@ class SectionTab(ChartTab):
             rows.append(("at", at_x - found.bounds[0],
                          f"mm from the left, {at_y - found.bounds[2]:g} mm "
                          f"up"))
-        return rows, self._notes(section, found)
+        if force:
+            worst, level = section.worst_shear(force)
+            rows.append(("largest shear stress", worst, "N/mm^2"))
+            rows.append(("at", level - found.bounds[2],
+                         f"mm up, where the section is "
+                         f"{section.width_at(level):.4g} mm wide"))
+            rows.append(("average shear stress", force / found.area,
+                         "N/mm^2"))
+        return rows, self._notes(section, found, force)
 
-    def _notes(self, section, found) -> list:
+    def layout(self) -> None:
+        """Left to the gridspec when there are two panels.
+
+        tight_layout will not lay out a grid that has been given its own
+        spacing, and the two panels here want to sit close together - they
+        share a height axis and reading across between them is the point.
+        """
+        if len(self.figure.axes) > 1:
+            self.figure.subplots_adjust(left=0.08, right=0.97, top=0.93,
+                                        bottom=0.12)
+        else:
+            self.figure.tight_layout()
+
+    def _draw_shear(self, axes, section, force) -> None:
+        """Nothing at the top and bottom, most at the neutral axis.
+
+        The opposite way round from the bending stress, which is why a
+        section checked for one has not been checked for the other.
+        """
+        levels, stresses = section.shear_profile(force)
+        axes.plot(stresses, levels, color="#0b7a3b", linewidth=1.4)
+        axes.fill_betweenx(levels, stresses, 0, color="#0b7a3b", alpha=0.15)
+        axes.axvline(0, color="#888888", linewidth=0.8)
+        axes.set_xlabel("shear stress  N/mm2", fontsize=8)
+        axes.grid(True, alpha=0.25, linestyle=":")
+        axes.tick_params(labelsize=7, labelleft=False)
+        axes.set_title("shear", fontsize=8, color="#0b7a3b")
+
+    def _notes(self, section, found, force=0.0) -> list:
         """What the numbers do not say on their own."""
         notes = []
         told = self.designation.get()
@@ -1218,6 +1273,14 @@ class SectionTab(ChartTab):
                 f"Bending it about x alone also bends it sideways, and the "
                 f"stress is worked out with the term that says so rather "
                 f"than by M y / I.")
+        if force:
+            worst, _level = section.worst_shear(force)
+            average = force / found.area
+            notes.append(
+                f"The shear peaks at {abs(worst) / abs(average):.2f} times "
+                f"its average, and where the bending stress is nothing. The "
+                f"two never peak in the same place, so a section checked "
+                f"for one has not been checked for the other.")
         if self.stress and abs(self.stress[0]) > self.YIELD:
             notes.append(
                 f"{abs(self.stress[0]):.0f} N/mm2 is past the yield of "

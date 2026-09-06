@@ -90,6 +90,18 @@ class Part:
         """
         raise NotImplementedError
 
+    def above(self, level: float) -> tuple:
+        """(area, first moment about y = 0) of this part above *level*.
+
+        What the shear formula wants, asked of the shape rather than
+        assumed. Everything below is ignored; everything above counts.
+        """
+        return _above_polygon(self.outline(), level)
+
+    def width_at(self, level: float) -> float:
+        """How much of this part lies on the line at *level*."""
+        return _width_of_polygon(self.outline(), level)
+
 
 @dataclass
 class Rectangle(Part):
@@ -113,6 +125,18 @@ class Rectangle(Part):
     def outline(self) -> list:
         left, right, bottom, top = self.bounds()
         return [(left, bottom), (right, bottom), (right, top), (left, top)]
+
+    def above(self, level: float) -> tuple:
+        _l, _r, bottom, top = self.bounds()
+        cut = max(level, bottom)
+        if cut >= top:
+            return 0.0, 0.0
+        area = self.width * (top - cut)
+        return area, area * (top + cut) / 2.0
+
+    def width_at(self, level: float) -> float:
+        _l, _r, bottom, top = self.bounds()
+        return self.width if bottom <= level <= top else 0.0
 
 
 @dataclass
@@ -138,6 +162,35 @@ class Circle(Part):
         return [(self.x + radius * math.cos(2.0 * math.pi * i / steps),
                  self.y + radius * math.sin(2.0 * math.pi * i / steps))
                 for i in range(steps)]
+
+    def above(self, level: float) -> tuple:
+        """The circular segment above a chord, in closed form.
+
+        Worth doing exactly rather than off the drawn outline: a round bar
+        is one of the two shapes with a shear answer everybody knows, and
+        checking against 4V/3A is no check at all if the shape itself is a
+        ninety-six-sided approximation to a circle.
+        """
+        radius = self.diameter / 2.0
+        height = level - self.y
+        if height >= radius:
+            return 0.0, 0.0
+        if height <= -radius:
+            area = self.area()
+            return area, area * self.y
+        rest = math.sqrt(radius * radius - height * height)
+        area = radius * radius * math.acos(height / radius) - height * rest
+        # The segment's first moment about the centre of the circle is
+        # (2/3)(r^2 - a^2)^(3/2), which is one of the tidier results in the
+        # subject and the reason this is closed form at all.
+        return area, (2.0 / 3.0) * rest ** 3 + area * self.y
+
+    def width_at(self, level: float) -> float:
+        radius = self.diameter / 2.0
+        height = level - self.y
+        if abs(height) >= radius:
+            return 0.0
+        return 2.0 * math.sqrt(radius * radius - height * height)
 
 
 @dataclass
@@ -208,6 +261,12 @@ class Polygon(Part):
     def outline(self) -> list:
         return [(self.x + px, self.y + py) for px, py in self.points]
 
+    def above(self, level: float) -> tuple:
+        return _above_polygon(self.outline(), level)
+
+    def width_at(self, level: float) -> float:
+        return _width_of_polygon(self.outline(), level)
+
 
 @dataclass
 class Fillet(Part):
@@ -260,6 +319,58 @@ class Fillet(Part):
                            radius + radius * math.sin(angle)))
         return [(self.x + self.across * u, self.y + self.up * v)
                 for u, v in points]
+
+
+def _above_polygon(points: list, level: float) -> tuple:
+    """(area, first moment about y = 0) of a polygon above a horizontal line.
+
+    The polygon is cut at the line and the part above is measured. Cutting
+    first and measuring second is the whole of it: a shape clipped to a
+    half-plane is still a polygon, and a polygon's area and first moment are
+    the same two sums they always were.
+    """
+    kept = []
+    for index, (x1, y1) in enumerate(points):
+        x2, y2 = points[(index + 1) % len(points)]
+        inside, next_inside = y1 >= level, y2 >= level
+        if inside:
+            kept.append((x1, y1))
+        if inside != next_inside and y2 != y1:
+            share = (level - y1) / (y2 - y1)
+            kept.append((x1 + share * (x2 - x1), level))
+    if len(kept) < 3:
+        return 0.0, 0.0
+
+    twice = 0.0
+    moment = 0.0
+    for index, (x1, y1) in enumerate(kept):
+        x2, y2 = kept[(index + 1) % len(kept)]
+        cross = x1 * y2 - x2 * y1
+        twice += cross
+        moment += (y1 + y2) * cross
+    area = abs(twice) / 2.0
+    if area <= 0:
+        return 0.0, 0.0
+    # The sign of the first moment has to follow the way round the corners
+    # were given, which the area has already had taken off it.
+    turn = 1.0 if twice > 0 else -1.0
+    return area, turn * moment / 6.0
+
+
+def _width_of_polygon(points: list, level: float) -> float:
+    """How much of a polygon lies on a horizontal line.
+
+    The crossings pair off along the line - in one side and out the other -
+    so the width is the sum of the gaps between them taken two at a time.
+    """
+    crossings = []
+    for index, (x1, y1) in enumerate(points):
+        x2, y2 = points[(index + 1) % len(points)]
+        if (y1 <= level < y2) or (y2 <= level < y1):
+            crossings.append(x1 + (level - y1) / (y2 - y1) * (x2 - x1))
+    crossings.sort()
+    return sum(second - first
+               for first, second in zip(crossings[::2], crossings[1::2]))
 
 
 def _centre_of(part: Part) -> tuple:
@@ -459,6 +570,82 @@ class Section:
                   min(e[2] for e in edges), max(e[3] for e in edges))
         return Properties(area=area, cx=cx, cy=cy, ixx=ixx, iyy=iyy,
                           ixy=ixy, bounds=bounds)
+
+    # -- shear ---------------------------------------------------------
+    def above(self, level: float) -> tuple:
+        """(area, first moment about y = 0) of everything above *level*.
+
+        Holes come off, the same as everywhere else, because a hole above
+        the level is area that is not there to be sheared.
+        """
+        area = moment = 0.0
+        for part in self.parts:
+            piece, first = part.above(level)
+            area += part.sign * piece
+            moment += part.sign * first
+        return area, moment
+
+    def width_at(self, level: float) -> float:
+        """How much metal is on the line at *level*.
+
+        Signed, so a hole narrows the section rather than widening it. That
+        is right for shapes built the way these are - a bore inside a wall,
+        a void inside a tube - and it would not be for two parts that
+        overlapped in some more inventive way.
+        """
+        return sum(part.sign * part.width_at(level) for part in self.parts)
+
+    def shear_stress(self, force: float, level: float,
+                     found=None) -> float:
+        """tau = V Q / (I t) at a height above the section's own base.
+
+        Q is the first moment about the neutral axis of everything beyond
+        the level, and t is the metal there to carry it. Both are questions
+        about the level rather than about the section, which is why they
+        are asked here and not once at the start.
+        """
+        found = found or self.properties()
+        area, first = self.above(level)
+        # Q about the neutral axis, not about the origin.
+        q = first - found.cy * area
+        width = self.width_at(level)
+        span = found.bounds[1] - found.bounds[0]
+        if width <= 1e-12 * max(span, 1.0) or not found.ixx:
+            # At the very top and bottom there is no width and no area
+            # above; both go to nothing together and so does the stress.
+            return 0.0
+        return force * q / (found.ixx * width)
+
+    def shear_profile(self, force: float, points: int = 240) -> tuple:
+        """(levels, stresses) up the section, for drawing.
+
+        The levels where parts begin and end are included on purpose, a
+        hair either side. That is where the width changes and the stress
+        steps, and a diagram that samples evenly walks straight past it.
+        """
+        found = self.properties()
+        _left, _right, bottom, top = found.bounds
+        depth = top - bottom
+        levels = [bottom + depth * index / (points - 1)
+                  for index in range(points)]
+        edges = []
+        for part in self.parts:
+            for place in part.bounds()[2:]:
+                if bottom < place < top:
+                    edges += [place - depth * 1e-7, place + depth * 1e-7]
+        levels = sorted(set(levels + edges))
+        return (levels, [self.shear_stress(force, y, found)
+                         for y in levels])
+
+    def worst_shear(self, force: float) -> tuple:
+        """(stress, level) where the section is worked hardest in shear.
+
+        Found by asking rather than assumed to be at the neutral axis. It
+        usually is, and on a tee or a channel it is not.
+        """
+        levels, stresses = self.shear_profile(force)
+        best = max(range(len(levels)), key=lambda i: abs(stresses[i]))
+        return stresses[best], levels[best]
 
     def worst_stress(self, moment: float, sideways: float = 0.0) -> tuple:
         """(stress, x, y) at the hardest-worked corner of the shape.
