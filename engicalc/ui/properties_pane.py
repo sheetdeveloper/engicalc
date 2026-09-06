@@ -34,7 +34,7 @@ class PropertiesPane(ttk.Frame):
 
         self.tabs.add(self.steam, text="  Water and steam  ")
         self.tabs.add(self.moist_air, text="  Moist air  ")
-        self.tabs.add(self.r134a, text="  R134a  ")
+        self.tabs.add(self.r134a, text="  Refrigerants  ")
         self.tabs.add(self.cycle, text="  Refrigeration cycle  ")
 
     def show_steam(self) -> None:

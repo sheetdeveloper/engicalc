@@ -19,7 +19,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from ..core import cycle as cycles
-from ..core import r134a
+from ..core import refrigerants
 from ..core.display import fmt_number
 from ..core.parsing import ParseError, parse_number
 from ..export.excel import export_table
@@ -27,9 +27,9 @@ from . import figures
 from .r134a_tab import dome
 from .widgets import MONO, ScrollFrame
 
-#: The refrigerants this can be run on. One so far, and the cycle takes the
-#: fluid as a parameter, so a second is an entry here and nothing else.
-FLUIDS = {"R134a": r134a}
+#: The refrigerants this can be run on. The cycle takes the fluid as a
+#: parameter, so this is the whole of what makes it work on all of them.
+FLUIDS = {name: refrigerants.fluid(name) for name in refrigerants.names()}
 
 #: (symbol, what it is, unit, how to get it) for each of the four states.
 STATE_ROWS = [

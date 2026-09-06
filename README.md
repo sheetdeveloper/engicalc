@@ -49,7 +49,7 @@ the area it measures shaded underneath and the working beside it.*
 | ![Section properties](docs/screenshots/section.png) | ![Motion](docs/screenshots/motion.png) |
 | **Section properties** - centroid and second moment, from the dimensions | **Motion** - distance, velocity and acceleration on one time axis |
 | ![R134a](docs/screenshots/r134a.png) | ![Refrigeration cycle](docs/screenshots/cycle.png) |
-| **R134a** - the standard equation of state, and the p-h diagram | **The refrigeration cycle** - four states, the COP, the duty |
+| **Refrigerants** - R134a, ammonia and propane, each from its own reference equation | **The refrigeration cycle** - four states, the COP, the duty |
 | ![Torsion](docs/screenshots/torsion.png) | ![Columns](docs/screenshots/columns.png) |
 | **Torsion** - shear stress and twist, from the power at a speed | **Columns** - Euler, Rankine and Perry-Robertson on one chart |
 | ![Truss](docs/screenshots/truss.png) | ![Pressure vessel](docs/screenshots/vessel.png) |
@@ -359,23 +359,49 @@ a different curve and not one this has. Where that happens the dew point and
 wet bulb are left out with the reason on screen; everything that does not
 depend on that curve is still exactly right.
 
-**R134a** is the Tillner-Roth and Baehr equation of state - the reference
-formulation, the one the published tables are generated from - solved rather
-than tabulated, with the p-h diagram beside it. The saturation line is found
-by Maxwell construction: the pressure at which the liquid and the vapour have
-the same pressure and the same Gibbs energy. Nothing sets the saturation
-pressure directly, so agreeing with the published ancillary equation is a
-result and not an arrangement, and it agrees to **0.003%** across the
-thirteen temperatures the paper lists. Saturated densities land within
-0.002%, the latent heat at 0 C comes out 198.60 kJ/kg against a published
-198.6, and the normal boiling point falls at -26.074 C against -26.07.
+**Refrigerants** - R134a, ammonia (R717) and propane (R290), each from its
+own published reference equation of state rather than from a table of one
+and a correlation for the others:
+
+| | |
+| --- | --- |
+| R134a | Tillner-Roth and Baehr (1994) |
+| Ammonia | Gao and others (2023), with the associating term |
+| Propane | Lemmon, McLinden and Wagner (2009) |
+
+The saturation line is found by Maxwell construction - the pressure at
+which the liquid and the vapour sit at the same pressure with the same
+Gibbs energy - and not from a fitted curve. Nothing sets the saturation
+pressure directly, so agreeing with the ancillary equation published
+alongside each formulation is a **result** rather than an arrangement, and
+all three agree with theirs to within the accuracy the ancillary is itself
+quoted to: 0.009% for R134a, 0.016% for propane, 0.05% for ammonia.
+
+The boiling points come out at -26.074, -33.316 and -42.114 C against
+published values of -26.07, -33.327 and -42.114. The critical pressure is
+not set either - the equation is evaluated at the critical temperature and
+density and the published pressure comes back.
+
+Ammonia's molecules hydrogen bond, and that is why its formulation needed a
+term shape the other two do not have. All three are measured from the same
+reference state - saturated liquid at 0 C, h = 200 kJ/kg, s = 1 kJ/(kg K) -
+so their enthalpies can be put side by side.
 
 **The refrigeration cycle** puts four states on that diagram - compressor in
 and out, condenser out, evaporator in - and gives the COP, the work, and the
-mass flow needed for a duty. Isentropic efficiency, superheat and subcooling
-are all optional and left out rather than assumed. The same four states run
-as a heat pump, since a heat pump is this cycle read for what it rejects
-instead of what it absorbs.
+mass flow needed for a duty, on any of the three refrigerants. Isentropic
+efficiency, superheat and subcooling are all optional and left out rather
+than assumed. The same four states run as a heat pump, since a heat pump is
+this cycle read for what it rejects instead of what it absorbs.
+
+Running the same machine on all three shows what the choice of refrigerant
+actually buys. Between -10 and 40 C the COP is 2.88 to 3.00 whichever one
+is in it - the coefficient of performance is set by the two temperatures
+and barely at all by the fluid. What changes is everything else: ammonia
+carries seven times the heat per kilogram, so it moves a seventh of the
+mass for the same cooling and the pipework and the compressor are smaller;
+and it leaves the compressor at 162 C rather than 65, which is why an
+ammonia plant needs desuperheating that a halocarbon one does not.
 
 
 ### Charts

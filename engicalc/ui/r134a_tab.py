@@ -1,4 +1,4 @@
-"""R134a properties, and the diagram a refrigeration cycle is drawn on.
+"""Refrigerant properties, and the diagram a cycle is drawn on.
 
 The same three ways of asking as the steam tab, because they are the same
 three ways the question is put: on the saturation line, inside the dome at a
@@ -11,11 +11,15 @@ throttles are vertical lines on it and the two heat exchangers horizontal
 ones, so the shape of the cycle is the shape of the drawing.
 
 Nothing is looked up. Everything comes from the equation of state each time,
-so there is no row to read between and no edge to fall off.
+so there is no row to read between and no edge to fall off - and the same
+is true of all three refrigerants here, each from its own published
+reference formulation rather than from a table of one and a correlation for
+the others.
 """
 
 from __future__ import annotations
 
+import re
 import tkinter as tk
 from functools import lru_cache
 from tkinter import filedialog, messagebox, ttk
@@ -23,7 +27,8 @@ from tkinter import filedialog, messagebox, ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from ..core import r134a
+from ..core import refrigerants
+from ..core.helmholtz import FluidError
 from ..core.display import fmt_number
 from ..core.parsing import ParseError, parse_number
 from ..export.excel import export_table
@@ -55,7 +60,7 @@ PROPERTIES = [
 ]
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=8)
 def dome(fluid) -> tuple:
     """A fluid's saturation dome, as (h liquid, h vapour, pressure).
 
@@ -68,8 +73,11 @@ def dome(fluid) -> tuple:
     this.
     """
     liquid_h, vapour_h, pressures = [], [], []
-    bottom = fluid.T_TRIPLE + 20.0
-    top = fluid.T_CRITICAL - fluid.CRITICAL_MARGIN
+    # From the coldest the saturation line is followed to, not from the
+    # triple point: propane's triple point is at a fifth of a millipascal
+    # and the equation is not asked about it.
+    bottom = fluid.coldest + 20.0
+    top = fluid.T_critical - fluid.critical_margin
     for step in range(90):
         T = bottom + (top - bottom) * step / 89.0
         try:
@@ -95,12 +103,10 @@ class R134aTab(ttk.Frame):
     def _build(self) -> None:
         heading = ttk.Frame(self)
         heading.pack(fill="x")
-        ttk.Label(heading, text="R134a", style="Title.TLabel").pack(
+        ttk.Label(heading, text="Refrigerant", style="Title.TLabel").pack(
             side="left")
-        ttk.Label(heading, style="Hint.TLabel",
-                  text="computed from the Tillner-Roth and Baehr equation "
-                       "of state, so there is nothing to interpolate").pack(
-                           side="left", padx=(10, 0))
+        self.subtitle = ttk.Label(heading, style="Hint.TLabel", text="")
+        self.subtitle.pack(side="left", padx=(10, 0))
 
         # Packed before the expanding pane so it keeps its height.
         # See TestActionRows.
@@ -109,6 +115,19 @@ class R134aTab(ttk.Frame):
 
         asked = ttk.Labelframe(self, text="The state", padding=8)
         asked.pack(fill="x", pady=(6, 0))
+
+        which = ttk.Frame(asked)
+        which.pack(fill="x", pady=(0, 6))
+        ttk.Label(which, text="Refrigerant").pack(side="left")
+        self.refrigerant = tk.StringVar(value=refrigerants.names()[0])
+        picker = ttk.Combobox(which, state="readonly", width=18,
+                              textvariable=self.refrigerant,
+                              values=refrigerants.names())
+        picker.pack(side="left", padx=4)
+        picker.bind("<<ComboboxSelected>>", lambda e: self._fluid_changed())
+        self.about = ttk.Label(which, text="", style="Hint.TLabel",
+                               wraplength=700, justify="left")
+        self.about.pack(side="left", padx=(10, 0))
 
         mode_row = ttk.Frame(asked)
         mode_row.pack(fill="x")
@@ -172,6 +191,25 @@ class R134aTab(ttk.Frame):
         ttk.Button(actions, text="Save chart...",
                    command=self.save_chart).pack(side="right", padx=6)
 
+        self._fluid_changed()
+
+    def fluid(self):
+        return refrigerants.fluid(self.refrigerant.get())
+
+    def _fluid_changed(self) -> None:
+        """A different refrigerant, and everything on screen follows."""
+        fluid = self.fluid()
+        self.subtitle.configure(
+            text=f"from {fluid.source}, so there is nothing to interpolate")
+        self.about.configure(text=refrigerants.about(self.refrigerant.get()))
+        # The old pressure was a saturation pressure of the old fluid and
+        # means something else for this one, so it is moved to the pressure
+        # this fluid boils at the temperature already in the box.
+        try:
+            T = self._number(self.temperature, "temperature") + 273.15
+            self.pressure.set(f"{fluid.saturation_pressure(T) / 1000:.4f}")
+        except (FluidError, ParseError):
+            pass
         self._mode_changed()
 
     def _entry_row(self, label: str, variable: tk.StringVar, unit: str):
@@ -210,7 +248,7 @@ class R134aTab(ttk.Frame):
     def _number(self, variable: tk.StringVar, what: str) -> float:
         value = parse_number(variable.get())
         if value is None:
-            raise r134a.R134aError(f"Enter a {what}.")
+            raise FluidError(f"Enter a {what}.")
         return float(value)
 
     def compute(self, *_args) -> None:
@@ -219,7 +257,7 @@ class R134aTab(ttk.Frame):
         # about until there is something to work out.
         try:
             states, heading = self._states()
-        except (r134a.R134aError, ParseError) as exc:
+        except (FluidError, ParseError) as exc:
             self.states = []
             self.table.clear()
             self.note.configure(text=str(exc))
@@ -235,27 +273,28 @@ class R134aTab(ttk.Frame):
 
     def _states(self):
         """(the states to show, a line describing them)."""
+        fluid = self.fluid()
         key = self._key()
         if key in ("saturated", "wet"):
             if self.by.get() == "T":
                 T = self._number(self.temperature, "temperature") + 273.15
-                p = r134a.saturation_pressure(T)
+                p = fluid.saturation_pressure(T)
             else:
                 p = self._number(self.pressure, "pressure") * 1000.0
-                T = r134a.saturation_temperature(p)
+                T = fluid.saturation_temperature(p)
             where = (f"boiling at {T - 273.15:.2f} deg C and "
                      f"{p / 1000.0:.4g} kPa")
             if key == "saturated":
-                liquid, vapour = r134a.saturated(T)
+                liquid, vapour = fluid.saturated(T)
                 return [liquid, vapour], where
             dryness = self._number(self.quality, "dryness")
-            return [r134a.wet(T, dryness)], f"{where}, {dryness:g} dry"
+            return [fluid.wet(T, dryness)], f"{where}, {dryness:g} dry"
 
         T = self._number(self.temperature, "temperature") + 273.15
         p = self._number(self.pressure, "pressure") * 1000.0
-        found = r134a.at_pressure_and_temperature(p, T)
-        phase = ("liquid" if found.T < r134a.T_CRITICAL
-                 and found.p > r134a.saturation_pressure(found.T)
+        found = fluid.at_pressure_and_temperature(p, T)
+        phase = ("liquid" if found.T < fluid.T_critical
+                 and found.p > fluid.saturation_pressure(found.T)
                  else "vapour")
         return [found], (f"{phase} at {T - 273.15:.2f} deg C and "
                          f"{p / 1000.0:.4g} kPa")
@@ -320,7 +359,7 @@ class R134aTab(ttk.Frame):
         """Pressure against enthalpy, with the dome and the state on it."""
         try:
             self.axes.clear()
-            liquid_h, vapour_h, pressures = dome(r134a)
+            liquid_h, vapour_h, pressures = dome(self.fluid())
             self.axes.plot(liquid_h, pressures, color="#1f4e79",
                            linewidth=1.3)
             self.axes.plot(vapour_h, pressures, color="#1f4e79",
@@ -379,9 +418,14 @@ class R134aTab(ttk.Frame):
         self.clipboard_append(self._as_text())
         self.status.configure(text="Copied")
 
+    def _file_name(self) -> str:
+        """The refrigerant's name, safe to put in a filename."""
+        return re.sub(r"[^A-Za-z0-9]+", "_",
+                      self.refrigerant.get()).strip("_").lower()
+
     def save_chart(self) -> None:
         try:
-            path = figures.save_figure(self.figure, "r134a")
+            path = figures.save_figure(self.figure, self._file_name())
         except Exception as exc:                       # noqa: BLE001
             messagebox.showerror("Could not save", str(exc))
             return
@@ -403,7 +447,7 @@ class R134aTab(ttk.Frame):
         path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel workbook", "*.xlsx")],
-            initialfile="r134a.xlsx")
+            initialfile=f"{self._file_name()}.xlsx")
         if not path:
             return
         try:

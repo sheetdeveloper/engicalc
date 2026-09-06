@@ -5009,6 +5009,238 @@ class TestMohrsCircle(unittest.TestCase):
         self.assertAlmostEqual(state.theta_p, 45.0, places=9)
 
 
+class TestRefrigerants(unittest.TestCase):
+    """Ammonia and propane, beside R134a, from their own reference equations.
+
+    The check that matters is against the ancillary equation published with
+    each formulation. Nothing in this app uses an ancillary - the
+    saturation line is found from the equation itself, by the condition
+    that defines it, two phases at one pressure with the same Gibbs energy.
+    So agreeing with a curve that was fitted separately is a result and not
+    an arrangement.
+
+    Each entry below is (reducing pressure, reducing temperature, the
+    (n, t) pairs, and how well the published curve itself is quoted to
+    reproduce the equation). The form is
+
+        p = p_r exp(T_r/T sum n_i (1 - T/T_r)^t_i)
+    """
+
+    ANCILLARY = {
+        "R134a": (
+            4059280.0, 374.21,
+            ((0.4331478287291047, 0.845), (-9.090302559074352, 0.99),
+             (2.1476074125217703, 1.14), (-1.557687007603464, 2.651),
+             (-3.5020328972698604, 4.507), (14.958442337201044, 17.235)),
+            0.0093),
+        "Ammonia": (
+            11365000.0, 405.56,
+            ((-7.2257, 1.0), (1.4263, 1.5), (-0.59642, 2.0),
+             (-2.798, 3.6), (-3.7869, 15.5)),
+            0.0519),
+        "Propane": (
+            4251200.0, 369.89,
+            ((-23.998635747391152, 1.05), (18.313017605233238, 1.084),
+             (-0.42240851966839504, 2.259), (-2.7378298813798962, 4.287),
+             (0.257888414168987, 7.66), (-1.3113462226130785, 18.584)),
+            0.0163),
+    }
+
+    #: Boiling points at one standard atmosphere, which are measured
+    #: quantities and not outputs of any of these equations.
+    BOILING = {"R134a": -26.07, "Ammonia": -33.327, "Propane": -42.114}
+
+    @staticmethod
+    def _ancillary(entry, T):
+        reducing, T_r, terms, _quoted = entry
+        theta = 1.0 - T / T_r
+        return reducing * math.exp(
+            T_r / T * sum(n * theta ** t for n, t in terms))
+
+    @staticmethod
+    def _fluids():
+        from engicalc.core import ammonia, propane, r134a
+        return (r134a.FLUID, ammonia.FLUID, propane.FLUID)
+
+    def test_the_saturation_line_agrees_with_the_published_curve(self):
+        for fluid in self._fluids():
+            entry = self.ANCILLARY[fluid.name]
+            quoted = entry[3]
+            bottom = fluid.coldest + 10.0
+            top = fluid.T_critical - 1.0
+            for step in range(9):
+                T = bottom + (top - bottom) * step / 8.0
+                with self.subTest(fluid=fluid.name, T=round(T, 2)):
+                    mine = fluid.saturation_pressure(T)
+                    theirs = self._ancillary(entry, T)
+                    off = abs(mine / theirs - 1.0) * 100.0
+                    # Held to the accuracy the published curve is itself
+                    # quoted to, with a little room - agreeing more closely
+                    # than the curve is fitted would not mean anything.
+                    self.assertLess(off, quoted * 2.0)
+
+    def test_the_boiling_points_are_the_measured_ones(self):
+        for fluid in self._fluids():
+            with self.subTest(fluid=fluid.name):
+                got = fluid.saturation_temperature(101325.0) - 273.15
+                self.assertAlmostEqual(got, self.BOILING[fluid.name],
+                                       delta=0.02)
+
+    def test_the_critical_pressure_falls_out_of_the_equation(self):
+        # Nothing sets it. The equation is evaluated at the critical
+        # temperature and density and the published pressure comes back.
+        for fluid in self._fluids():
+            with self.subTest(fluid=fluid.name):
+                got = fluid.pressure(fluid.T_critical, fluid.rho_critical)
+                self.assertAlmostEqual(got / fluid.p_critical, 1.0,
+                                       delta=0.001)
+
+    def test_all_three_are_measured_from_the_same_place(self):
+        # Saturated liquid at 0 C, h = 200 kJ/kg and s = 1 kJ/(kg K), so
+        # the three can be put side by side. It is solved from the
+        # reference condition rather than written down, so this is checking
+        # the solve and not a constant.
+        for fluid in self._fluids():
+            with self.subTest(fluid=fluid.name):
+                liquid, _vapour = fluid.saturated(273.15)
+                self.assertAlmostEqual(liquid.h, 200e3, places=6)
+                self.assertAlmostEqual(liquid.s, 1000.0, places=9)
+
+    def test_ammonia_carries_far_more_heat_per_kilogram(self):
+        from engicalc.core import ammonia, propane, r134a
+
+        # The reason a cold store runs on it. Nothing else about ammonia is
+        # convenient, and this one number is why it is used anyway.
+        at = 273.15
+        heats = {m.FLUID.name: m.latent_heat(at) / 1000.0
+                 for m in (r134a, ammonia, propane)}
+        self.assertAlmostEqual(heats["R134a"], 198.6, delta=1.0)
+        self.assertAlmostEqual(heats["Ammonia"], 1262.0, delta=15.0)
+        self.assertAlmostEqual(heats["Propane"], 374.9, delta=2.0)
+        self.assertGreater(heats["Ammonia"] / heats["R134a"], 6.0)
+
+    def test_every_derivative_matches_numerical_differentiation(self):
+        # Three term shapes with quite different derivatives - plain and
+        # exponential, the Gaussian bell, and the associating term whose
+        # temperature part is a reciprocal. A sign wrong in any of them
+        # leaves the pressure looking plausible and the heat capacities
+        # nonsense.
+        for fluid in self._fluids():
+            for delta in (0.1, 0.5, 1.0, 1.7, 2.5):
+                for tau in (0.7, 1.0, 1.35, 2.5):
+                    with self.subTest(fluid=fluid.name, delta=delta,
+                                      tau=tau):
+                        self._compare_derivatives(fluid, delta, tau)
+
+    def _compare_derivatives(self, fluid, delta, tau):
+        step = 1e-6
+        got = fluid._residual(delta, tau)
+
+        def d_by_delta(which):
+            return ((fluid._residual(delta * (1 + step), tau)[which]
+                     - fluid._residual(delta * (1 - step), tau)[which])
+                    / (2 * delta * step))
+
+        def d_by_tau(which):
+            return ((fluid._residual(delta, tau * (1 + step))[which]
+                     - fluid._residual(delta, tau * (1 - step))[which])
+                    / (2 * tau * step))
+
+        for name, mine, numeric in (
+                ("phi_d", got[1], d_by_delta(0)),
+                ("phi_dd", got[2], d_by_delta(1)),
+                ("phi_t", got[3], d_by_tau(0)),
+                ("phi_tt", got[4], d_by_tau(3)),
+                ("phi_dt", got[5], d_by_delta(3))):
+            with self.subTest(derivative=name):
+                self.assertAlmostEqual(
+                    mine, numeric,
+                    delta=1e-5 * max(abs(numeric), 1.0))
+
+    def test_the_associating_term_is_only_where_it_belongs(self):
+        from engicalc.core import ammonia, propane, r134a
+
+        # Ammonia's molecules hydrogen bond, which is why its formulation
+        # needed a term shape the others did not. A nine-long tuple is
+        # that shape, and the other two have none.
+        shapes = {m.FLUID.name: {len(term) for term in m.FLUID.residual}
+                  for m in (r134a, ammonia, propane)}
+        self.assertEqual({4}, shapes["R134a"])
+        self.assertEqual({4, 8}, shapes["Propane"])
+        self.assertIn(9, shapes["Ammonia"])
+
+    def test_a_state_outside_the_range_is_refused(self):
+        from engicalc.core import propane
+        from engicalc.core.helmholtz import FluidError
+
+        # Propane's triple point is at a fifth of a millipascal, where the
+        # two-phase search is working in numbers that are all rounding, so
+        # the range is held above it and says so rather than returning
+        # whatever falls out.
+        self.assertGreater(propane.FLUID.coldest, propane.FLUID.T_triple)
+        with self.assertRaises(FluidError):
+            propane.FLUID.saturation_temperature(1e-3)
+
+    def test_a_wet_mixture_sits_between_the_phases_for_all_of_them(self):
+        for fluid in self._fluids():
+            with self.subTest(fluid=fluid.name):
+                liquid, vapour = fluid.saturated(263.15)
+                middle = fluid.wet(263.15, 0.4)
+                self.assertAlmostEqual(
+                    middle.h, liquid.h + 0.4 * (vapour.h - liquid.h),
+                    places=6)
+                # Volumes average, not densities.
+                self.assertAlmostEqual(
+                    1.0 / middle.rho,
+                    1.0 / liquid.rho + 0.4 * (1.0 / vapour.rho
+                                              - 1.0 / liquid.rho),
+                    places=9)
+
+
+class TestTheCycleOnEveryRefrigerant(unittest.TestCase):
+    """The same machine, three working fluids."""
+
+    def _run(self, name):
+        from engicalc.core import refrigerants
+        from engicalc.core.cycle import Cycle
+
+        cycle = Cycle(fluid=refrigerants.fluid(name),
+                      evaporating=263.15, condensing=313.15,
+                      superheat=5.0, subcool=3.0,
+                      efficiency=0.7, duty=5000.0)
+        return cycle.performance(), cycle.states()
+
+    def test_the_coefficient_of_performance_is_set_by_the_temperatures(self):
+        # Not by the fluid, which is the thing worth knowing. Three quite
+        # different refrigerants between the same two temperatures land
+        # within a few per cent of each other, and all of them well under
+        # the Carnot limit for that gap.
+        found = {name: self._run(name)[0] for name in
+                 ("R134a", "Ammonia (R717)", "Propane (R290)")}
+        cops = [answer["cooling COP"] for answer in found.values()]
+        self.assertLess(max(cops) - min(cops), 0.3)
+        carnot = 263.15 / (313.15 - 263.15)
+        for name, answer in found.items():
+            with self.subTest(fluid=name):
+                self.assertLess(answer["cooling COP"], carnot)
+                self.assertGreater(answer["cooling COP"], 2.0)
+
+    def test_ammonia_moves_far_less_mass_for_the_same_duty(self):
+        # Its latent heat is seven times R134a's, so the pipework and the
+        # compressor swept volume are smaller for the same cooling.
+        r134a, _states = self._run("R134a")
+        ammonia, _also = self._run("Ammonia (R717)")
+        self.assertGreater(r134a["mass flow"] / ammonia["mass flow"], 6.0)
+
+    def test_ammonia_leaves_the_compressor_far_hotter(self):
+        # The other half of the same trade, and the reason an ammonia
+        # plant needs desuperheating that a halocarbon one does not.
+        _found, r134a = self._run("R134a")
+        _also, ammonia = self._run("Ammonia (R717)")
+        self.assertGreater(ammonia[1].T - r134a[1].T, 80.0)
+        self.assertGreater(ammonia[1].T - 273.15, 120.0)
+
+
 class TestTriangles(unittest.TestCase):
     """Three parts of a triangle, and the other three.
 
