@@ -439,11 +439,61 @@ def _pretty_num(value, digits: int = 10) -> str:
         return str(value)
 
 
+#: Values put in to tell one branch of a rearrangement from another.
+#: Positive, and awkward enough that nothing cancels by luck.
+_TRIAL_VALUES = (sp.Rational(11, 7), sp.Rational(23, 13), sp.Rational(7, 3))
+
+
+def _branch_rank(expression, equation: sp.Eq, target: sp.Symbol) -> tuple:
+    """How good a rearrangement this is. Lower sorts first.
+
+    The only thing insisted on is that it solves the equation it came from.
+    A power like `Rh^(2/3)` has more than one branch and only some of them
+    are solutions; taking whichever was listed first gave a negative
+    hydraulic radius that did not satisfy Manning's equation at all.
+
+    Real is preferred to complex after that, and no further judgement is
+    made - whether a root should be positive is a question about the
+    problem, not about the algebra.
+
+    Done in ordinary floating point, which is ample to tell +0.75 from
+    -0.75, and with one substitution rather than two. Working to twenty-five
+    digits and substituting through the equation twice was correct and put
+    the test suite from two minutes to over ten.
+    """
+    others = sorted(equation.free_symbols - {target}, key=lambda s: s.name)
+    numbers = {s: float(_TRIAL_VALUES[i % len(_TRIAL_VALUES)]) + i
+               for i, s in enumerate(others)}
+    try:
+        value = complex(expression.subs(numbers).evalf())
+        residual = complex(
+            (equation.lhs - equation.rhs).subs(numbers).subs(
+                target, value).evalf())
+    except (TypeError, ValueError, ZeroDivisionError):
+        # Cannot be judged at these values, which does not make it wrong.
+        return (1, 1)
+    scale = max(abs(value), 1.0)
+    return (0 if abs(residual) < 1e-9 * scale else 1,
+            0 if abs(value.imag) < 1e-9 * scale else 1)
+
+
 def rearrange(equation: sp.Eq, target: sp.Symbol):
-    """Solve an equation symbolically for one of its symbols (formula library)."""
+    """Solve an equation symbolically for one of its symbols (formula library).
+
+    More than one branch usually means a power or a root, and only some
+    branches are solutions of the equation. They are ordered so a real one
+    that satisfies it comes first; the rest are still returned, because
+    which is wanted can be a question about the problem.
+    """
     sols = sp.solve(equation, target, dict=False)
     if not sols:
         return None
-    if len(sols) == 1:
-        return sp.simplify(sols[0])
-    return [sp.simplify(s) for s in sols]
+    simplified = [sp.simplify(s) for s in sols]
+    if len(simplified) == 1:
+        return simplified[0]
+    # Only worth putting numbers through something small. A branch too big
+    # to evaluate quickly is left in the order SymPy gave it.
+    if max(sp.count_ops(e) for e in simplified) > 40:
+        return simplified
+    return sorted(simplified,
+                  key=lambda e: _branch_rank(e, equation, target))

@@ -4101,35 +4101,51 @@ class TestHvacAndSheetMetal(unittest.TestCase):
                                 {"SSB": "2.4", "BA": "2.714336"})
         self.assertGreater(deduction, 0)
 
-    def test_the_bend_maths_agrees_with_the_flat_pattern_generator(self):
-        """Checked against sheet_developer's bendmath.py where it is
-        available - the two must not drift apart."""
-        import sys as _sys
-        _sys.path.insert(0, r"C:\dev\sheet_developer")
-        try:
-            from sheetmetal.bendmath import BendSpec
-        except Exception:                             # noqa: BLE001
-            self.skipTest("sheet_developer not available here")
+    #: (thickness, inside radius, K, degrees, bend allowance, setback).
+    #:
+    #: These are what a flat-pattern generator gives for the same bends, and
+    #: they are also just BA = theta(R + KT) and SSB = tan(theta/2)(R + T)
+    #: evaluated by hand - so they can be checked by anyone reading them
+    #: without another program being installed.
+    BENDS = [
+        (1.2, 1.2, 0.44, 90, 2.714336052701581, 2.3999999999999995),
+        (2.0, 2.0, 0.44, 90, 4.523893421169302, 3.9999999999999996),
+        (1.0, 1.0, 0.44, 45, 1.1309733552923256, 0.8284271247461901),
+        (3.0, 3.0, 0.40, 135, 9.89601685880785, 14.48528137423857),
+    ]
 
-        for thickness, radius, k, degrees in [(1.2, 1.2, 0.44, 90),
-                                              (2.0, 2.0, 0.44, 90),
-                                              (1.0, 1.0, 0.44, 45),
-                                              (3.0, 3.0, 0.40, 135)]:
-            spec = BendSpec(thickness=thickness, inside_radius=radius,
-                            k_factor=k)
+    def test_the_bend_maths_gives_the_flat_pattern_values(self):
+        """A blank cut from a number worked out here has to fold to the size
+        the drawing says, so these are checked against fixed values rather
+        than against whatever the formula currently returns."""
+        for thickness, radius, k, degrees, allowance, setback in self.BENDS:
             theta = str(math.radians(degrees))
             with self.subTest(T=thickness, R=radius, angle=degrees):
-                allowance = self._value(
-                    "hvac_sheet_metal.bend_allowance", "BA",
-                    {"theta": theta, "R": str(radius), "K": str(k),
-                     "T": str(thickness)})
-                self.assertAlmostEqual(allowance,
-                                       spec.bend_allowance(degrees), places=9)
-                setback = self._value(
-                    "hvac_sheet_metal.bend_setback", "SSB",
-                    {"R": str(radius), "T": str(thickness), "theta": theta})
-                self.assertAlmostEqual(setback, spec.setback(degrees),
-                                       places=9)
+                self.assertAlmostEqual(
+                    self._value("hvac_sheet_metal.bend_allowance", "BA",
+                                {"theta": theta, "R": str(radius),
+                                 "K": str(k), "T": str(thickness)}),
+                    allowance, places=9)
+                self.assertAlmostEqual(
+                    self._value("hvac_sheet_metal.bend_setback", "SSB",
+                                {"R": str(radius), "T": str(thickness),
+                                 "theta": theta}),
+                    setback, places=9)
+
+    def test_those_values_are_the_textbook_formulae(self):
+        """And the values above are not magic - they are the formulae.
+
+        Worked out here from first principles so that a wrong constant in
+        the table would have to be wrong in two independent places.
+        """
+        for thickness, radius, k, degrees, allowance, setback in self.BENDS:
+            angle = math.radians(degrees)
+            with self.subTest(angle=degrees):
+                self.assertAlmostEqual(
+                    allowance, angle * (radius + k * thickness), places=12)
+                self.assertAlmostEqual(
+                    setback, math.tan(angle / 2) * (radius + thickness),
+                    places=12)
 
     def test_velocity_pressure(self):
         # 0.5 rho v^2 at 1.2 kg/m3 and 10 m/s is 60 Pa

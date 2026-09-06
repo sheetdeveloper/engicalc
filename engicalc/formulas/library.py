@@ -240,16 +240,27 @@ def _timed(func, *args, timeout: float = 6.0):
 
     SymPy occasionally disappears down a rabbit hole on an awkward
     rearrangement; the UI must not freeze while that happens.
+
+    The executor is deliberately not used as a context manager. Leaving the
+    `with` block calls shutdown(wait=True), which waits for the runaway call
+    to finish - so this returned None after the timeout as promised, but
+    only once the work it was giving up on had completed. A one second
+    timeout on an eight second call took eight seconds, and the window froze
+    for exactly as long as the timeout existed to prevent.
+
+    A Python thread cannot be killed from outside, so the abandoned one runs
+    to completion in the background. That is the price of the timeout being
+    real; it costs a core for a few seconds and nobody is waiting on it.
     """
     import concurrent.futures as cf
 
-    with cf.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(func, *args)
-        try:
-            return future.result(timeout=timeout)
-        except Exception:  # noqa: BLE001 - timeout, or SymPy gave up
-            pool.shutdown(wait=False, cancel_futures=True)
-            return None
+    pool = cf.ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(func, *args).result(timeout=timeout)
+    except Exception:  # noqa: BLE001 - timeout, or SymPy gave up
+        return None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _numeric_solve(formula: Formula, target: str, values: dict,
