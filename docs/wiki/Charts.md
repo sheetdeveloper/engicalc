@@ -561,26 +561,6 @@ answer is flagged as an estimate, because there the result depends on the
 pipe's history rather than on the numbers, and a chart that draws a
 confident line through it is drawing something nobody can predict.
 
-## Getting a chart out
-
-Every chart has four buttons under it.
-
-**Save chart** writes the picture. PNG for a report, and PDF or SVG sit
-beside it because a bending moment diagram that has to go on a drawing at A3
-should not be a photograph of one - the vector formats stay sharp at any
-size.
-
-**Copy chart** puts it on the clipboard, ready to paste straight into Word.
-
-**Copy numbers** puts the table underneath it on the clipboard as text.
-
-**Export** writes an Excel workbook with the numbers in it, and the chart
-alongside them. The picture is a picture - it does not recalculate - but a
-workbook of peak values with no diagram is rarely what anybody opens the
-file to see.
-
-The parametric study on the Simultaneous page has the same buttons.
-
 ## Material chart
 
 Two properties on logarithmic axes, every material drawn as the range it
@@ -678,3 +658,23 @@ Fracture toughness is on the chart at class level, where the spread is the
 message. It is deliberately not offered as a single grade value, because
 K_IC without a temperature and a thickness is close to meaningless and is
 the one entry that would read authoritative and not be.
+
+## Getting a chart out
+
+Every chart has four buttons under it.
+
+**Save chart** writes the picture. PNG for a report, and PDF or SVG sit
+beside it because a bending moment diagram that has to go on a drawing at A3
+should not be a photograph of one - the vector formats stay sharp at any
+size.
+
+**Copy chart** puts it on the clipboard, ready to paste straight into Word.
+
+**Copy numbers** puts the table underneath it on the clipboard as text.
+
+**Export** writes an Excel workbook with the numbers in it, and the chart
+alongside them. The picture is a picture - it does not recalculate - but a
+workbook of peak values with no diagram is rarely what anybody opens the
+file to see.
+
+The parametric study on the Simultaneous page has the same buttons.
