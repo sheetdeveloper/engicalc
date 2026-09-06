@@ -5009,6 +5009,238 @@ class TestMohrsCircle(unittest.TestCase):
         self.assertAlmostEqual(state.theta_p, 45.0, places=9)
 
 
+class TestQuantities(unittest.TestCase):
+    """A number that knows what it measures.
+
+    The whole point is the refusals. A calculator that adds a length to a
+    mass and gives a number has not helped anybody.
+    """
+
+    def _q(self, text):
+        from engicalc.core.quantity import Quantity
+        return Quantity.parse(text)
+
+    def test_a_unit_survives_being_read_and_written(self):
+        # Kept as it was written, not reduced to SI. An answer in
+        # kg/(m*s^2) where N/mm^2 was meant is a worse answer.
+        for text in ("50 mm", "250 N/mm^2", "4.18 J/(kg*K)", "1.2 kg/m^3",
+                     "45 W/(m*K)", "8503 cm^4", "9.81 m/s^2", "0.001 Pa*s"):
+            with self.subTest(text=text):
+                written = text.split(" ", 1)[1]
+                self.assertEqual(self._q(text).unit, written)
+
+    def test_it_says_what_the_unit_measures(self):
+        for text, measures in (("50 mm", "a length"),
+                               ("250 N/mm^2", "a pressure"),
+                               ("4.18 J/(kg*K)", "a specific heat"),
+                               ("1.2 kg/m^3", "a density"),
+                               ("8503 cm^4", "a second moment of area"),
+                               ("9.81 m/s^2", "an acceleration"),
+                               ("3", "nothing")):
+            with self.subTest(text=text):
+                self.assertEqual(self._q(text).measures(), measures)
+
+    def test_adding_converts_to_the_left_hand_unit(self):
+        got = self._q("5 m") + self._q("3 mm")
+        self.assertEqual(got.unit, "m")
+        self.assertAlmostEqual(got.value, 5.003, places=12)
+        # And the other way round it is the other unit, not a rule about
+        # which is smaller.
+        other = self._q("3 mm") + self._q("5 m")
+        self.assertEqual(other.unit, "mm")
+        self.assertAlmostEqual(other.value, 5003.0, places=9)
+
+    def test_the_units_multiply_and_divide_with_the_numbers(self):
+        from engicalc.core.quantity import Quantity
+
+        self.assertEqual(str(self._q("2 m") * self._q("3 m")), "6 m^2")
+        self.assertEqual(str(self._q("5000 N") / self._q("20 mm^2")),
+                         "250 N/mm^2")
+        self.assertEqual(str(Quantity(1.0, {}) / self._q("2 s")), "0.5 1/s")
+        self.assertEqual(str(self._q("4 m^2") ** Quantity(0.5, {})), "2 m")
+
+    def test_the_mistake_this_is_for(self):
+        # The same force over the same number of the wrong unit. Nothing
+        # in a bare 250 says which of these happened.
+        small = self._q("5000 N") / self._q("20 mm^2")
+        big = self._q("5000 N") / self._q("20 m^2")
+        self.assertEqual(small.unit, "N/mm^2")
+        self.assertEqual(big.unit, "N/m^2")
+        self.assertAlmostEqual(
+            small.to("Pa").value / big.to("Pa").value, 1e6, places=6)
+
+    def test_a_length_and_a_mass_will_not_be_added(self):
+        from engicalc.core.quantity import QuantityError
+
+        with self.assertRaises(QuantityError) as caught:
+            self._q("5 m") + self._q("3 kg")
+        said = str(caught.exception)
+        self.assertIn("a length", said)
+        self.assertIn("a mass", said)
+
+    def test_a_bare_number_is_not_quietly_given_a_unit(self):
+        from engicalc.core.quantity import QuantityError
+
+        # Assuming it meant millimetres is exactly what goes wrong.
+        with self.assertRaises(QuantityError):
+            self._q("2 m") + 5
+
+    def test_an_exponent_has_to_be_a_plain_number(self):
+        from engicalc.core.quantity import Quantity, QuantityError
+
+        with self.assertRaises(QuantityError):
+            Quantity(2.0, {}) ** self._q("3 m")
+
+    def test_a_logarithm_of_a_length_is_refused(self):
+        from engicalc.core import quantity
+
+        # It would depend on whether the length was measured in metres or
+        # in feet, which is what makes it meaningless rather than hard.
+        with self.assertRaises(quantity.QuantityError):
+            quantity.apply("log", self._q("2 m"))
+
+    def test_trigonometry_takes_an_angle_in_whatever_it_is_given(self):
+        from engicalc.core import quantity
+
+        self.assertAlmostEqual(
+            quantity.apply("sin", self._q("30 deg")).value, 0.5, places=12)
+        self.assertAlmostEqual(
+            quantity.apply("sin", self._q("0.5235987755982988")).value,
+            0.5, places=12)
+        with self.assertRaises(quantity.QuantityError):
+            quantity.apply("sin", self._q("2 m"))
+
+    def test_a_unit_that_cancels_is_seen_to_cancel(self):
+        # rho v d / mu is dimensionless, and comes out in kg/(mm s^2 Pa)
+        # if nothing reduces it - which is dimensionless and does not look
+        # it, because Pa and kg/(m s^2) are one thing under two names.
+        got = (self._q("998 kg/m^3") * self._q("2 m/s") * self._q("50 mm")
+               / self._q("0.001 Pa*s")).tidy()
+        self.assertTrue(got.plain)
+        self.assertAlmostEqual(got.value, 99800.0, places=6)
+
+    def test_two_names_for_one_thing_are_folded_together(self):
+        # mm^2*m is a real unit and a useless one.
+        got = (self._q("2 mm") * self._q("3 m")).tidy()
+        self.assertEqual(got.unit, "mm^2")
+        self.assertAlmostEqual(got.value, 6000.0, places=9)
+
+    def test_an_equivalent_is_offered_only_where_it_reads_better(self):
+        from engicalc.core.quantity import equivalents
+
+        # Three names down to one, same number: worth saying.
+        force = self._q("70 kg") * self._q("9.81 m/s^2")
+        self.assertEqual([str(one) for one in equivalents(force)],
+                         ["686.7 N"])
+        # Two names down to one, a thousand times the number: not worth
+        # saying, because the number stops being readable.
+        stress = self._q("65 kN/m^2")
+        self.assertEqual([], equivalents(stress))
+        # And a single named unit has nothing to offer.
+        self.assertEqual([], equivalents(self._q("5 N")))
+
+
+class TestUnitsThroughAnExpression(unittest.TestCase):
+    """Carrying the units through a calculation rather than beside it."""
+
+    def _evaluate(self, text, values, wanted=""):
+        from engicalc.core import dimensional
+        got = dimensional.evaluate(text, values)
+        return got.to(wanted) if wanted else got
+
+    def test_the_answer_comes_out_in_a_unit(self):
+        got = self._evaluate("F/A", {"F": "5000 N", "A": "20 mm^2"})
+        self.assertEqual(str(got), "250 N/mm^2")
+
+    def test_ordinary_engineering(self):
+        for text, values, wanted, expected in (
+                ("m*a", {"m": "70 kg", "a": "9.81 m/s^2"}, "N", 686.7),
+                ("pi*d^2/4", {"d": "50 mm"}, "mm^2", 1963.4954084936207),
+                ("rho*v^2/2", {"rho": "1.2 kg/m^3", "v": "20 m/s"}, "Pa",
+                 240.0),
+                ("m*c*(T2 - T1)", {"m": "2 kg", "c": "4180 J/(kg*K)",
+                                   "T2": "80 K", "T1": "20 K"}, "kJ", 501.6),
+                ("sqrt(2*g*h)", {"g": "9.81 m/s^2", "h": "3 m"}, "m/s",
+                 7.6720271122811),
+                ("W*L^3/(48*E*I)", {"W": "12 kN", "L": "6 m", "E": "210 GPa",
+                                    "I": "8503 cm^4"}, "mm",
+                 3.0241427399885),
+        ):
+            with self.subTest(text=text):
+                got = self._evaluate(text, values, wanted)
+                self.assertAlmostEqual(got.value / expected, 1.0, places=9)
+                self.assertEqual(got.unit, wanted)
+
+    def test_the_reynolds_number_comes_out_as_a_number(self):
+        got = self._evaluate("rho*v*d/mu",
+                             {"rho": "998 kg/m^3", "v": "2 m/s",
+                              "d": "50 mm", "mu": "0.001 Pa*s"})
+        self.assertTrue(got.plain)
+        self.assertAlmostEqual(got.value, 99800.0, places=6)
+
+    def test_E_and_I_are_the_names_that_were_given_values(self):
+        # Undeclared, E is Euler's number and I is the imaginary unit, and
+        # a beam deflection comes back complex.
+        got = self._evaluate("W*L^3/(48*E*I)",
+                             {"W": "12 kN", "L": "6 m", "E": "210 GPa",
+                              "I": "8503 cm^4"}, "mm")
+        self.assertAlmostEqual(got.value, 3.0241427399885, places=9)
+
+    def test_T1_and_T2_are_two_names_and_not_T_times_a_number(self):
+        got = self._evaluate("T2 - T1", {"T2": "80 K", "T1": "20 K"})
+        self.assertEqual(str(got), "60 K")
+
+    def test_a_sum_that_does_not_hold_together_says_where(self):
+        from engicalc.core.dimensional import DimensionError
+
+        with self.assertRaises(DimensionError) as caught:
+            self._evaluate("F/A + T", {"F": "5000 N", "A": "20 mm^2",
+                                       "T": "300 K"})
+        said = str(caught.exception)
+        self.assertIn("a temperature", said)
+        self.assertIn("a pressure", said)
+        # And which two terms, because on a long expression that is the
+        # only question worth answering.
+        self.assertIn("T", said)
+
+    def test_asking_for_the_answer_in_something_it_is_not(self):
+        from engicalc.core import dimensional
+
+        # Through describe, which is how a caller asks for an answer in a
+        # particular unit, and which turns the refusal into its own kind.
+        answer = dimensional.evaluate("F/A", {"F": "5000 N",
+                                              "A": "20 mm^2"})
+        with self.assertRaises(dimensional.DimensionError):
+            dimensional.describe(answer, "m")
+
+    def test_dividing_by_a_zero_is_a_sentence_and_not_a_traceback(self):
+        from engicalc.core.dimensional import DimensionError
+
+        # F/A arrives as F * A**-1, so a zero area never reaches the
+        # division at all - it reaches a negative power of nothing.
+        with self.assertRaises(DimensionError):
+            self._evaluate("F/A", {"F": "5000 N", "A": "0 mm^2"})
+
+    def test_a_name_with_no_value_is_named(self):
+        from engicalc.core.dimensional import DimensionError
+
+        with self.assertRaises(DimensionError) as caught:
+            self._evaluate("F/A", {"F": "5000 N"})
+        self.assertIn("A", str(caught.exception))
+
+    def test_what_it_will_come_out_in_before_there_are_numbers(self):
+        from engicalc.core import dimensional
+
+        for text, values, unit in (
+                ("F/A", {"F": "1 N", "A": "1 mm^2"}, "N/mm^2"),
+                ("m*c*dT", {"m": "1 kg", "c": "1 J/(kg*K)", "dT": "1 K"},
+                 "J"),
+                ("rho*v*d/mu", {"rho": "1 kg/m^3", "v": "1 m/s",
+                                "d": "1 m", "mu": "1 Pa*s"}, "")):
+            with self.subTest(text=text):
+                self.assertEqual(dimensional.check(text, values), unit)
+
+
 class TestAxialMembers(unittest.TestCase):
     """Bars held at both ends, and what heating them does."""
 

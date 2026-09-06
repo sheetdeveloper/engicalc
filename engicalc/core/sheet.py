@@ -10,9 +10,16 @@ A sheet is a list of named steps evaluated top to bottom. Each step defines a
 name, and any step may use the names defined above it. Nothing may use a name
 defined below it: a sheet reads downwards, like the page it stands in for.
 
-Each step carries its own unit, so a diameter declared in mm is stored in mm
-and used as mm, and :mod:`core.units` converts when a value arrives in
-something else.
+Each step carries its own unit, and the unit is carried through the
+arithmetic rather than written beside it. A row computing ``pi*d^2/4`` from
+a diameter in millimetres comes out in mm^2 because that is what it is, and
+a row that declares m^2 for it is told so rather than believed. A row that
+declares nothing is given whatever the expression produced.
+
+That is the whole of the difference between a unit as a label and a unit as
+a fact, and it is where the mistakes are: mixing millimetres and metres is
+the commonest error in engineering arithmetic and a labelled sheet cannot
+see it.
 
 The whole sheet evaluates to a list of :class:`StepResult`, and a step that
 fails does not stop the ones after it - it is reported and the rest carry on,
@@ -28,9 +35,11 @@ from dataclasses import dataclass, field
 
 import sympy as sp
 
+from . import dimensional
 from . import units as unit_tools
 from .display import fmt, fmt_number
 from .parsing import ParseError, canonical_name, parse_input
+from .quantity import Quantity, QuantityError
 
 #: Checked against the canonical spelling, which is always
 #: ASCII however the name was typed.
@@ -61,13 +70,22 @@ class SheetStep:
 @dataclass
 class StepResult:
     step: SheetStep
-    value: object = None          # SymPy number, or None if it failed
+    value: object = None          # the magnitude, in ``unit`` below
     error: str = ""
     note: str = ""                # a unit conversion, or another remark
+    #: What the row actually came out in. The declared unit where there is
+    #: one and it fits; otherwise whatever the arithmetic produced.
+    unit: str = ""
+    quantity: object = None       # the answer with its unit attached
 
     @property
     def ok(self) -> bool:
         return self.error == ""
+
+    @property
+    def derived(self) -> bool:
+        """True when the row was given its unit rather than declaring one."""
+        return bool(self.unit) and not self.step.unit
 
     def text(self) -> str:
         if not self.ok:
@@ -75,7 +93,7 @@ class StepResult:
         shown = fmt_number(self.value) if getattr(self.value, "is_number",
                                                   False) else fmt(self.value)
         return f"{self.step.name} = {shown}" + (
-            f" {self.step.unit}" if self.step.unit else "")
+            f" {self.unit}" if self.unit else "")
 
 
 @dataclass
@@ -144,28 +162,61 @@ class Sheet:
                 result.error = f"Could not work this out: {exc}"
                 continue
 
-            result.value = value
+            # Kept in kelvin and shown in whatever the row asked for.
+            # Degrees Celsius is an offset rather than a scale, so there
+            # is nothing sensible to multiply or divide it by - every row
+            # below this one wants the kelvin.
+            result.quantity = value
+            result.unit = value.unit
+            result.value = sp.Float(value.value)
+            if step.unit in unit_tools.CELSIUS and value.unit == "K":
+                result.unit = step.unit
+                result.value = sp.Float(value.value
+                                        - float(unit_tools.ABSOLUTE_ZERO))
             result.note = note
             known[name] = value
 
         return results
 
     def _evaluate_step(self, step: SheetStep, known: dict):
-        """One step, against the names defined above it."""
+        """One step, against the names defined above it.
+
+        Returns the answer as a :class:`~core.quantity.Quantity`, so the
+        next step down inherits a unit rather than a bare number.
+        """
         text = step.expression
         note = ""
 
-        # A plain value may carry its own unit: "50 mm" in a step declared mm
-        # stays 50; in one declared m it becomes 0.05.
+        # A plain value may carry its own unit: "50 mm" in a step declared
+        # mm stays 50; in one declared m it becomes 0.05.
         value_text, given_unit = unit_tools.split_quantity(text)
-        if given_unit and step.unit and not _looks_like_expression(value_text):
-            converted, note = unit_tools.to_declared(text, step.unit)
-            return sp.nsimplify(converted, rational=False), note
+        if not _looks_like_expression(value_text):
+            typed = Quantity.parse(text)
+            if not given_unit and step.unit:
+                # A number typed into a row that declares a unit is in
+                # that unit. That is what declaring one is for, and it is
+                # how nearly every given on a sheet is written.
+                return Quantity.of(typed.value, step.unit), note
+            if given_unit and step.unit and given_unit != step.unit:
+                _converted, note = unit_tools.to_declared(
+                    text, step.unit, absolute=True)
+            # A value typed into a row is a temperature, not a difference:
+            # 20 degC in a row declared K is 293.15. A row that works one
+            # out is genuinely ambiguous and is asked about instead.
+            return self._in_declared(step, typed, absolute=True), note
 
         # A sheet knows what its rows are called, so it says so. Otherwise
         # the parser splits the name into a product - T1 becomes T times 1,
-        # which is T, and Re becomes R times e - and the sheet quietly works
-        # out something other than what it says.
+        # which is T, and Re becomes R times e - and the sheet quietly
+        # works out something other than what it says.
+        # A unit written on a number inside the expression - T - 5 K, or
+        # 2 m + 300 mm - is pulled out and given a name, so what is left
+        # is ordinary algebra. A row name always wins over a unit of the
+        # same spelling.
+        text, literals = dimensional.lift_units(text, known)
+        known = dict(known)
+        known.update(literals)
+
         declared = {name: sp.Symbol(name) for name in known}
         for other in self.steps:
             declared.setdefault(canonical_name(other.name),
@@ -186,9 +237,50 @@ class Sheet:
             raise ParseError(
                 "Nothing here defines " + ", ".join(unknown) + "." + hint)
 
-        substituted = expression.subs(
-            {sp.Symbol(name): value for name, value in known.items()})
-        return sp.simplify(substituted), note
+        return self._in_declared(step,
+                                 dimensional.walk(expression, known).tidy()), note
+
+    @staticmethod
+    def _in_declared(step: SheetStep, answer: "Quantity",
+                     absolute: bool | None = None) -> "Quantity":
+        """The answer in the unit the row declares, or a reason it cannot be.
+
+        A row that declares nothing takes what it was given. A row that
+        declares something has to be able to hold it - and where it cannot,
+        the message says what the row actually comes out in, because that
+        is the thing the person writing the sheet did not know.
+        """
+        if not step.unit:
+            return answer
+        if step.unit in unit_tools.CELSIUS and answer.plain:
+            # A number typed into a row that says degC is a temperature in
+            # degC, and is held as one.
+            return Quantity.of(answer.value + float(unit_tools.ABSOLUTE_ZERO),
+                               "K")
+        if step.unit in unit_tools.CELSIUS:
+            # Held in kelvin; the row's own display turns it back. Asking
+            # to_declared for it here would raise the ambiguity, and the
+            # ambiguity does not arise: a row that says degC is showing a
+            # temperature, not a rise.
+            if answer.unit == "K":
+                return answer
+            raise ParseError(
+                f"This row says {step.unit}, but it works out to "
+                f"{answer.unit or 'a plain number'} - "
+                f"{answer.measures()} rather than a temperature.")
+        try:
+            touches_celsius = (answer.unit in unit_tools.CELSIUS
+                               or step.unit in unit_tools.CELSIUS)
+            return answer.to(step.unit,
+                             absolute=absolute if touches_celsius else False)
+        except QuantityError as exc:
+            raise ParseError(
+                f"This row says {step.unit}, but it works out to "
+                f"{answer.unit or 'a plain number'}"
+                + (f" - {answer.measures()} rather than "
+                   f"{Quantity.of(1.0, step.unit).measures()}."
+                   if answer.unit else ".")
+                + f" ({exc})") from exc
 
     # -- storage ----------------------------------------------------------
     def to_dict(self) -> dict:
@@ -229,7 +321,8 @@ def blocks_for(sheet: Sheet, results: list) -> list:
     rows = [(sheet.title, None, None)]
     for result in results:
         step = result.step
-        heading = step.name + (f"  [{step.unit}]" if step.unit else "")
+        unit = getattr(result, "unit", "") or step.unit
+        heading = step.name + (f"  [{unit}]" if unit else "")
         if not result.ok:
             rows.append((heading, None, "! " + result.error))
             continue
