@@ -668,6 +668,16 @@ class MathField(tk.Canvas):
 
     PAD_X = 10
 
+    #: The bar is as tall as what is in it, between these. A definite
+    #: integral with limits is half as tall again as a line of algebra,
+    #: and at a fixed height its upper limit is simply cut off - which
+    #: looks like a drawing bug and is one. The cap stops a deeply nested
+    #: fraction from taking over the window; past it the bar scrolls
+    #: rather than growing further.
+    MIN_HEIGHT = 62
+    MAX_HEIGHT = 150
+    MARGIN = 8
+
     def __init__(self, master, on_change=None, on_submit=None,
                  fontsize: int = 17, colour: str = "#111111",
                  background: str = "#ffffff", height: int = 62, **kwargs):
@@ -976,6 +986,7 @@ class MathField(tk.Canvas):
 
         self._image_width = width
         self._image_baseline = baseline
+        height = self._fit(image_height, height)
         spot = self._caret_spot() if self.focus_get() is self else None
         if follow_caret and spot is not None:
             self._scroll_x = self._clamp_scroll(self._keep_visible(spot[0]))
@@ -995,6 +1006,20 @@ class MathField(tk.Canvas):
         if self._image_width - self._scroll_x > \
                 max(self.winfo_width(), 1) - 2 * self.PAD_X:
             self._draw_edge_fade(height, "right")
+
+    def _fit(self, image_height: int, height: int) -> int:
+        """Grow or shrink the bar to what is being drawn in it.
+
+        Reconfiguring fires <Configure>, which draws again - but by then
+        the height is already right, so nothing changes and it stops. One
+        extra pass, not a loop.
+        """
+        wanted = min(max(image_height + 2 * self.MARGIN, self.MIN_HEIGHT),
+                     self.MAX_HEIGHT)
+        if abs(wanted - int(self["height"])) > 1:
+            self.configure(height=wanted)
+            return max(wanted, height)
+        return height
 
     def _keep_visible(self, caret_x: float) -> float:
         """Scroll just enough to bring the caret back into view."""

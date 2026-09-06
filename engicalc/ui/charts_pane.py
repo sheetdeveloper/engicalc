@@ -22,7 +22,7 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Arc, Rectangle
 
-from ..core import (beams, buckling, materials, motion, moody,
+from ..core import (beams, buckling, geometry, materials, motion, moody,
                     section_table, sections, tensile, torsion,
                     trusses, vessels)
 from ..core.display import fmt_number
@@ -2362,6 +2362,453 @@ class MaterialsTab(ChartTab):
         return said
 
 
+# --------------------------------------------------------------------------
+class GeometryTab(ChartTab):
+    """Triangles, arcs and crossings - drawn, and solved from a few parts.
+
+    Section properties live on the Section tab; this is the setting-out
+    side of geometry, where the question is what the shape is rather than
+    what it does.
+    """
+
+    title = "Geometry"
+    hint = "solve a triangle, an arc, or where two things cross"
+
+    PROBLEMS = ("Triangle", "Arc", "Two lines", "Line and circle",
+                "Two circles", "Tangents from a point",
+                "Circle through three points")
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        ttk.Label(first, text="Problem").pack(side="left")
+        self.problem = tk.StringVar(value=self.PROBLEMS[0])
+        box = ttk.Combobox(first, state="readonly", width=26,
+                           textvariable=self.problem, values=self.PROBLEMS)
+        box.pack(side="left", padx=(4, 14))
+        box.bind("<<ComboboxSelected>>", lambda e: self._problem_changed())
+
+        self.forms = {}
+        holder = ttk.Frame(parent)
+        holder.pack(fill="x", pady=(6, 0))
+        self.form_holder = holder
+
+        # -- the triangle: any three of the six, the rest left empty ------
+        frame = ttk.Frame(holder)
+        self.forms["Triangle"] = frame
+        top = ttk.Frame(frame)
+        top.pack(fill="x")
+        self.side_a = self.field(top, "a", "3")
+        self.side_b = self.field(top, "b", "4")
+        self.side_c = self.field(top, "c", "5")
+        self.angle_A = self.field(top, "A", "", "deg")
+        self.angle_B = self.field(top, "B", "", "deg")
+        self.angle_C = self.field(top, "C", "", "deg")
+        ttk.Label(top, text="fill any three - a capital angle faces the "
+                            "small side of the same letter",
+                  style="Hint.TLabel").pack(side="left", padx=(6, 0))
+
+        # -- the arc: any two of the five --------------------------------
+        frame = ttk.Frame(holder)
+        self.forms["Arc"] = frame
+        top = ttk.Frame(frame)
+        top.pack(fill="x")
+        self.arc_R = self.field(top, "radius", "")
+        self.arc_theta = self.field(top, "angle", "", "deg")
+        self.arc_L = self.field(top, "arc length", "")
+        self.arc_chord = self.field(top, "chord", "2000")
+        self.arc_rise = self.field(top, "rise", "250")
+        ttk.Label(top, text="fill any two", style="Hint.TLabel").pack(
+            side="left", padx=(6, 0))
+
+        # -- two lines ---------------------------------------------------
+        frame = ttk.Frame(holder)
+        self.forms["Two lines"] = frame
+        top = ttk.Frame(frame)
+        top.pack(fill="x")
+        ttk.Label(top, text="first through").pack(side="left", padx=(0, 6))
+        self.line1 = [self.field(top, name, value, width=8) for name, value
+                      in (("x1", "0"), ("y1", "0"), ("x2", "10"),
+                          ("y2", "10"))]
+        bottom = ttk.Frame(frame)
+        bottom.pack(fill="x", pady=(4, 0))
+        ttk.Label(bottom, text="second through").pack(side="left", padx=(0, 6))
+        self.line2 = [self.field(bottom, name, value, width=8) for name, value
+                      in (("x1", "0"), ("y1", "10"), ("x2", "10"),
+                          ("y2", "0"))]
+
+        # -- a line and a circle -----------------------------------------
+        frame = ttk.Frame(holder)
+        self.forms["Line and circle"] = frame
+        top = ttk.Frame(frame)
+        top.pack(fill="x")
+        ttk.Label(top, text="line through").pack(side="left", padx=(0, 6))
+        self.lc_line = [self.field(top, name, value, width=8) for name, value
+                        in (("x1", "-10"), ("y1", "3"), ("x2", "10"),
+                            ("y2", "3"))]
+        bottom = ttk.Frame(frame)
+        bottom.pack(fill="x", pady=(4, 0))
+        ttk.Label(bottom, text="circle at").pack(side="left", padx=(0, 6))
+        self.lc_circle = [self.field(bottom, name, value, width=8)
+                          for name, value in (("x", "0"), ("y", "0"))]
+        self.lc_radius = self.field(bottom, "radius", "5", width=8)
+
+        # -- two circles --------------------------------------------------
+        frame = ttk.Frame(holder)
+        self.forms["Two circles"] = frame
+        top = ttk.Frame(frame)
+        top.pack(fill="x")
+        ttk.Label(top, text="first at").pack(side="left", padx=(0, 6))
+        self.cc_one = [self.field(top, name, value, width=8) for name, value
+                       in (("x", "0"), ("y", "0"))]
+        self.cc_one_r = self.field(top, "radius", "5", width=8)
+        bottom = ttk.Frame(frame)
+        bottom.pack(fill="x", pady=(4, 0))
+        ttk.Label(bottom, text="second at").pack(side="left", padx=(0, 6))
+        self.cc_two = [self.field(bottom, name, value, width=8)
+                       for name, value in (("x", "8"), ("y", "0"))]
+        self.cc_two_r = self.field(bottom, "radius", "5", width=8)
+
+        # -- tangents from a point ---------------------------------------
+        frame = ttk.Frame(holder)
+        self.forms["Tangents from a point"] = frame
+        top = ttk.Frame(frame)
+        top.pack(fill="x")
+        ttk.Label(top, text="from").pack(side="left", padx=(0, 6))
+        self.tan_point = [self.field(top, name, value, width=8)
+                          for name, value in (("x", "10"), ("y", "0"))]
+        ttk.Label(top, text="to the circle at").pack(side="left", padx=(6, 6))
+        self.tan_centre = [self.field(top, name, value, width=8)
+                           for name, value in (("x", "0"), ("y", "0"))]
+        self.tan_radius = self.field(top, "radius", "6", width=8)
+
+        # -- the circle through three points -----------------------------
+        frame = ttk.Frame(holder)
+        self.forms["Circle through three points"] = frame
+        top = ttk.Frame(frame)
+        top.pack(fill="x")
+        self.three = []
+        for n, (x, y) in enumerate((("0", "0"), ("10", "0"), ("0", "10")),
+                                   start=1):
+            ttk.Label(top, text=f"point {n}").pack(side="left", padx=(0, 4))
+            self.three.append([self.field(top, "x", x, width=8),
+                               self.field(top, "y", y, width=8)])
+
+        self._problem_changed()
+
+    def _problem_changed(self) -> None:
+        for name, frame in self.forms.items():
+            frame.pack_forget()
+        self.forms[self.problem.get()].pack(fill="x")
+        self.refresh()
+
+    # -- reading the form --------------------------------------------------
+    def _maybe(self, variable) -> float | None:
+        """A number, or None where the box was left empty on purpose."""
+        text = variable.get().strip()
+        if not text:
+            return None
+        value = parse_number(text)
+        if value is None:
+            raise ParseError(f"{text!r} is not a number.")
+        return float(value)
+
+    def _point(self, pair) -> tuple:
+        return (self.number(pair[0], "x"), self.number(pair[1], "y"))
+
+    def _line(self, four) -> tuple:
+        return geometry.line_through(
+            (self.number(four[0], "x1"), self.number(four[1], "y1")),
+            (self.number(four[2], "x2"), self.number(four[3], "y2")))
+
+    # -- drawing -----------------------------------------------------------
+    def draw(self) -> tuple:
+        self.figure.clear()
+        self.axes = self.figure.add_subplot(111)
+        # A circle has to look like a circle and a right angle like a right
+        # angle, or the drawing is telling a different story from the
+        # numbers beside it.
+        self.axes.set_aspect("equal", adjustable="datalim")
+        self.axes.grid(True, alpha=0.25, linestyle=":")
+        self.axes.tick_params(labelsize=7)
+        return getattr(self, "_draw_" + _slug(self.problem.get()))()
+
+    def layout(self) -> None:
+        self.figure.tight_layout()
+
+    # -- triangles ---------------------------------------------------------
+    def _draw_triangle(self) -> tuple:
+        given = {}
+        for name, variable in (("a", self.side_a), ("b", self.side_b),
+                               ("c", self.side_c)):
+            value = self._maybe(variable)
+            if value is not None:
+                given[name] = value
+        for name, variable in (("A", self.angle_A), ("B", self.angle_B),
+                               ("C", self.angle_C)):
+            value = self._maybe(variable)
+            if value is not None:
+                given[name] = math.radians(value)
+
+        found = geometry.solve_triangle(given)
+        rows = []
+        for n, triangle in enumerate(found):
+            self._one_triangle(triangle, n, len(found))
+            if len(found) > 1:
+                rows.append((f"-- the {triangle.which} one --", "", ""))
+            rows.extend(triangle.rows())
+
+        notes = []
+        if len(found) > 1:
+            notes.append(geometry.why_ambiguous(given))
+        else:
+            shape = [word for word, yes in
+                     (("right angled", found[0].right_angled),
+                      ("obtuse", found[0].obtuse),
+                      ("isosceles", found[0].isosceles)) if yes]
+            if shape:
+                notes.append("It is " + " and ".join(shape) + ".")
+        return rows, notes
+
+    def _one_triangle(self, triangle, n: int, of: int) -> None:
+        corners = triangle.corners()
+        colour = "#1f4e79" if n == 0 else "#c00000"
+        closed = corners + [corners[0]]
+        self.axes.plot([x for x, _y in closed], [y for _x, y in closed],
+                       color=colour, linewidth=1.6,
+                       linestyle="-" if n == 0 else "--",
+                       label=triangle.which or None)
+        self.axes.fill([x for x, _y in corners], [y for _x, y in corners],
+                       color=colour, alpha=0.08)
+        # The vertex letters, pushed out from the middle so they do not sit
+        # on the lines they belong to.
+        middle = (sum(x for x, _y in corners) / 3.0,
+                  sum(y for _x, y in corners) / 3.0)
+        size = max(triangle.a, triangle.b, triangle.c)
+        for letter, (x, y) in zip("ABC", corners):
+            away = math.hypot(x - middle[0], y - middle[1]) or 1.0
+            self.axes.annotate(
+                letter, (x + (x - middle[0]) / away * size * 0.06,
+                         y + (y - middle[1]) / away * size * 0.06),
+                fontsize=8, ha="center", va="center", color=colour)
+        # And the side lengths at the midpoints of the sides they measure.
+        for name, (one, other) in zip("cab", ((0, 1), (1, 2), (2, 0))):
+            if of > 1 and n == 1:
+                continue
+            x = 0.5 * (corners[one][0] + corners[other][0])
+            y = 0.5 * (corners[one][1] + corners[other][1])
+            self.axes.annotate(f"{name} = {getattr(triangle, name):.4g}",
+                               (x, y), fontsize=6.5, ha="center",
+                               va="center", color="#333333",
+                               bbox=dict(boxstyle="round,pad=0.15",
+                                         facecolor="white", alpha=0.75,
+                                         edgecolor="none"))
+        if of > 1:
+            self.axes.legend(loc="upper right", fontsize=7)
+
+    # -- arcs --------------------------------------------------------------
+    def _draw_arc(self) -> tuple:
+        given = {"R": self._maybe(self.arc_R),
+                 "L": self._maybe(self.arc_L),
+                 "chord": self._maybe(self.arc_chord),
+                 "rise": self._maybe(self.arc_rise)}
+        angle = self._maybe(self.arc_theta)
+        if angle is not None:
+            given["theta"] = math.radians(angle)
+
+        found = geometry.solve_arc(given)
+        rows = []
+        for n, arc in enumerate(found):
+            self._one_arc(arc, n)
+            if len(found) > 1:
+                rows.append((f"-- the {arc.which} arc --", "", ""))
+            rows.extend(arc.rows())
+
+        notes = []
+        if len(found) > 1:
+            if "chord" in given and given.get("R"):
+                notes.append(
+                    "A chord cuts the circle in two, and both pieces are "
+                    "arcs of it - so a radius and a chord describe two "
+                    "arcs, not one. Give the angle or the rise to say "
+                    "which.")
+            else:
+                notes.append(
+                    f"Two arcs have that length with that rise. The ratio "
+                    f"of an arc to its rise falls to "
+                    f"{geometry.SHALLOWEST:.4f} at an included angle of "
+                    f"{math.degrees(geometry.TURNS_AT):.1f} degrees and "
+                    f"climbs back, so a ratio between that and pi belongs "
+                    f"to two different arcs.")
+        elif found[0].major:
+            notes.append("This is the major arc - it goes the long way "
+                         "round.")
+        return rows, notes
+
+    def _one_arc(self, arc, n: int) -> None:
+        colour = "#1f4e79" if n == 0 else "#c00000"
+        # The chord is put down first and the centre falls where it falls -
+        # which for the major arc is above the chord rather than below it.
+        # Centring each arc on its own middle instead would draw the two
+        # answers to "a radius and a chord" with their chords in different
+        # places, when the whole point is that it is the same chord.
+        centre = (0.0, arc.rise - arc.R)
+        angles = np.linspace(math.pi / 2 - arc.theta / 2,
+                             math.pi / 2 + arc.theta / 2, 400)
+        self.axes.plot(centre[0] + arc.R * np.cos(angles),
+                       centre[1] + arc.R * np.sin(angles),
+                       color=colour, linewidth=1.8,
+                       linestyle="-" if n == 0 else "--",
+                       label=arc.which or None)
+        half = arc.chord / 2.0
+        self.axes.plot([-half, half], [0.0, 0.0], color=colour,
+                       linewidth=1.0, alpha=0.6)
+        # The rise, straight up from the middle of the chord to the arc.
+        self.axes.plot([0.0, 0.0], [0.0, arc.rise], color="#666666",
+                       linewidth=0.9, linestyle=":")
+        self.axes.plot([centre[0]], [centre[1]], marker="+", color=colour,
+                       markersize=8)
+        if n == 0:
+            self.axes.annotate(f"  rise {arc.rise:.4g}", (0.0, arc.rise / 2),
+                               fontsize=6.5, ha="left", va="center",
+                               color="#333333")
+            self.axes.annotate(f"chord {arc.chord:.4g}", (0.0, 0.0),
+                               fontsize=6.5, ha="center", va="top",
+                               color="#333333")
+        if arc.which:
+            self.axes.legend(loc="lower right", fontsize=7)
+
+    # -- crossings ---------------------------------------------------------
+    def _draw_two_lines(self) -> tuple:
+        first, second = self._line(self.line1), self._line(self.line2)
+        found = geometry.cross_lines(first, second)
+        span = self._window([self._point(self.line1[:2]),
+                             self._point(self.line1[2:]),
+                             self._point(self.line2[:2]),
+                             self._point(self.line2[2:])])
+        for line, colour in ((first, "#1f4e79"), (second, "#c00000")):
+            self._plot_line(line, span, colour)
+        self._mark(found.points)
+        return self._crossing_rows(found, "the two lines")
+
+    def _draw_line_and_circle(self) -> tuple:
+        line = self._line(self.lc_line)
+        centre = self._point(self.lc_circle)
+        radius = self.number(self.lc_radius, "the radius")
+        found = geometry.cross_line_circle(line, centre, radius)
+        self._plot_circle(centre, radius, "#c00000")
+        self._plot_line(line, self._window(
+            [self._point(self.lc_line[:2]), self._point(self.lc_line[2:]),
+             (centre[0] - radius, centre[1] - radius),
+             (centre[0] + radius, centre[1] + radius)]), "#1f4e79")
+        self._mark(found.points)
+        return self._crossing_rows(found, "the line and the circle")
+
+    def _draw_two_circles(self) -> tuple:
+        one, two = self._point(self.cc_one), self._point(self.cc_two)
+        first = self.number(self.cc_one_r, "the first radius")
+        second = self.number(self.cc_two_r, "the second radius")
+        found = geometry.cross_circles(one, first, two, second)
+        self._plot_circle(one, first, "#1f4e79")
+        self._plot_circle(two, second, "#c00000")
+        self._mark(found.points)
+        rows, notes = self._crossing_rows(found, "the two circles")
+        apart = math.hypot(two[0] - one[0], two[1] - one[1])
+        rows.append(("centres apart", apart, ""))
+        return rows, notes
+
+    def _draw_tangents_from_a_point(self) -> tuple:
+        point = self._point(self.tan_point)
+        centre = self._point(self.tan_centre)
+        radius = self.number(self.tan_radius, "the radius")
+        found = geometry.tangent_from_point(point, centre, radius)
+        self._plot_circle(centre, radius, "#c00000")
+        self.axes.plot([point[0]], [point[1]], marker="o", markersize=5,
+                       color="#1f4e79")
+        for x, y in found.points:
+            self.axes.plot([point[0], x], [point[1], y], color="#1f4e79",
+                           linewidth=1.4)
+        self._mark(found.points)
+        rows, notes = self._crossing_rows(
+            found, "the tangents",
+            twice="Two tangents, touching at these two points - which is "
+                  "what a point outside a circle always has.")
+        if found:
+            length = geometry.tangent_length(point, centre, radius)
+            rows.insert(0, ("tangent length", length, ""))
+            notes.append(
+                "The two touch points, the centre and the point all lie on "
+                "one circle, because a tangent meets the radius square - so "
+                "this is a circle crossing a circle, and needs no arithmetic "
+                "of its own.")
+        return rows, notes
+
+    def _draw_circle_through_three_points(self) -> tuple:
+        points = [self._point(pair) for pair in self.three]
+        centre, radius = geometry.circle_through(*points)
+        self._plot_circle(centre, radius, "#1f4e79")
+        self.axes.plot([x for x, _y in points], [y for _x, y in points],
+                       linestyle="none", marker="o", markersize=5,
+                       color="#c00000")
+        self.axes.plot([centre[0]], [centre[1]], marker="+", markersize=9,
+                       color="#1f4e79")
+        rows = [("centre x", centre[0], ""), ("centre y", centre[1], ""),
+                ("radius", radius, ""), ("diameter", 2 * radius, ""),
+                ("circumference", 2 * math.pi * radius, "")]
+        return rows, ["The centre is where the perpendicular bisectors of "
+                      "two of the chords cross, which is the same line "
+                      "crossing as the first problem on this tab."]
+
+    # -- the drawing odds and ends ----------------------------------------
+    def _window(self, points) -> tuple:
+        xs = [x for x, _y in points]
+        ys = [y for _x, y in points]
+        pad = max(max(xs) - min(xs), max(ys) - min(ys), 1.0) * 0.25
+        return (min(xs) - pad, max(xs) + pad, min(ys) - pad, max(ys) + pad)
+
+    def _plot_line(self, line, span, colour) -> None:
+        """Draw Ax + By = C across the window, upright lines included."""
+        a, b, c = line
+        left, right, bottom, top = span
+        if abs(b) < 1e-12:
+            x = c / a
+            self.axes.plot([x, x], [bottom, top], color=colour, linewidth=1.4)
+            return
+        self.axes.plot([left, right],
+                       [(c - a * left) / b, (c - a * right) / b],
+                       color=colour, linewidth=1.4)
+
+    def _plot_circle(self, centre, radius, colour) -> None:
+        angles = np.linspace(0, 2 * math.pi, 400)
+        self.axes.plot(centre[0] + radius * np.cos(angles),
+                       centre[1] + radius * np.sin(angles),
+                       color=colour, linewidth=1.4)
+        self.axes.plot([centre[0]], [centre[1]], marker="+", markersize=7,
+                       color=colour)
+
+    def _mark(self, points) -> None:
+        for n, (x, y) in enumerate(points, start=1):
+            self.axes.plot([x], [y], marker="o", markersize=6,
+                           color="#107C41", zorder=5)
+            self.axes.annotate(f"  {n}" if len(points) > 1 else "", (x, y),
+                               fontsize=8, color="#107C41")
+
+    def _crossing_rows(self, found, what: str, twice: str = "") -> tuple:
+        if not found:
+            return ([(what, "do not cross", "")],
+                    [found.note.capitalize() + "."])
+        notes = [found.note.capitalize() + "."] if found.note else []
+        if len(found.points) == 2 and not notes:
+            notes.append(twice or
+                         f"Two crossings, and which is wanted is not in the "
+                         f"numbers - {what} really do meet twice.")
+        return found.rows(), notes
+
+
+def _slug(name: str) -> str:
+    return name.lower().replace(" ", "_")
+
+
 CHARTS = [
     ("  Stress and strain  ", TensileTab),
     ("  Beam  ", BeamTab),
@@ -2372,6 +2819,7 @@ CHARTS = [
     ("  Stress state  ", MohrTab),
     ("  Pressure vessel  ", VesselTab),
     ("  Truss  ", TrussTab),
+    ("  Geometry  ", GeometryTab),
     ("  Material chart  ", MaterialsTab),
     ("  Moody  ", MoodyTab),
 ]

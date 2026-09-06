@@ -76,6 +76,39 @@ def main() -> None:
     app.update()
     app.update_idletasks()
 
+    # -- the calculator, on the definite integral -------------------------
+    # The picture at the top of the README. The integral is the one that
+    # shows the most in one frame: a real integral sign in the entry bar,
+    # the area it measures shaded underneath with the negative part
+    # hatched, and the working beside it naming the rule before applying
+    # it.
+    top_tab(app, "Calculator")
+    app.calculator_pane.show_calculator()
+    calculator = app.calculator_tab
+    calculator.input_var.set("2x")
+    app.update_idletasks()
+    # Built the way a user builds it: type the integrand, press the
+    # definite integral button, and Tab between the limit boxes. Setting
+    # the text alone would leave a plain "2x" in the bar and lose the one
+    # thing this picture is of.
+    calculator.field.insert_template("defint")
+    calculator.op_var.set("integral")
+    calculator._sync_options()
+    calculator.field.insert_text("-1.6")
+    calculator.field._hop(1)
+    calculator.field.insert_text("2.4")
+    calculator.field._hop(1)
+    calculator.field._hop(1)
+    calculator.field.insert_text("x")
+    app.update_idletasks()
+    calculator.lower_var.set("-1.6")
+    calculator.upper_var.set("2.4")
+    calculator.var_var.set("x")
+    calculator.result = calculate("2x", "integral", "x",
+                                  lower="-1.6", upper="2.4")
+    calculator._show(calculator.result)
+    grab(app, "calculator.png")
+
     # -- equations solved together, typeset -------------------------------
     top_tab(app, "Calculator")
     app.calculator_pane.show_simultaneous()
@@ -116,7 +149,75 @@ def main() -> None:
     calculator.result = calculate("2x", "integral", "x")
     calculator._show(calculator.result)
     grab(app, "working.png")
+
+    # -- an inequality, and a differential equation -----------------------
+    # Both show their working, which is most of what makes them worth a
+    # picture: an inequality is not one root but an interval, and an ODE
+    # goes general solution then conditions then particular.
+    calculator.input_var.set("x^2 <= 9")
+    calculator.op_var.set("solve")
+    calculator._sync_options()
+    calculator.result = calculate("x^2 <= 9", "solve", "x")
+    calculator._show(calculator.result)
+    grab(app, "inequality.png")
+
+    calculator.input_var.set("y' = -(y - 20)/5")
+    calculator.op_var.set("ode")
+    calculator._sync_options()
+    calculator.conditions_var.set("y(0) = 90")
+    calculator.result = calculate("y' = -(y - 20)/5", "ode", "x",
+                                  conditions="y(0) = 90")
+    calculator._show(calculator.result)
+    grab(app, "ode.png")
     app.show_working.set(False)
+
+    # -- the graph ---------------------------------------------------------
+    top_tab(app, "Graph")
+    curves = app.graph_tab
+    curves.rows[0].expression.set("sin(x)*exp(-x/6)")
+    if len(curves.rows) < 2:
+        curves.add_row()
+    curves.rows[1].expression.set("exp(-x/6)")
+    curves.rows[1].kind.set("explicit")
+    curves.xmin.set("0")
+    curves.xmax.set("20")
+    curves.replot()
+    grab(app, "graph.png")
+
+    # -- the formula library, with one solved ------------------------------
+    top_tab(app, "Formula library")
+    library = app.library_tab
+    library.show_formula(app.library.get("strength_of_materials.euler_buckling"))
+    library.target_var.set("Pcr")
+    library._build_inputs()
+    library.material.set("S275 steel")
+    library.take_material()
+    # A 254x254x73 UC about its weak axis, three and a half metres long,
+    # pinned at both ends - so the answer is a load and not an algebraic
+    # rearrangement with three names still in it.
+    library.entries["I"].set("3.91e-5")
+    library.entries["L"].set("3.5")
+    library.entries["K"].set("1")
+    library.calculate()
+    wait_for(app, library)
+    grab(app, "formula_library.png")
+
+    # -- and the same library as cards to read -----------------------------
+    top_tab(app, "Formula cards")
+    app.cards_tab.search_var.set("beam")
+    app.update_idletasks()
+    grab(app, "formula_cards.png")
+
+    # -- matrices ----------------------------------------------------------
+    top_tab(app, "Matrices")
+    app.matrix_tab.compute()
+    grab(app, "matrices.png")
+
+    # -- the worksheet -----------------------------------------------------
+    top_tab(app, "Worksheet")
+    app.sheet_tab._load_example()
+    app.sheet_tab.calculate()
+    grab(app, "sheet.png")
 
     # -- steam, with the chart --------------------------------------------
     top_tab(app, "Fluid properties")
@@ -169,6 +270,16 @@ def main() -> None:
     vessel.pressure.set("60")
     vessel.refresh()
     grab(app, "vessel.png")
+
+    # The geometry tab is taken on the ambiguous triangle, which is the
+    # one thing on it that a calculator normally gets wrong.
+    geo = app.graph_pane.charts["Geometry"]
+    app.graph_pane.tabs.select(geo)
+    geo.side_c.set("")
+    geo.side_a.set("7")
+    geo.side_b.set("10")
+    geo.angle_A.set("30")
+    grab(app, "geometry.png")
 
     for label, name in (("Stress and strain", "tensile.png"),
                         ("Section", "section.png"),

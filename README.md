@@ -54,6 +54,12 @@ the area it measures shaded underneath and the working beside it.*
 | **Torsion** - shear stress and twist, from the power at a speed | **Columns** - Euler, Rankine and Perry-Robertson on one chart |
 | ![Truss](docs/screenshots/truss.png) | ![Pressure vessel](docs/screenshots/vessel.png) |
 | **Trusses** - every joint solved at once, ties red and struts blue | **Pressure vessels** - thin walled and thick, and where the two part |
+| ![Geometry](docs/screenshots/geometry.png) | ![Material chart](docs/screenshots/materials.png) |
+| **Geometry** - triangles, arcs and crossings, with both answers where there are two | **Material charts** - properties as ranges, with a selection line laid across |
+| ![Worksheet](docs/screenshots/sheet.png) | ![Formula cards](docs/screenshots/formula_cards.png) |
+| **Worksheets** - named steps down the page, each using the ones above it | **Formula cards** - the library to browse rather than to solve |
+| ![Differential equations](docs/screenshots/ode.png) | ![Inequalities](docs/screenshots/inequality.png) |
+| **Differential equations** - solved symbolically, with the initial conditions applied | **Inequalities** - solved, and the range shaded on the number line |
 
 ---
 
@@ -454,6 +460,23 @@ the data is checked against the app's own algebra - yield below tensile
 strength, service temperature below melting point, and volumetric heat
 capacity and thermal diffusivity inside the bands every solid falls in.
 Thirty-six materials, zero failures.
+
+**Geometry.** The other half of geometry from the section tab: not what a
+shape's properties are, but what the shape *is*. Three parts of a triangle
+and the other three follow; two facts about an arc and the rest of it
+follows; two lines, or a line and a circle, or two circles, and where they
+cross; the tangents from a point; the circle through three points.
+
+Its whole character is that some of these questions have two answers, and
+it says so instead of picking one. Two sides and an angle that is not
+between them describe **two** different triangles and both are correct -
+returning whichever one the arcsine happened to give is the classic wrong
+answer in every trigonometry course there is. Both are drawn, one over the
+other, which shows exactly how the loose side swings to meet the base in
+two places. A radius and a chord describe two arcs for a similar reason:
+the chord cuts the circle in two and both pieces are arcs of it, so both
+are drawn on the same chord. And three angles are refused outright,
+because they fix the shape and say nothing whatever about the size.
 
 **Moody chart.** Colebrook solved rather than approximated, with the operating
 point marked.

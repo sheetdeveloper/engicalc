@@ -544,6 +544,102 @@ In the drawing, red pulls and blue pushes and the thickness is how hard, so
 the way the frame carries its load is visible before any of the numbers are
 read.
 
+## Geometry
+
+The other half of geometry from the Section tab. That one answers what a
+shape's properties are; this one answers what the shape *is* - the
+setting-out question. Three parts of a triangle and the other three follow.
+Two facts about an arc and the rest of it follows. Two lines, and where
+they cross.
+
+Seven problems: a triangle, an arc, two lines, a line and a circle, two
+circles, the tangents from a point, and the circle through three points.
+
+### It says when there are two answers
+
+That is most of what this tab is for. Three of these questions have two
+correct answers, and a calculator that returns one of them is not being
+concise, it is being wrong.
+
+**Two sides and an angle that is not between them.** Give a = 7, b = 10 and
+A = 30 degrees, and side b can swing to meet the far line in two places:
+B comes out at 45.58 degrees or at 134.42, and both are triangles with
+exactly the parts you gave. The sine of an angle and the sine of its
+supplement are the same number, so an arcsine cannot tell them apart, and
+returning whichever one it happened to give is the classic wrong answer in
+every trigonometry course there is.
+
+Both are drawn, one over the other on the same base, which shows the thing
+the numbers do not: the two triangles share side b and angle A, and differ
+only in where the swinging side lands.
+
+The ambiguity is not always there, and the tab does not claim it is. Once
+the side facing the given angle is the longer of the two, the swing can
+only reach once, and one triangle comes back.
+
+**A radius and a chord.** A chord cuts a circle in two, and both pieces are
+arcs of that chord. A radius of 100 with a chord of 100 is a 60 degree arc
+and it is also a 300 degree arc. Both are returned, drawn on the same
+chord - the centre mark ends up below the chord for one and above it for
+the other, which is the whole difference between them.
+
+**An arc length with a rise.** This one is not obvious at all, and it took
+finding. The ratio of an arc to its rise starts unbounded on a shallow arc,
+*falls* to a minimum of 2.7601, and climbs back to pi at a full circle. So
+any ratio between those two belongs to two different arcs, and below 2.7601
+there is no arc at all.
+
+The turning point is where tan(theta/4) = theta/2, which comes from
+differentiating the ratio, and it is solved in the code rather than written
+down as 267.1 degrees. A constant with no derivation beside it is a
+constant nobody can check.
+
+### And when there are none
+
+    three angles          fix the shape and say nothing about the size,
+                          so every triangle with them is a valid answer
+                          and none is given
+    sides that cannot     the longest as long as the other two together
+    close                 will not make a triangle
+    a side too short      it never reaches the far line, and the message
+                          says how long it would have to be
+    an arc shallower      no arc is 2.2 times as long as its rise
+    than the turn
+    three points in       no circle passes through them, and the
+    a line                perpendicular bisectors are parallel
+
+### Touching is one point, not two
+
+Two circles that just touch have one intersection. Floating point will
+never land exactly on that case, so it is admitted with a tolerance rather
+than pretended away: inside the tolerance the answer is one point, and two
+roots that differ in the fifteenth decimal are not reported as two
+crossings. The same goes for a line tangent to a circle.
+
+### Small things that keep it honest
+
+Lines are held as `Ax + By = C` rather than `y = mx + c`, because a vertical
+line has no gradient and would otherwise be a special case in every
+function that touched one.
+
+The area of a triangle comes from two sides and the angle between them,
+not from Heron's formula. Heron subtracts the longest side from the
+semi-perimeter, and on a sliver - two sides of a million and one across -
+those two agree to almost every figure they have, and the answer that comes
+out is mostly rounding error.
+
+The rise of an arc is written as `2 sin^2(theta/4)` rather than
+`R(1 - cos(theta/2))`. They are the same identity; on a shallow arc the
+second subtracts two numbers that agree to fifteen figures and keeps almost
+none of them, and at a quarter of a nanoradian it returns exactly zero -
+which the solver that divides by it does not survive.
+
+The tangents from a point are found by crossing two circles, because the
+touch points and the centre and the point all lie on one circle - a tangent
+meets the radius square, so that angle is a right angle in a semicircle. It
+needs no arithmetic of its own, which is one fewer place to be wrong.
+
+
 ## Moody
 
 Friction factor against Reynolds number, with your flow marked on it. Pick a

@@ -5009,6 +5009,376 @@ class TestMohrsCircle(unittest.TestCase):
         self.assertAlmostEqual(state.theta_p, 45.0, places=9)
 
 
+class TestTriangles(unittest.TestCase):
+    """Three parts of a triangle, and the other three.
+
+    The interesting part is the ambiguous case. Two sides and an angle
+    that is not between them describe two different triangles and both are
+    correct; handing back whichever one the arcsine happened to give is
+    the classic wrong answer in every trigonometry course there is.
+    """
+
+    def test_three_sides(self):
+        from engicalc.core import geometry
+
+        found = geometry.solve_triangle({"a": 3, "b": 4, "c": 5})
+        self.assertEqual(1, len(found))
+        triangle = found[0]
+        self.assertAlmostEqual(90.0, math.degrees(triangle.C), places=12)
+        self.assertAlmostEqual(6.0, triangle.area, places=12)
+        self.assertTrue(triangle.right_angled)
+
+    def test_two_sides_and_the_angle_between_them(self):
+        from engicalc.core import geometry
+
+        found = geometry.solve_triangle({"a": 3, "b": 4, "C": math.pi / 2})
+        self.assertAlmostEqual(5.0, found[0].c, places=12)
+        self.assertAlmostEqual(6.0, found[0].area, places=12)
+
+    def test_one_side_and_two_angles(self):
+        from engicalc.core import geometry
+
+        # 45-60-75, from the side facing the 75.
+        found = geometry.solve_triangle({"c": 10, "A": math.radians(45),
+                                         "B": math.radians(60)})
+        triangle = found[0]
+        self.assertAlmostEqual(75.0, math.degrees(triangle.C), places=12)
+        # The sine rule, applied by hand.
+        self.assertAlmostEqual(
+            10 * math.sin(math.radians(45)) / math.sin(math.radians(75)),
+            triangle.a, places=12)
+
+    def test_the_ambiguous_case_gives_both_triangles(self):
+        from engicalc.core import geometry
+
+        # sin B = 10 sin 30 / 7 = 5/7, so B is 45.585 or 134.415 degrees,
+        # and both leave room for a third angle.
+        found = geometry.solve_triangle({"a": 7, "b": 10,
+                                         "A": math.radians(30)})
+        self.assertEqual(2, len(found))
+        self.assertAlmostEqual(45.5847, math.degrees(found[0].B), places=4)
+        self.assertAlmostEqual(134.4153, math.degrees(found[1].B), places=4)
+        for triangle in found:
+            with self.subTest(which=triangle.which):
+                # Both really are triangles with the parts that were given.
+                self.assertAlmostEqual(7.0, triangle.a, places=12)
+                self.assertAlmostEqual(10.0, triangle.b, places=12)
+                self.assertAlmostEqual(30.0, math.degrees(triangle.A),
+                                       places=12)
+                self.assertAlmostEqual(
+                    math.pi, triangle.A + triangle.B + triangle.C, places=12)
+        self.assertTrue(geometry.why_ambiguous(
+            {"a": 7, "b": 10, "A": math.radians(30)}))
+
+    def test_the_ambiguity_goes_away_when_the_side_is_long_enough(self):
+        from engicalc.core import geometry
+
+        # The swinging side cannot reach past the foot of the perpendicular
+        # twice once the side facing the angle is the longer of the two.
+        found = geometry.solve_triangle({"a": 12, "b": 10,
+                                         "A": math.radians(30)})
+        self.assertEqual(1, len(found))
+        self.assertEqual("", found[0].which)
+
+    def test_a_side_too_short_to_reach_is_refused(self):
+        from engicalc.core import geometry
+
+        with self.assertRaises(geometry.GeometryError) as caught:
+            geometry.solve_triangle({"a": 3, "b": 10, "A": math.radians(30)})
+        self.assertIn("too short", str(caught.exception))
+
+    def test_three_angles_are_a_shape_and_not_a_triangle(self):
+        from engicalc.core import geometry
+
+        # Every triangle with these angles is a valid answer, so there is
+        # no answer, and one is not invented.
+        with self.assertRaises(geometry.GeometryError) as caught:
+            geometry.solve_triangle({"A": math.radians(60),
+                                     "B": math.radians(60),
+                                     "C": math.radians(60)})
+        self.assertIn("not the size", str(caught.exception))
+
+    def test_sides_that_cannot_close_are_refused(self):
+        from engicalc.core import geometry
+
+        with self.assertRaises(geometry.GeometryError):
+            geometry.solve_triangle({"a": 1, "b": 2, "c": 5})
+
+    def test_the_area_survives_a_needle(self):
+        from engicalc.core import geometry
+
+        # Heron's formula subtracts the longest side from the
+        # semi-perimeter, and on a sliver those two agree to almost every
+        # figure they have. Two sides and the angle between them does not.
+        found = geometry.solve_triangle({"a": 1e6, "b": 1e6, "c": 1.0})
+        by_heron = self._heron(1e6, 1e6, 1.0)
+        self.assertAlmostEqual(found[0].area / by_heron, 1.0, places=6)
+        self.assertGreater(found[0].area, 0.0)
+
+    @staticmethod
+    def _heron(a, b, c):
+        s = 0.5 * (a + b + c)
+        return math.sqrt(max(s * (s - a) * (s - b) * (s - c), 0.0))
+
+    def test_the_drawing_has_the_sides_it_says_it_has(self):
+        from engicalc.core import geometry
+
+        # The corners are what gets drawn, so they have to be the same
+        # triangle as the numbers in the table beside them.
+        triangle = geometry.solve_triangle({"a": 6, "b": 7, "c": 8})[0]
+        first, second, third = triangle.corners()
+        self.assertAlmostEqual(triangle.c, math.dist(first, second),
+                               places=10)
+        self.assertAlmostEqual(triangle.b, math.dist(first, third), places=10)
+        self.assertAlmostEqual(triangle.a, math.dist(second, third), places=10)
+
+
+class TestArcs(unittest.TestCase):
+    """An arc from any two of its parts.
+
+    Two of the ten pairs describe two arcs rather than one, and both of
+    those are returned. One is obvious - a chord cuts a circle in two and
+    both pieces are arcs of it. The other is not obvious at all.
+    """
+
+    PAIRS = None
+
+    def setUp(self):
+        import itertools
+        from engicalc.core import geometry
+
+        if self.PAIRS is None:
+            TestArcs.PAIRS = list(itertools.combinations(geometry.ARC_PARTS, 2))
+
+    def test_every_pair_recovers_the_arc_it_came_from(self):
+        from engicalc.core import geometry
+
+        # Ten pairs at nine angles, over four orders of magnitude of
+        # shallowness and through the turning point at 267 degrees.
+        for degrees in (0.05, 1.0, 15.0, 80.0, 179.0, 200.0, 267.0, 300.0,
+                        355.0):
+            base = geometry.Arc(100.0, math.radians(degrees))
+            whole = {"R": base.R, "theta": base.theta, "L": base.length,
+                     "chord": base.chord, "rise": base.rise}
+            for pair in self.PAIRS:
+                with self.subTest(degrees=degrees, pair=pair):
+                    found = geometry.solve_arc({k: whole[k] for k in pair})
+                    close = min(max(abs(arc.R / base.R - 1),
+                                    abs(arc.theta / base.theta - 1))
+                                for arc in found)
+                    self.assertLess(close, 1e-7)
+
+    def test_the_setting_out_formula(self):
+        from engicalc.core import geometry
+
+        # R = (c^2/4 + s^2) / 2s, which is what gets used on site.
+        found = geometry.solve_arc({"chord": 2000, "rise": 250})
+        self.assertEqual(1, len(found))
+        self.assertAlmostEqual((2000 ** 2 / 4 + 250 ** 2) / 500, found[0].R,
+                               places=9)
+
+    def test_a_radius_and_a_chord_describe_two_arcs(self):
+        from engicalc.core import geometry
+
+        # The chord cuts the circle in two and both pieces are arcs of it.
+        found = geometry.solve_arc({"R": 100, "chord": 100})
+        self.assertEqual(2, len(found))
+        self.assertAlmostEqual(60.0, math.degrees(found[0].theta), places=9)
+        self.assertAlmostEqual(300.0, math.degrees(found[1].theta), places=9)
+        self.assertEqual(["minor", "major"], [arc.which for arc in found])
+        for arc in found:
+            self.assertAlmostEqual(100.0, arc.chord, places=9)
+
+    def test_a_chord_that_is_the_diameter_describes_one(self):
+        from engicalc.core import geometry
+
+        found = geometry.solve_arc({"R": 100, "chord": 200})
+        self.assertEqual(1, len(found))
+        self.assertAlmostEqual(180.0, math.degrees(found[0].theta), places=6)
+
+    def test_arc_length_with_rise_can_also_describe_two(self):
+        from engicalc.core import geometry
+
+        # This one is not obvious. The ratio of an arc to its rise falls
+        # to a minimum near 267 degrees and climbs back to pi, so a ratio
+        # between those belongs to two different arcs.
+        wanted = geometry.Arc(100.0, math.radians(290))
+        found = geometry.solve_arc({"L": wanted.length, "rise": wanted.rise})
+        self.assertEqual(2, len(found))
+        for arc in found:
+            with self.subTest(theta=math.degrees(arc.theta)):
+                self.assertAlmostEqual(wanted.length, arc.length, places=6)
+                self.assertAlmostEqual(wanted.rise, arc.rise, places=6)
+        # And they really are different arcs, not the same one twice.
+        self.assertGreater(abs(found[0].R - found[1].R), 1.0)
+
+    def test_the_turning_point_is_derived_and_not_written_down(self):
+        from engicalc.core import geometry
+
+        # Differentiating theta / (2 sin^2(theta/4)) leaves
+        # tan(theta/4) = theta/2 at the turn, and either side of it the
+        # ratio has to be larger.
+        turn = geometry.TURNS_AT
+        self.assertAlmostEqual(math.tan(turn / 4.0), turn / 2.0, places=9)
+        ratio = geometry._arc_ratio
+        both = frozenset({"L", "rise"})
+        self.assertAlmostEqual(geometry.SHALLOWEST, ratio(turn, both),
+                               places=12)
+        for step in (0.01, 0.2, 1.0):
+            self.assertGreater(ratio(turn - step, both), geometry.SHALLOWEST)
+            if turn + step < 2 * math.pi:
+                self.assertGreater(ratio(turn + step, both),
+                                   geometry.SHALLOWEST)
+
+    def test_a_ratio_below_the_turning_point_has_no_arc(self):
+        from engicalc.core import geometry
+
+        with self.assertRaises(geometry.GeometryError) as caught:
+            geometry.solve_arc({"L": 100, "rise": 45})
+        self.assertIn("2.7601", str(caught.exception))
+
+    def test_the_rise_stays_accurate_on_a_shallow_arc(self):
+        from engicalc.core import geometry
+
+        # 1 - cos on a shallow arc subtracts two numbers that agree to
+        # fifteen figures. The half-angle form does not, and at a quarter
+        # of a nanoradian the difference is between a number and zero.
+        arc = geometry.Arc(1000.0, 1e-9)
+        self.assertGreater(arc.rise, 0.0)
+        self.assertAlmostEqual(arc.rise / (1000.0 * (1e-9 ** 2) / 8.0), 1.0,
+                               places=6)
+
+    def test_a_chord_bigger_than_the_circle_is_refused(self):
+        from engicalc.core import geometry
+
+        with self.assertRaises(geometry.GeometryError):
+            geometry.solve_arc({"R": 10, "chord": 25})
+
+    def test_one_part_is_not_enough_and_three_is_too_many(self):
+        from engicalc.core import geometry
+
+        for given in ({"R": 5}, {"R": 5, "theta": 1.0, "chord": 4}):
+            with self.subTest(given=sorted(given)):
+                with self.assertRaises(geometry.GeometryError):
+                    geometry.solve_arc(given)
+
+
+class TestCrossings(unittest.TestCase):
+    """Where lines and circles meet, and where they do not."""
+
+    def test_two_lines(self):
+        from engicalc.core import geometry
+
+        found = geometry.cross_lines(geometry.line_through((0, 0), (10, 10)),
+                                     geometry.line_through((0, 10), (10, 0)))
+        self.assertEqual(((5.0, 5.0),), found.points)
+
+    def test_an_upright_line_is_not_a_special_case(self):
+        from engicalc.core import geometry
+
+        # Held as Ax + By = C rather than y = mx + c, because a vertical
+        # line has no gradient and would otherwise need handling
+        # separately everywhere it appeared.
+        found = geometry.cross_lines(geometry.line_through((3, 0), (3, 9)),
+                                     geometry.line_through((0, 7), (5, 7)))
+        self.assertEqual(((3.0, 7.0),), found.points)
+
+    def test_parallel_and_identical_lines_are_told_apart(self):
+        from engicalc.core import geometry
+
+        parallel = geometry.cross_lines(
+            geometry.line_through((0, 0), (1, 1)),
+            geometry.line_through((0, 5), (1, 6)))
+        same = geometry.cross_lines(geometry.line_through((0, 0), (1, 1)),
+                                    geometry.line_through((2, 2), (3, 3)))
+        self.assertFalse(parallel)
+        self.assertFalse(same)
+        self.assertNotEqual(parallel.note, same.note)
+
+    def test_a_line_and_a_circle(self):
+        from engicalc.core import geometry
+
+        through = geometry.line_through((-10, 0), (10, 0))
+        found = geometry.cross_line_circle(through, (0, 0), 5)
+        self.assertEqual(((-5.0, 0.0), (5.0, 0.0)), found.points)
+
+    def test_a_tangent_touches_once_and_not_twice(self):
+        from engicalc.core import geometry
+
+        # Floating point will not land exactly on the touching case, so it
+        # is admitted with a tolerance rather than pretended away.
+        found = geometry.cross_line_circle(
+            geometry.line_through((-10, 5), (10, 5)), (0, 0), 5)
+        self.assertEqual(1, len(found.points))
+        self.assertAlmostEqual(0.0, found.points[0][0], places=12)
+        self.assertAlmostEqual(5.0, found.points[0][1], places=12)
+
+    def test_two_circles(self):
+        from engicalc.core import geometry
+
+        found = geometry.cross_circles((0, 0), 5, (8, 0), 5)
+        self.assertEqual(2, len(found.points))
+        for x, y in found.points:
+            self.assertAlmostEqual(4.0, x, places=12)
+            self.assertAlmostEqual(3.0, abs(y), places=12)
+
+    def test_circles_that_touch_miss_or_nest(self):
+        from engicalc.core import geometry
+
+        touching = geometry.cross_circles((0, 0), 5, (10, 0), 5)
+        self.assertEqual(1, len(touching.points))
+        self.assertFalse(geometry.cross_circles((0, 0), 5, (20, 0), 5))
+        self.assertFalse(geometry.cross_circles((0, 0), 10, (1, 0), 2))
+
+    def test_tangents_from_a_point(self):
+        from engicalc.core import geometry
+
+        # From (10, 0) to a circle of radius 6 the touch points are at
+        # x = r^2/d = 3.6 and y = r*sqrt(d^2 - r^2)/d = 4.8.
+        found = geometry.tangent_from_point((10, 0), (0, 0), 6)
+        self.assertEqual(2, len(found.points))
+        for x, y in found.points:
+            self.assertAlmostEqual(3.6, x, places=10)
+            self.assertAlmostEqual(4.8, abs(y), places=10)
+            # On the circle, and square to the radius, which is what makes
+            # it a tangent rather than a chord.
+            self.assertAlmostEqual(6.0, math.hypot(x, y), places=10)
+            self.assertAlmostEqual(0.0, (x - 10) * x + y * y, places=8)
+        self.assertAlmostEqual(8.0, geometry.tangent_length((10, 0), (0, 0), 6),
+                               places=12)
+
+    def test_no_tangent_from_inside(self):
+        from engicalc.core import geometry
+
+        self.assertFalse(geometry.tangent_from_point((1, 0), (0, 0), 6))
+
+    def test_the_circle_through_three_points(self):
+        from engicalc.core import geometry
+
+        centre, radius = geometry.circle_through((0, 0), (10, 0), (0, 10))
+        self.assertAlmostEqual(5.0, centre[0], places=12)
+        self.assertAlmostEqual(5.0, centre[1], places=12)
+        self.assertAlmostEqual(math.hypot(5, 5), radius, places=12)
+
+    def test_three_points_in_a_line_have_no_circle(self):
+        from engicalc.core import geometry
+
+        with self.assertRaises(geometry.GeometryError):
+            geometry.circle_through((0, 0), (1, 1), (2, 2))
+
+    def test_a_circle_through_three_points_passes_through_all_three(self):
+        from engicalc.core import geometry
+
+        for points in (((0, 0), (10, 0), (0, 10)),
+                       ((-3, 2), (4, 9), (11, -2)),
+                       ((0, 0), (1, 0.001), (2, 0))):
+            with self.subTest(points=points):
+                centre, radius = geometry.circle_through(*points)
+                for point in points:
+                    self.assertAlmostEqual(
+                        math.dist(point, centre) / radius, 1.0, places=9)
+
+
 class TestMaterials(unittest.TestCase):
     """A table of numbers in a program has to justify itself.
 
