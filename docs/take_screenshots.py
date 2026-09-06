@@ -126,6 +126,9 @@ def main() -> None:
     app.properties_pane.show_moist_air()
     grab(app, "moistair.png")
 
+    app.properties_pane.show_r134a()
+    grab(app, "r134a.png")
+
     # -- trendlines, on data that is not straight -------------------------
     top_tab(app, "Data")
     data = app.statistics_tab
@@ -142,8 +145,19 @@ def main() -> None:
 
     # -- the standard charts ----------------------------------------------
     top_tab(app, "Graph")
+
+    # The beam is taken with a section on it. Without one there is no
+    # deflection diagram and no stress, which is most of what the tab now
+    # does - a picture of it empty is a picture of the old tab.
+    beam = app.graph_pane.charts["Beam"]
+    app.graph_pane.tabs.select(beam)
+    beam.section_name.set("305x165x40 UB")
+    beam.refresh()
+    grab(app, "beam.png")
+
     for label, name in (("Stress and strain", "tensile.png"),
-                        ("Beam", "beam.png"),
+                        ("Section", "section.png"),
+                        ("Motion", "motion.png"),
                         ("Mohr's circle", "mohr.png"),
                         ("Moody", "moody.png")):
         app.graph_pane.tabs.select(app.graph_pane.charts[label])

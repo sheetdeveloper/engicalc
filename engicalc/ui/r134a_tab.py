@@ -331,16 +331,18 @@ class R134aTab(ttk.Frame):
             self.axes.set_ylabel("pressure  kPa", fontsize=8)
             self.axes.grid(True, which="both", alpha=0.3, linestyle=":")
             self.axes.tick_params(labelsize=7)
-            # Low down, where the dome is at its widest and there is room
-            # outside it on both sides. Up near the critical point the two
-            # lines meet and any label there is inside the dome.
-            self.axes.annotate("liquid", (0.03, 0.10),
+            # Each one where its own side of the dome is not. The liquid
+            # line leans right as the pressure rises, so its name goes high
+            # and left; the vapour line leans left, so its name goes low and
+            # right. Put at the same height they both sat on the curve they
+            # were naming.
+            self.axes.annotate("liquid", (0.02, 0.62),
                                xycoords="axes fraction", fontsize=7,
                                color="#1f4e79")
-            self.axes.annotate("vapour", (0.90, 0.10),
+            self.axes.annotate("vapour", (0.90, 0.28),
                                xycoords="axes fraction", fontsize=7,
                                color="#1f4e79")
-            self.axes.annotate("wet", (0.52, 0.10),
+            self.axes.annotate("wet", (0.52, 0.12),
                                xycoords="axes fraction", fontsize=7,
                                color="#1f4e79")
             self.figure.tight_layout()

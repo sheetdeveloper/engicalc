@@ -647,7 +647,7 @@ class BeamTab(ChartTab):
         the diagrams below them do.
         """
         self.figure.subplots_adjust(left=0.155, right=0.98, top=0.97,
-                                    bottom=0.1)
+                                    bottom=0.14)
 
     def _draw_curve(self, axes, x, values, colour: str, label: str) -> None:
         axes.plot(x, values, color=colour, linewidth=1.5)

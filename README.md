@@ -43,9 +43,13 @@ the area it measures shaded underneath and the working beside it.*
 | ![A study](docs/screenshots/study.png) | ![Interpolation](docs/screenshots/interpolate.png) |
 | **Parametric studies** - the same set solved down a column of values | **Interpolation** - between the rows of a table, working shown |
 | ![Stress and strain](docs/screenshots/tensile.png) | ![Beam](docs/screenshots/beam.png) |
-| **Stress and strain** - modulus, proof stress and UTS read off a test | **Beam diagrams** - shear and moment, worked from the loads |
+| **Stress and strain** - modulus, proof stress and UTS read off a test | **Beam diagrams** - free body, shear, moment and deflection |
 | ![Mohr](docs/screenshots/mohr.png) | ![Moody](docs/screenshots/moody.png) |
 | **Mohr's circle** - exact, with the construction drawn | **Moody chart** - Colebrook solved, not approximated |
+| ![Section properties](docs/screenshots/section.png) | ![Motion](docs/screenshots/motion.png) |
+| **Section properties** - centroid and second moment, from the dimensions | **Motion** - distance, velocity and acceleration on one time axis |
+| ![R134a](docs/screenshots/r134a.png) | ![Complex numbers](docs/screenshots/complex.png) |
+| **R134a** - the standard equation of state, and the p-h diagram | **Complex numbers** - rectangular, polar and the Argand diagram |
 
 ---
 

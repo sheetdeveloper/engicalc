@@ -17,7 +17,7 @@
 ; stamp_installer_version.py, which build_exe.bat and
 ; build_installer.bat both run before compiling. Don't bump this by
 ; hand -- edit engicalc/__init__.py instead.
-#define MyAppVersion "1.5.0"
+#define MyAppVersion "1.6.0"
 ; Must match the code signing certificate subject exactly once one is
 ; bought, or the installer and the signature name different publishers.
 #define MyAppPublisher "Sam Jury"
