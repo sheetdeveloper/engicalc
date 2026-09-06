@@ -3669,6 +3669,181 @@ class TestUnsymmetricalBending(unittest.TestCase):
         self.assertGreater(square.ixx / 1e4, 179.0)
 
 
+class TestMotion(unittest.TestCase):
+    """Straight-line motion, checked against itself and against arithmetic."""
+
+    #: One movement, known completely, for the combinations test below.
+    MOVEMENT = {"u": 3.0, "v": 11.0, "a": 2.0, "t": 4.0, "s": 28.0}
+
+    def test_any_three_of_the_five_give_the_same_movement_back(self):
+        import itertools
+
+        from engicalc.core.motion import solve_suvat
+
+        # Ten ways to choose three, one movement. If the four equations are
+        # written correctly it does not matter which three you happen to
+        # know, and if one of them is wrong it matters very much.
+        for chosen in itertools.combinations("suvat", 3):
+            given = {name: self.MOVEMENT[name] for name in chosen}
+            with self.subTest(given="".join(chosen)):
+                got, _working, _both = solve_suvat(**given)
+                for name, value in self.MOVEMENT.items():
+                    self.assertAlmostEqual(got[name], value, places=9)
+
+    def test_the_problems_everybody_is_set(self):
+        from engicalc.core.motion import solve_suvat
+
+        for given, expected in (
+                # A stone dropped for three seconds.
+                (dict(u=0.0, a=9.81, t=3.0), {"v": 29.43, "s": 44.145}),
+                # A car at 30 m/s braking at 6 m/s2 until it stops.
+                (dict(u=30.0, v=0.0, a=-6.0), {"t": 5.0, "s": 75.0}),
+                # Thrown up at 20 m/s: how high, and how long to get there.
+                (dict(u=20.0, v=0.0, a=-9.81),
+                 {"s": 20.387360, "t": 2.0387360}),
+                # A hundred metres from rest in ten seconds.
+                (dict(u=0.0, s=100.0, t=10.0), {"a": 2.0, "v": 20.0})):
+            with self.subTest(given=sorted(given)):
+                got, _working, _both = solve_suvat(**given)
+                for name, value in expected.items():
+                    self.assertAlmostEqual(got[name], value, places=5)
+
+    def test_it_says_which_equation_it_used(self):
+        from engicalc.core.motion import solve_suvat
+
+        # On this subject the equation used is most of the answer.
+        _got, working, _both = solve_suvat(u=0.0, a=9.81, t=3.0)
+        self.assertTrue(working)
+        self.assertTrue(any("v = u + a t" == said for said, _n, _v in working))
+
+    def test_two_of_the_five_is_not_enough(self):
+        from engicalc.core.motion import MotionError, solve_suvat
+
+        with self.assertRaises(MotionError) as caught:
+            solve_suvat(u=3.0, t=4.0)
+        self.assertIn("Three", str(caught.exception))
+
+    def test_three_that_do_not_settle_it_say_so(self):
+        from engicalc.core.motion import MotionError, solve_suvat
+
+        # No acceleration and no distance: the time never comes out, and
+        # saying which one is missing is more use than an answer would be.
+        with self.assertRaises(MotionError):
+            solve_suvat(u=5.0, v=5.0, a=0.0)
+
+    def test_the_root_that_takes_a_positive_time_is_the_one_taken(self):
+        from engicalc.core.motion import solve_suvat
+
+        # v^2 = u^2 + 2 a s has two roots and only one of them happens
+        # after the start of the problem.
+        got, _working, _both = solve_suvat(u=0.0, a=2.0, s=25.0)
+        self.assertAlmostEqual(got["v"], 10.0, places=9)
+        self.assertGreater(got["t"], 0.0)
+
+    def test_an_impossible_final_velocity_is_refused(self):
+        from engicalc.core.motion import MotionError, solve_suvat
+
+        # Braking harder than the distance allows: v^2 comes out negative,
+        # which is not a rounding problem, it is a movement that does not
+        # happen.
+        with self.assertRaises(MotionError):
+            solve_suvat(u=10.0, a=-50.0, s=25.0)
+
+    # -- a movement in stages ----------------------------------------------
+    def test_a_movement_in_stages_carries_its_speed_forward(self):
+        from engicalc.core.motion import Motion, Phase
+
+        run = Motion(phases=[
+            Phase(label="up", acceleration=1.2, end_velocity=2.0),
+            Phase(label="along", acceleration=0.0, distance=7.5),
+            Phase(label="down", acceleration=-0.8, end_velocity=0.0)])
+        legs = run.legs()
+        self.assertEqual(3, len(legs))
+        self.assertAlmostEqual(legs[0].duration, 2.0 / 1.2, places=9)
+        self.assertAlmostEqual(legs[1].start_velocity, 2.0, places=9)
+        self.assertAlmostEqual(legs[1].duration, 7.5 / 2.0, places=9)
+        self.assertAlmostEqual(legs[2].distance, 2.0 ** 2 / (2 * 0.8),
+                               places=9)
+        self.assertAlmostEqual(run.summary()["displacement"],
+                               sum(leg.distance for leg in legs), places=9)
+
+    def test_the_curves_are_the_integrals_of_each_other(self):
+        from engicalc.core.motion import steady_then_stop
+
+        # Which is the whole of what the three diagrams say. Integrating
+        # the acceleration has to give back the velocity that was drawn,
+        # and integrating that has to give back the distance.
+        run = steady_then_stop(top=2.0, speed_up=1.0, slow_down=0.8,
+                               distance=12.0)
+        t, s, v, a = run.trace(per_leg=3000)
+        speed = np.concatenate([[run.start_velocity],
+                                run.start_velocity + np.cumsum(
+                                    (a[:-1] + a[1:]) / 2.0 * np.diff(t))])
+        place = np.concatenate([[run.start_position],
+                                run.start_position + np.cumsum(
+                                    (v[:-1] + v[1:]) / 2.0 * np.diff(t))])
+        self.assertLess(float(np.max(np.abs(speed - v))), 1e-9)
+        self.assertLess(float(np.max(np.abs(place - s))), 1e-9)
+
+    def test_a_trapezoid_covers_the_distance_it_was_asked_for(self):
+        from engicalc.core.motion import steady_then_stop
+
+        run = steady_then_stop(top=2.0, speed_up=1.0, slow_down=0.8,
+                               distance=12.0)
+        self.assertAlmostEqual(run.summary()["displacement"], 12.0,
+                               places=9)
+        self.assertAlmostEqual(run.summary()["final velocity"], 0.0,
+                               places=9)
+
+    def test_a_trapezoid_that_will_not_fit_says_so(self):
+        from engicalc.core.motion import MotionError, steady_then_stop
+
+        # Speeding up and braking alone need more room than there is, so
+        # there is no cruise to shorten and no answer to give.
+        with self.assertRaises(MotionError) as caught:
+            steady_then_stop(top=20.0, speed_up=1.0, slow_down=0.8,
+                             distance=12.0)
+        self.assertIn("stop", str(caught.exception))
+
+    def test_turning_round_makes_distance_and_displacement_differ(self):
+        from engicalc.core.motion import Motion, Phase
+
+        # Thrown up at 20 m/s and caught again: it covers twice the height
+        # it reaches and ends up where it started.
+        flight = 2.0 * 20.0 / 9.81
+        up = Motion(phases=[Phase(label="flight", acceleration=-9.81,
+                                  duration=flight)],
+                    start_velocity=20.0)
+        found = up.summary()
+        self.assertAlmostEqual(found["displacement"], 0.0, places=6)
+        self.assertAlmostEqual(found["travelled"],
+                               2.0 * 20.0 ** 2 / (2 * 9.81), places=6)
+        self.assertTrue(up.notes())
+
+    def test_a_stage_that_finishes_before_it_starts_is_refused(self):
+        from engicalc.core.motion import Motion, MotionError, Phase
+
+        # Speeding up towards a velocity behind you takes a negative time,
+        # which is a sign error rather than a movement.
+        with self.assertRaises(MotionError) as caught:
+            Motion(phases=[Phase(acceleration=2.0,
+                                 end_velocity=-5.0)]).legs()
+        self.assertIn("signs", str(caught.exception))
+
+    def test_a_stage_needs_two_of_its_four(self):
+        from engicalc.core.motion import Motion, MotionError, Phase
+
+        with self.assertRaises(MotionError) as caught:
+            Motion(phases=[Phase(duration=2.0)]).legs()
+        self.assertIn("two", str(caught.exception))
+
+    def test_a_movement_with_no_stages_is_refused(self):
+        from engicalc.core.motion import Motion, MotionError
+
+        with self.assertRaises(MotionError):
+            Motion().legs()
+
+
 class TestMohrsCircle(unittest.TestCase):
     """Exact - there is nothing fitted or iterated here."""
 

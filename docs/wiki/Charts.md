@@ -164,6 +164,67 @@ the picture and reported in the table, because the weak axis of an angle is
 nowhere near either of its legs. That is why an unrestrained angle moves
 sideways when you load it downwards.
 
+## Motion
+
+Distance, velocity and acceleration against time, stacked on one time axis.
+They are one movement seen three ways, and the whole subject is the two
+facts joining them: the slope of the velocity curve is the acceleration, and
+the area under it is the distance. Drawn apart those are two more things to
+remember; drawn one above the other they are hard to miss. The area under
+the velocity curve is shaded for the same reason.
+
+A movement is described as the stages it goes through, each of constant
+acceleration. **Give any two of the four** - how long it lasts, what it
+accelerates at, what velocity it reaches, how far it covers - and the other
+two are worked out. Which two is up to you, and that is the point: the stage
+a lift spends getting up to speed is naturally a rate and a speed, the stage
+it spends at that speed is a distance, and converting one into the other is
+work the program should be doing.
+
+Each stage starts at the velocity the one before it finished at, which is
+what makes them stages rather than separate problems.
+
+### The five equations
+
+One stage, plus the starting velocity, is three of the five quantities
+known - which is the exercise every course sets. So it is the same tab: put
+one stage in and it works the other two out.
+
+    v = u + a t
+    s = (u + v) t / 2
+    s = u t + a t^2 / 2
+    v^2 = u^2 + 2 a s
+
+They are applied in turn until nothing new comes out, rather than as ten
+special cases for the ten ways of choosing three from five. The equations
+are the same four whichever three you know, and writing them once is the
+only way they stay the same four. The test suite works one movement out all
+ten ways and checks they agree.
+
+`v^2 = u^2 + 2 a s` has two roots and only one of them happens after the
+start of the problem, so the one that takes a positive time is the one
+taken. And if it comes out negative there is no real answer at all - that is
+braking harder than the distance allows, which is a sign error rather than a
+movement, and it says so.
+
+### Turning round
+
+A velocity that goes negative means it has turned round, not that something
+has gone wrong. Distance travelled and displacement are then different
+numbers and both are reported. Something thrown up at 20 m/s and caught
+again covers 40.8 m of ground and ends up where it started - the area under
+the velocity curve counting the part below the axis as negative is exactly
+that difference.
+
+### Speed up, run, stop
+
+The button fills in the trapezoidal profile a lift, a conveyor or a machine
+axis actually moves on. Give it a top speed, a rate each way and a distance,
+and the cruise in the middle - the fiddly one to work out by hand - falls
+out. If it cannot reach that speed and still stop in the distance, it says
+how much room speeding up and braking need on their own rather than
+returning a negative cruise.
+
 ## Mohr's circle
 
 Give σx, σy and τxy and it draws the circle, marks the principal stresses,

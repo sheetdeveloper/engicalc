@@ -21,7 +21,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Arc
 
-from ..core import beams, moody, section_table, sections, tensile
+from ..core import (beams, motion, moody, section_table, sections,
+                    tensile)
 from ..core.display import fmt_number
 from ..core.mohr import Mohr
 from ..core.parsing import ParseError, parse_number
@@ -1134,10 +1135,216 @@ class SectionTab(ChartTab):
         axes.set_title(section.name, fontsize=9, color="#333333")
 
 
+# --------------------------------------------------------------------------
+class StageRow:
+    """One stage of a movement: give any two of its four numbers.
+
+    Which two is up to you, and that is the point. The stage a lift spends
+    getting up to speed is described by a rate and a speed; the stage it
+    spends at that speed is described by a distance; the stage it takes to
+    stop is described by a rate and a speed again. Making people convert
+    each of those into the same two would be work the program should do.
+    """
+
+    #: (name, label, unit, width) for the boxes, in the order they appear.
+    BOXES = (("duration", "for", "s", 7),
+             ("acceleration", "at", "m/s2", 7),
+             ("end_velocity", "reaching", "m/s", 7),
+             ("distance", "covering", "m", 7))
+
+    def __init__(self, tab, parent, label="", duration="", acceleration="",
+                 end_velocity="", distance=""):
+        self.tab = tab
+        self.frame = ttk.Frame(parent)
+        self.frame.pack(fill="x", pady=1)
+
+        self.label = tk.StringVar(value=label)
+        entry = ttk.Entry(self.frame, textvariable=self.label, width=12)
+        entry.pack(side="left")
+        self.label.trace_add("write", lambda *a: self.tab.refresh())
+
+        given = {"duration": duration, "acceleration": acceleration,
+                 "end_velocity": end_velocity, "distance": distance}
+        for name, said, unit, width in self.BOXES:
+            ttk.Label(self.frame, text=said).pack(side="left", padx=(8, 2))
+            variable = tk.StringVar(value=given[name])
+            box = ttk.Entry(self.frame, textvariable=variable, width=width,
+                            font=MONO)
+            box.pack(side="left")
+            box.bind("<Return>", lambda e: self.tab.refresh())
+            variable.trace_add("write", lambda *a: self.tab.refresh())
+            ttk.Label(self.frame, text=unit,
+                      style="Hint.TLabel").pack(side="left", padx=(2, 0))
+            setattr(self, name, variable)
+
+        ttk.Button(self.frame, text="Remove", width=7,
+                   command=self.remove).pack(side="right")
+
+    def remove(self) -> None:
+        self.frame.destroy()
+        if self in self.tab.stage_rows:
+            self.tab.stage_rows.remove(self)
+        self.tab.refresh()
+
+    def _value(self, variable):
+        text = variable.get().strip()
+        if not text:
+            return None
+        value = parse_number(text)
+        if value is None:
+            raise ParseError(f"'{text}' is not a number.")
+        return float(value)
+
+    def phase(self):
+        """The stage this row describes, or None if the row is empty."""
+        given = {name: self._value(getattr(self, name))
+                 for name, _said, _unit, _width in self.BOXES}
+        if all(value is None for value in given.values()):
+            return None
+        return motion.Phase(label=self.label.get().strip(), **given)
+
+
+# --------------------------------------------------------------------------
+class MotionTab(ChartTab):
+    """Distance, velocity and acceleration against time."""
+
+    title = "Motion"
+    hint = "one movement seen three ways, from the stages it goes through"
+
+    #: The movement it starts on: up to speed, along, and stop. A lift, a
+    #: conveyor, a machine axis - and the profile whose middle stage is the
+    #: fiddly one to work out by hand.
+    STARTING_STAGES = (
+        dict(label="speeding up", acceleration="1.2", end_velocity="2"),
+        dict(label="at speed", acceleration="0", distance="7.5"),
+        dict(label="braking", acceleration="-0.8", end_velocity="0"),
+    )
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        self.start_velocity = self.field(first, "Starting at", "0", "m/s")
+        self.start_position = self.field(first, "from", "0", "m")
+        ttk.Label(first,
+                  text="Each stage takes any two of the four - the other "
+                       "two are worked out.",
+                  style="Hint.TLabel").pack(side="left", padx=(14, 0))
+
+        self.stage_table = ScrollFrame(parent, height=92)
+        self.stage_table.pack(fill="x", pady=(8, 0))
+        self.stage_rows = []
+        for spec in self.STARTING_STAGES:
+            self.stage_rows.append(
+                StageRow(self, self.stage_table.body, **spec))
+
+        buttons = ttk.Frame(parent)
+        buttons.pack(fill="x", pady=(4, 0))
+        ttk.Button(buttons, text="Add stage",
+                   command=self.add_stage).pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="Speed up, run, stop",
+                   command=self.trapezoid).pack(side="left")
+        self.show_area = tk.BooleanVar(value=True)
+        ttk.Checkbutton(buttons, text="Shade the area under v",
+                        variable=self.show_area,
+                        command=self.refresh).pack(side="right")
+
+    def add_stage(self, **spec) -> None:
+        self.stage_rows.append(
+            StageRow(self, self.stage_table.body,
+                     **(spec or dict(label="", duration="2",
+                                     acceleration="0"))))
+        self.refresh()
+
+    def trapezoid(self) -> None:
+        """Put the three-stage profile back, whatever is there now."""
+        for row in list(self.stage_rows):
+            row.frame.destroy()
+        self.stage_rows = []
+        self.start_velocity.set("0")
+        for spec in self.STARTING_STAGES:
+            self.stage_rows.append(
+                StageRow(self, self.stage_table.body, **spec))
+        self.refresh()
+
+    def movement(self):
+        phases = []
+        for row in self.stage_rows:
+            phase = row.phase()
+            if phase is not None:
+                phases.append(phase)
+        return motion.Motion(
+            phases=phases,
+            start_velocity=self.number(self.start_velocity,
+                                       "the starting velocity"),
+            start_position=self.number(self.start_position,
+                                       "where it starts"))
+
+    def draw(self) -> tuple:
+        run = self.movement()
+        legs = run.legs()
+        times, places, speeds, rates = run.trace()
+
+        self.figure.clear()
+        grid = self.figure.add_gridspec(3, 1, hspace=0.3)
+        first = self.figure.add_subplot(grid[0])
+        second = self.figure.add_subplot(grid[1], sharex=first)
+        third = self.figure.add_subplot(grid[2], sharex=first)
+
+        self._curve(first, times, places, "#1f4e79", "distance  m")
+        self._curve(second, times, speeds, "#c0392b", "velocity  m/s")
+        self._curve(third, times, rates, "#0b7a3b", "acceleration  m/s2",
+                    step=True)
+        if self.show_area.get():
+            # The area under the velocity curve is the distance, which is
+            # the one thing these three diagrams exist to say.
+            second.fill_between(times, speeds, 0, color="#c0392b",
+                                alpha=0.18)
+        for axes in (first, second):
+            axes.tick_params(labelbottom=False)
+        third.set_xlabel("time  s", fontsize=8)
+
+        # Where one stage becomes the next, on all three at once.
+        for leg in legs[1:]:
+            for axes in (first, second, third):
+                axes.axvline(leg.start_time, color="#999999",
+                             linewidth=0.7, linestyle=":")
+        # Above the top panel rather than inside it. Written inside, a stage
+        # named near the end of the run sat on top of a distance curve that
+        # by then is near the top of its own axes.
+        for leg in legs:
+            if leg.duration > 0:
+                first.annotate(leg.label,
+                               (leg.start_time + leg.duration / 2.0, 1.04),
+                               xycoords=("data", "axes fraction"),
+                               fontsize=6.5, ha="center", va="bottom",
+                               color="#666666")
+
+        return run.rows(), run.notes()
+
+    def _curve(self, axes, x, y, colour: str, label: str,
+               step: bool = False) -> None:
+        # Acceleration is constant within a stage and jumps between them, so
+        # it is drawn as the steps it is. Joined up it would slope through
+        # the jump and say the opposite of what happened.
+        axes.plot(x, y, color=colour, linewidth=1.5,
+                  drawstyle="steps-post" if step else "default")
+        axes.axhline(0, color="#888888", linewidth=0.8)
+        axes.set_ylabel(label, fontsize=7, labelpad=2)
+        axes.grid(True, alpha=0.3, linestyle=":")
+        axes.tick_params(labelsize=7)
+
+    def layout(self) -> None:
+        # Room at the top for the stage names, which sit above the first
+        # panel where nothing else is.
+        self.figure.subplots_adjust(left=0.13, right=0.98, top=0.93,
+                                    bottom=0.11)
+
+
 CHARTS = [
     ("  Stress and strain  ", TensileTab),
     ("  Beam  ", BeamTab),
     ("  Section  ", SectionTab),
+    ("  Motion  ", MotionTab),
     ("  Mohr's circle  ", MohrTab),
     ("  Moody  ", MoodyTab),
 ]
