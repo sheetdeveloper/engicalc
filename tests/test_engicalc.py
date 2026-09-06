@@ -3792,6 +3792,170 @@ class TestUnsymmetricalBending(unittest.TestCase):
         self.assertGreater(square.ixx / 1e4, 179.0)
 
 
+class TestR134a(unittest.TestCase):
+    """The refrigerant, against the curves published with the equation.
+
+    An earlier attempt at R134a was abandoned rather than shipped: it agreed
+    with the saturation line to a fiftieth of a percent and had the
+    saturated vapour density wrong by a factor of fifty. So the checks here
+    are deliberately not just the saturation line - the densities, the
+    latent heat and the reference state are all pinned down separately,
+    because the previous failure passed every test anybody would think to
+    write first.
+    """
+
+    #: The ancillary saturation curves published alongside the equation of
+    #: state. They are fitted to it, so they say where the saturation line
+    #: is without anything here being consulted - which is what makes them
+    #: a check rather than a restatement.
+    ANCILLARY_TR = 374.21
+    ANCILLARY_PR = 4059280.0
+    ANCILLARY_RHOR = 5017.053 * 0.102032
+    PS_N = [0.4331478287291047, -9.090302559074352, 2.1476074125217703,
+            -1.557687007603464, -3.5020328972698604, 14.958442337201044]
+    PS_T = [0.845, 0.99, 1.14, 2.651, 4.507, 17.235]
+
+    def _ancillary_pressure(self, T):
+        theta = 1.0 - T / self.ANCILLARY_TR
+        return self.ANCILLARY_PR * math.exp(
+            self.ANCILLARY_TR / T
+            * sum(n * theta ** t for n, t in zip(self.PS_N, self.PS_T)))
+
+    def test_the_saturation_line_is_where_it_is_published_to_be(self):
+        from engicalc.core.r134a import saturation_pressure
+
+        for celsius in (-40, -26.07, -20, -10, 0, 10, 20, 30, 40, 50, 60,
+                        80, 100):
+            T = celsius + 273.15
+            with self.subTest(celsius=celsius):
+                error = abs(saturation_pressure(T)
+                            / self._ancillary_pressure(T) - 1.0)
+                self.assertLess(error, 2e-4, f"{error:.2%} out")
+
+    def test_the_reference_state_is_exact_because_it_is_solved_for(self):
+        from engicalc.core.r134a import saturated
+
+        # Saturated liquid at 0 C is 200 kJ/kg and 1 kJ/kg K by convention.
+        # The two arbitrary constants in the ideal-gas part are worked out
+        # from that rather than copied, so this is a guarantee rather than
+        # a hope that they were typed in correctly.
+        liquid, _vapour = saturated(273.15)
+        self.assertAlmostEqual(liquid.h, 200e3, places=6)
+        self.assertAlmostEqual(liquid.s, 1000.0, places=9)
+
+    def test_the_latent_heat_is_the_one_in_the_tables(self):
+        from engicalc.core.r134a import latent_heat, saturated
+
+        # This is the number the previous attempt got wrong by a factor of
+        # fifty while looking perfectly healthy everywhere else.
+        self.assertAlmostEqual(latent_heat(273.15) / 1000.0, 198.6,
+                               delta=0.1)
+        _liquid, vapour = saturated(273.15)
+        self.assertAlmostEqual(vapour.h / 1000.0, 398.6, delta=0.1)
+        self.assertAlmostEqual(vapour.s / 1000.0, 1.7274, delta=0.001)
+
+    def test_the_saturated_densities_are_the_ones_in_the_tables(self):
+        from engicalc.core.r134a import saturated
+
+        # The other thing the previous attempt got wrong. 1294.8 and
+        # 14.428 kg/m3 at 0 C.
+        liquid, vapour = saturated(273.15)
+        self.assertAlmostEqual(liquid.rho, 1294.8, delta=1.0)
+        self.assertAlmostEqual(vapour.rho, 14.428, delta=0.02)
+
+    def test_it_boils_at_the_right_temperature_at_one_atmosphere(self):
+        from engicalc.core.r134a import saturation_temperature
+
+        self.assertAlmostEqual(saturation_temperature(101325.0) - 273.15,
+                               -26.07, delta=0.02)
+
+    def test_the_critical_pressure_comes_out_of_the_critical_point(self):
+        from engicalc.core import r134a
+
+        got = r134a._pressure(r134a.T_CRITICAL, r134a.RHO_CRITICAL)
+        self.assertAlmostEqual(got / r134a.P_CRITICAL, 1.0, places=4)
+
+    def test_pressure_and_temperature_go_round_and_come_back(self):
+        from engicalc.core.r134a import at_pressure_and_temperature
+
+        for celsius, kpa in ((40, 500), (60, 1000), (100, 2000),
+                             (20, 100), (150, 5000)):
+            with self.subTest(celsius=celsius, kpa=kpa):
+                state = at_pressure_and_temperature(kpa * 1000.0,
+                                                    celsius + 273.15)
+                self.assertAlmostEqual(state.p / (kpa * 1000.0), 1.0,
+                                       places=6)
+                self.assertAlmostEqual(state.T, celsius + 273.15, places=9)
+
+    def test_saturation_goes_round_and_comes_back_too(self):
+        from engicalc.core.r134a import (saturation_pressure,
+                                         saturation_temperature)
+
+        for celsius in (-30, -10, 10, 30, 50, 70):
+            T = celsius + 273.15
+            with self.subTest(celsius=celsius):
+                self.assertAlmostEqual(
+                    saturation_temperature(saturation_pressure(T)), T,
+                    places=6)
+
+    def test_the_first_derivative_is_the_one_the_pressure_uses(self):
+        from engicalc.core.r134a import _residual
+
+        # The pressure is the first density derivative and nothing else, so
+        # it is the one derivative that has to be right for anything else to
+        # mean anything.
+        for delta in (0.01, 0.3, 1.0, 2.0, 2.6):
+            for tau in (0.9, 1.37, 2.2):
+                with self.subTest(delta=delta, tau=tau):
+                    step = 1e-6
+                    numeric = ((_residual(delta * (1 + step), tau)[0]
+                                - _residual(delta * (1 - step), tau)[0])
+                               / (2 * delta * step))
+                    self.assertAlmostEqual(
+                        _residual(delta, tau)[1] / numeric, 1.0, places=6)
+
+    def test_a_wet_mixture_sits_between_the_two_phases(self):
+        from engicalc.core.r134a import saturated, wet
+
+        liquid, vapour = saturated(273.15)
+        middle = wet(273.15, 0.5)
+        self.assertAlmostEqual(middle.h, (liquid.h + vapour.h) / 2,
+                               places=6)
+        self.assertAlmostEqual(middle.p, liquid.p, places=6)
+        # Volumes average, not densities, which is the one people get wrong.
+        self.assertAlmostEqual(
+            1.0 / middle.rho, (1.0 / liquid.rho + 1.0 / vapour.rho) / 2,
+            places=9)
+
+    def test_above_the_critical_point_there_is_no_saturation_line(self):
+        from engicalc.core.r134a import R134aError, saturated
+
+        with self.assertRaises(R134aError) as caught:
+            saturated(380.0)
+        self.assertIn("critical", str(caught.exception))
+
+    def test_outside_the_range_it_says_so_rather_than_extrapolating(self):
+        from engicalc.core.r134a import R134aError, state_at
+
+        with self.assertRaises(R134aError):
+            state_at(500.0, 20.0)
+        with self.assertRaises(R134aError):
+            state_at(100.0, 20.0)
+
+    def test_the_specific_heats_are_the_right_size(self):
+        from engicalc.core.r134a import saturated
+
+        # Not a precise check - a sanity one. Liquid R134a is about
+        # 1.3 kJ/kg K and its vapour about 0.9, and a formulation with a
+        # mangled ideal-gas part gets these wrong by a lot while the
+        # saturation line stays perfect.
+        liquid, vapour = saturated(273.15)
+        self.assertAlmostEqual(liquid.cp / 1000.0, 1.34, delta=0.06)
+        self.assertAlmostEqual(vapour.cp / 1000.0, 0.90, delta=0.06)
+        self.assertGreater(liquid.cp, liquid.cv)
+        self.assertGreater(vapour.cp, vapour.cv)
+
+
 class TestMotion(unittest.TestCase):
     """Straight-line motion, checked against itself and against arithmetic."""
 
