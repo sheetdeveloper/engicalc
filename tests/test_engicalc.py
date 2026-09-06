@@ -3341,6 +3341,334 @@ class TestBeamDiagrams(unittest.TestCase):
                          loads=[PointLoad(1, -1000)]))
 
 
+class TestSectionProperties(unittest.TestCase):
+    """Against the closed forms, and against the tables for real sections."""
+
+    def test_a_rectangle_is_the_formula_everyone_knows(self):
+        from engicalc.core.sections import solid_rectangle
+
+        p = solid_rectangle(60.0, 100.0).properties()
+        self.assertAlmostEqual(p.area, 6000.0, places=9)
+        self.assertAlmostEqual(p.ixx, 60.0 * 100.0 ** 3 / 12.0, places=6)
+        self.assertAlmostEqual(p.iyy, 100.0 * 60.0 ** 3 / 12.0, places=6)
+        self.assertAlmostEqual(p.z, 60.0 * 100.0 ** 2 / 6.0, places=6)
+        self.assertAlmostEqual(p.rx, 100.0 / math.sqrt(12.0), places=9)
+        # Symmetrical, so the axes given are already the principal ones.
+        self.assertAlmostEqual(p.ixy, 0.0, places=9)
+
+    def test_a_circle_is_pi_d_to_the_fourth_over_sixty_four(self):
+        from engicalc.core.sections import solid_round
+
+        p = solid_round(50.0).properties()
+        self.assertAlmostEqual(p.area, math.pi * 625.0, places=9)
+        self.assertAlmostEqual(p.ixx, math.pi * 50.0 ** 4 / 64.0, places=6)
+        self.assertAlmostEqual(p.ixx, p.iyy, places=9)
+
+    def test_two_halves_stacked_are_the_whole(self):
+        from engicalc.core.sections import Rectangle, Section
+
+        # The parallel axis theorem, which is the only thing in here that
+        # anybody gets wrong: about the centroid the two halves come to the
+        # whole, and about any other axis they do not.
+        whole = Section(parts=[Rectangle(width=40.0, height=90.0)])
+        halves = Section(parts=[
+            Rectangle(x=0.0, y=22.5, width=40.0, height=45.0),
+            Rectangle(x=0.0, y=-22.5, width=40.0, height=45.0)])
+        self.assertAlmostEqual(whole.properties().ixx,
+                               halves.properties().ixx, places=6)
+        self.assertAlmostEqual(whole.properties().cy,
+                               halves.properties().cy, places=9)
+
+    def test_a_hole_is_a_part_with_a_minus_sign(self):
+        from engicalc.core.sections import Rectangle, Section
+
+        box = Section(parts=[Rectangle(width=100.0, height=60.0),
+                             Rectangle(width=90.0, height=50.0,
+                                       solid=False)])
+        p = box.properties()
+        self.assertAlmostEqual(p.area, 100 * 60 - 90 * 50, places=9)
+        self.assertAlmostEqual(
+            p.ixx, (100 * 60 ** 3 - 90 * 50 ** 3) / 12.0, places=6)
+        # And a hole cannot make the section wider than the material is.
+        self.assertAlmostEqual(p.top, 30.0, places=9)
+
+    def test_holes_bigger_than_the_shape_are_refused(self):
+        from engicalc.core.sections import (Rectangle, Section, SectionError)
+
+        with self.assertRaises(SectionError):
+            Section(parts=[Rectangle(width=10.0, height=10.0),
+                           Rectangle(width=20.0, height=20.0,
+                                     solid=False)]).properties()
+
+    def test_a_triangle_by_its_corners(self):
+        from engicalc.core.sections import Polygon, Section
+
+        # bh^3/36 about the centroid, which sits a third of the way up.
+        base, height = 60.0, 40.0
+        p = Section(parts=[Polygon(points=[(0, 0), (base, 0),
+                                           (0, height)])]).properties()
+        self.assertAlmostEqual(p.area, base * height / 2.0, places=9)
+        self.assertAlmostEqual(p.cy, height / 3.0, places=9)
+        self.assertAlmostEqual(p.ixx, base * height ** 3 / 36.0, places=6)
+        self.assertAlmostEqual(p.iyy, height * base ** 3 / 36.0, places=6)
+
+    def test_corners_the_other_way_round_are_the_same_shape(self):
+        from engicalc.core.sections import Polygon, Section
+
+        # Traced clockwise the shoelace area comes out negative. Taken as it
+        # stands that quietly turns the shape into a hole.
+        points = [(0, 0), (60, 0), (0, 40)]
+        forwards = Section(parts=[Polygon(points=points)]).properties()
+        backwards = Section(parts=[
+            Polygon(points=list(reversed(points)))]).properties()
+        self.assertAlmostEqual(forwards.area, backwards.area, places=9)
+        self.assertAlmostEqual(forwards.ixx, backwards.ixx, places=6)
+        self.assertAlmostEqual(forwards.ixy, backwards.ixy, places=6)
+
+    def test_the_fillet_is_the_arc_it_says_it_is(self):
+        from engicalc.core.sections import Fillet, Polygon
+
+        # The four constants for the fillet were worked out by hand, and a
+        # hand-worked integral that is nearly right looks exactly like one
+        # that is. So it is put beside the same region drawn as a many-sided
+        # polygon, where the only error left is the chord across each arc.
+        radius, steps = 12.0, 600
+        exact = Fillet(radius=radius, across=1.0, up=1.0)
+        points = [(0.0, 0.0)]
+        for step in range(steps + 1):
+            angle = math.radians(270.0 - 90.0 * step / steps)
+            points.append((radius + radius * math.cos(angle),
+                           radius + radius * math.sin(angle)))
+        drawn = Polygon(points=points)
+
+        self.assertAlmostEqual(exact.area() / drawn.area(), 1.0, places=4)
+        for mine, theirs in zip(exact.centre(), drawn.centre()):
+            self.assertAlmostEqual(mine / theirs, 1.0, places=4)
+        for mine, theirs in zip(exact.own(), drawn.own()):
+            self.assertAlmostEqual(mine / theirs, 1.0, places=4)
+
+    def test_the_fillet_turns_round_with_the_corner(self):
+        from engicalc.core.sections import Fillet
+
+        # Only the product term knows which corner it is in. Getting that
+        # sign wrong is invisible on anything symmetrical, because the four
+        # of them cancel, and wrong on every angle and channel.
+        corners = {(a, u): Fillet(radius=10.0, across=a, up=u).own()[2]
+                   for a in (1.0, -1.0) for u in (1.0, -1.0)}
+        self.assertAlmostEqual(corners[(1.0, 1.0)], corners[(-1.0, -1.0)],
+                               places=9)
+        self.assertAlmostEqual(corners[(1.0, 1.0)], -corners[(1.0, -1.0)],
+                               places=9)
+
+    #: (name, d, b, tw, tf, r, area cm2, Ixx cm4, Iyy cm4).
+    #:
+    #: The published properties, beside the five dimensions on the drawing.
+    #: Three quantities landing on the tabulated figures at once, out of
+    #: five numbers typed in, is not something a wrongly assembled shape
+    #: does by luck.
+    ROLLED = [
+        ("305x165x40 UB", 303.4, 165.0, 6.0, 10.2, 8.9, 51.3, 8503.0, 764.0),
+        ("203x133x25 UB", 203.2, 133.2, 5.7, 7.8, 7.6, 32.0, 2340.0, 308.0),
+        ("152x152x30 UC", 157.6, 152.9, 6.5, 9.4, 7.6, 38.3, 1748.0, 560.0),
+    ]
+
+    def test_a_rolled_section_comes_out_at_its_tabulated_properties(self):
+        from engicalc.core.sections import i_section
+
+        for name, d, b, tw, tf, r, area, ixx, iyy in self.ROLLED:
+            with self.subTest(section=name):
+                p = i_section(d, b, tw, tf, r).properties()
+                self.assertAlmostEqual(p.area / 100.0, area, delta=0.15)
+                self.assertAlmostEqual(p.ixx / 1e4, ixx, delta=ixx * 0.005)
+                self.assertAlmostEqual(p.iyy / 1e4, iyy, delta=iyy * 0.005)
+
+    def test_leaving_the_root_radii_off_reads_low(self):
+        from engicalc.core.sections import i_section
+
+        # Which is the reason for going to the trouble of having them. Two
+        # percent of a second moment is two percent of every deflection
+        # worked from it.
+        for name, d, b, tw, tf, r, *_ in self.ROLLED:
+            with self.subTest(section=name):
+                rounded = i_section(d, b, tw, tf, r).properties().ixx
+                sharp = i_section(d, b, tw, tf, 0.0).properties().ixx
+                self.assertLess(sharp, rounded)
+                self.assertGreater(1.0 - sharp / rounded, 0.01)
+                self.assertLess(1.0 - sharp / rounded, 0.03)
+
+    def test_a_tube_is_the_difference_of_two_circles(self):
+        from engicalc.core.sections import hollow_circle
+
+        p = hollow_circle(114.3, 5.0).properties()
+        self.assertAlmostEqual(
+            p.ixx, math.pi * (114.3 ** 4 - 104.3 ** 4) / 64.0, places=6)
+        self.assertAlmostEqual(p.ixx, p.iyy, places=6)
+
+    def test_a_channel_is_not_centred_on_its_web(self):
+        from engicalc.core.sections import channel
+
+        # The first shape here whose centroid is somewhere you have to work
+        # out rather than somewhere you can see.
+        p = channel(200.0, 75.0, 6.0, 12.5, 12.0).properties()
+        self.assertGreater(p.cx, 6.0)
+        self.assertLess(p.cx, 75.0 / 2.0)
+        self.assertAlmostEqual(p.cy, 0.0, places=9)
+        # Symmetrical about the horizontal axis only, so Ixy still vanishes.
+        self.assertAlmostEqual(p.ixy, 0.0, places=6)
+
+    def test_an_angle_has_no_axis_of_symmetry_and_says_so(self):
+        from engicalc.core.sections import angle
+
+        p = angle(100.0, 75.0, 10.0, 10.0).properties()
+        self.assertNotAlmostEqual(p.ixy, 0.0, places=3)
+        first, second, turn = p.principal()
+        # Turning the axes cannot change the sum, which is what makes it a
+        # check rather than a restatement.
+        self.assertAlmostEqual(first + second, p.ixx + p.iyy, places=4)
+        self.assertGreater(first, p.ixx)
+        self.assertLess(second, p.iyy)
+        self.assertGreater(abs(turn), 5.0)
+        # And the weak axis is nowhere near either leg, which is the thing
+        # worth knowing about an angle.
+        self.assertLess(abs(turn), 85.0)
+
+    def test_the_smaller_modulus_is_the_one_that_governs(self):
+        from engicalc.core.sections import tee
+
+        p = tee(100.0, 100.0, 8.0, 10.0, 8.0).properties()
+        self.assertGreater(p.bottom, p.top)      # centroid up near the flange
+        self.assertLess(p.z_bottom, p.z_top)
+        self.assertEqual(p.z, p.z_bottom)
+
+    def test_bending_stress_is_m_y_over_i(self):
+        from engicalc.core.sections import i_section
+
+        p = i_section(303.4, 165.0, 6.0, 10.2, 8.9).properties()
+        moment = 120e6                            # N mm, which is 120 kN m
+        self.assertAlmostEqual(p.bending_stress(moment),
+                               moment * p.top / p.ixx, places=9)
+        self.assertAlmostEqual(p.bending_stress(moment, 0.0), 0.0, places=12)
+
+    def test_a_section_with_nothing_in_it_is_refused(self):
+        from engicalc.core.sections import Section, SectionError
+
+        with self.assertRaises(SectionError):
+            Section().properties()
+
+
+class TestSectionTable(unittest.TestCase):
+    """A table of numbers in a program has to justify itself."""
+
+    def test_every_row_reconciles_with_its_own_properties(self):
+        from engicalc.core import section_table
+
+        # This is what the table is for. Each row carries the dimensions and
+        # the published area and second moments; the properties are worked
+        # out from the dimensions and have to land on the published ones.
+        # Five numbers producing three at once is tight enough that a row
+        # which agrees is a row that is right - and two rows that would not
+        # agree were taken out rather than shipped.
+        off = section_table.reconcile()
+        self.assertEqual([], off, "\n".join(
+            f"{name}: {what} computed {mine:.4g}, table {theirs:.4g}, "
+            f"off by {error:.1%}" for name, what, mine, theirs, error in off))
+
+    def test_most_of_them_agree_far_more_closely_than_that(self):
+        from engicalc.core import section_table
+
+        # The tolerance is two percent because the published figures are
+        # rounded. If the shapes were being assembled roughly, the rows
+        # would sit up against that limit rather than nowhere near it.
+        worst = [error for _name, error in section_table.agreement()]
+        self.assertLess(sorted(worst)[len(worst) // 2], 0.005)
+        self.assertLess(max(worst), section_table.TOLERANCE)
+
+    def test_a_designation_builds_the_section_it_names(self):
+        from engicalc.core import section_table
+
+        built = section_table.build("305x165x40 UB")
+        self.assertEqual("305x165x40 UB", built.name)
+        self.assertAlmostEqual(built.properties().ixx / 1e4, 8503.0,
+                               delta=40.0)
+
+    def test_a_designation_nobody_has_heard_of_says_what_to_do(self):
+        from engicalc.core import section_table
+        from engicalc.core.sections import SectionError
+
+        with self.assertRaises(SectionError) as caught:
+            section_table.build("400x400x999 UB")
+        self.assertIn("dimensions", str(caught.exception))
+
+    def test_the_table_covers_the_shapes_it_claims_to(self):
+        from engicalc.core import section_table
+
+        found = {row[1] for row in section_table.TABLE}
+        self.assertEqual({"I section", "channel", "angle", "circular hollow"},
+                         found)
+
+
+class TestUnsymmetricalBending(unittest.TestCase):
+    """M y / I is the stress in a section with an axis of symmetry."""
+
+    def test_it_is_still_m_y_over_i_when_there_is_one(self):
+        from engicalc.core.sections import i_section
+
+        # The general form has to collapse back, or it is a second answer
+        # to a question that already had one.
+        section = i_section(303.4, 165.0, 6.0, 10.2, 8.9)
+        found = section.properties()
+        moment = 120e6
+        stress, _x, _y = section.worst_stress(moment)
+        self.assertAlmostEqual(abs(stress), moment / found.z, places=6)
+        self.assertAlmostEqual(found.stress_at(0.0, found.top, moment),
+                               moment * found.top / found.ixx, places=9)
+
+    def test_an_angle_is_worked_harder_than_m_y_over_i_says(self):
+        from engicalc.core.sections import angle
+
+        # Bending an angle about its x axis bends it sideways too, and the
+        # stress has a term in x that M y / I has dropped. On a 100x75x10
+        # that term is a third of the answer, which is not a refinement.
+        section = angle(100.0, 75.0, 10.0, 10.0)
+        found = section.properties()
+        moment = 120e6
+        simple = moment * found.top / found.ixx
+        stress, at_x, at_y = section.worst_stress(moment)
+        self.assertGreater(abs(stress), simple * 1.2)
+        # And it is worked hardest at the tip of the upstanding leg, which
+        # is neither the top fibre nor the bottom one.
+        self.assertAlmostEqual(at_y, 100.0, places=6)
+        self.assertLess(at_x, 20.0)
+
+    def test_the_worst_corner_is_found_rather_than_assumed(self):
+        from engicalc.core.sections import angle
+
+        # Every corner of the shape is asked. Nothing on the section may be
+        # worked harder than the answer says.
+        section = angle(100.0, 75.0, 10.0, 10.0)
+        found = section.properties()
+        worst = abs(section.worst_stress(80e6)[0])
+        for part in section.parts:
+            if not part.solid:
+                continue
+            for px, py in part.outline():
+                self.assertLessEqual(
+                    abs(found.stress_at(px - found.cx, py - found.cy, 80e6)),
+                    worst + 1e-9)
+
+    def test_square_toes_make_an_angle_stiffer_than_it_is(self):
+        from engicalc.core.sections import angle
+
+        # Which is why they are modelled: without them every angle read two
+        # to three percent stiff, and by more on the small ones - the shape
+        # of a missing radius rather than of a wrong dimension.
+        rolled = angle(100.0, 100.0, 10.0, 12.0).properties()
+        square = angle(100.0, 100.0, 10.0, 12.0, toe=0.0).properties()
+        self.assertGreater(square.ixx, rolled.ixx)
+        self.assertAlmostEqual(rolled.ixx / 1e4, 177.0, delta=1.0)
+        self.assertGreater(square.ixx / 1e4, 179.0)
+
+
 class TestMohrsCircle(unittest.TestCase):
     """Exact - there is nothing fitted or iterated here."""
 

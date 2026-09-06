@@ -12,18 +12,18 @@ worth reading in each of them.
 
 from __future__ import annotations
 
+import math
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-
-from ..core import beams, moody, tensile
-from ..core.display import fmt_number
-from ..core.mohr import Mohr
 from matplotlib.patches import Arc
 
+from ..core import beams, moody, section_table, sections, tensile
+from ..core.display import fmt_number
+from ..core.mohr import Mohr
 from ..core.parsing import ParseError, parse_number
 from ..export.excel import export_table
 from . import figures
@@ -889,9 +889,255 @@ class TensileTab(ChartTab):
         return curve.rows(), curve.notes
 
 
+# --------------------------------------------------------------------------
+class SectionTab(ChartTab):
+    """Area, centroid and second moment of area for a shape."""
+
+    title = "Section properties"
+    hint = "the centroid and the second moment, from the dimensions"
+
+    #: What the moment box means. Section properties are in millimetres and
+    #: bending moments are quoted in kilonewton metres, and 1 kN m is 10^6
+    #: N mm - which is the conversion this tab exists to get right for you.
+    N_MM_PER_KN_M = 1e6
+
+    #: Where a bending stress stops describing anything. Not a limit - the
+    #: number is still worked out and shown - but a stress of five thousand
+    #: newtons per square millimetre is a section that has already failed,
+    #: and saying so is more use than printing it without comment.
+    YIELD = 355.0
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+
+        ttk.Label(first, text="From the table").pack(side="left")
+        self.designation = tk.StringVar(value="305x165x40 UB")
+        picker = ttk.Combobox(first, state="readonly", width=17,
+                              textvariable=self.designation,
+                              values=["-"] + section_table.names())
+        picker.pack(side="left", padx=(4, 14))
+        picker.bind("<<ComboboxSelected>>", lambda e: self._from_table())
+
+        ttk.Label(first, text="or shape").pack(side="left")
+        self.shape = tk.StringVar(value="I section")
+        shapes = ttk.Combobox(first, state="readonly", width=18,
+                              textvariable=self.shape,
+                              values=list(sections.PROFILES))
+        shapes.pack(side="left", padx=(4, 14))
+        shapes.bind("<<ComboboxSelected>>", lambda e: self._shape_changed())
+
+        self.moment = self.field(first, "Bending moment", "120", "kN m")
+
+        # The dimension boxes are rebuilt when the shape changes, because
+        # which of them there are is part of what a shape is.
+        self.dimension_row = ttk.Frame(parent)
+        self.dimension_row.pack(fill="x", pady=(6, 0))
+        self.dimensions = {}
+        self.stress = None
+        self._shape_changed(draw=False)
+        self._from_table(draw=False)
+
+    # -- the dimension boxes ------------------------------------------------
+    def _shape_changed(self, draw: bool = True) -> None:
+        """Put up the boxes this shape is measured by.
+
+        Values are kept by name across the change, so switching an I section
+        to a tee keeps the depth and the flange you already typed rather
+        than making you type them again.
+        """
+        for child in self.dimension_row.winfo_children():
+            child.destroy()
+        _builder, wanted, starting = sections.PROFILES[self.shape.get()]
+        boxes = {}
+        for name, start in zip(wanted, starting):
+            holder = ttk.Frame(self.dimension_row)
+            holder.pack(side="left", padx=(0, 12))
+            ttk.Label(holder, text=name).pack(side="left")
+            was = self.dimensions.get(name)
+            variable = tk.StringVar(
+                value=was.get() if was is not None else f"{start:g}")
+            entry = ttk.Entry(holder, textvariable=variable, width=7,
+                              font=MONO)
+            entry.pack(side="left", padx=3)
+            entry.bind("<Return>", lambda e: self.refresh())
+            variable.trace_add("write", lambda *a: self._typed())
+            ttk.Label(holder, text=sections.DIMENSIONS.get(name, ""),
+                      style="Hint.TLabel").pack(side="left")
+            boxes[name] = variable
+        self.dimensions = boxes
+        ttk.Label(self.dimension_row, text="mm",
+                  style="Hint.TLabel").pack(side="left")
+        if draw:
+            self.refresh()
+
+    def _typed(self) -> None:
+        """Typing a dimension means this is no longer a catalogue section."""
+        if getattr(self, "_filling", False):
+            return
+        self.designation.set("-")
+        self.refresh()
+
+    def _from_table(self, draw: bool = True) -> None:
+        """Fill the boxes in from a designation."""
+        found = section_table.find(self.designation.get())
+        if found is None:
+            if draw:
+                self.refresh()
+            return
+        profile, dimensions = found
+        self._filling = True
+        try:
+            if self.shape.get() != profile:
+                self.shape.set(profile)
+                self._shape_changed(draw=False)
+            wanted = sections.PROFILES[profile][1]
+            for name, value in zip(wanted, dimensions):
+                self.dimensions[name].set(f"{value:g}")
+        finally:
+            self._filling = False
+        if draw:
+            self.refresh()
+
+    # -- working it out -----------------------------------------------------
+    def section(self):
+        builder, wanted, _starting = sections.PROFILES[self.shape.get()]
+        given = []
+        for name in wanted:
+            variable = self.dimensions.get(name)
+            text = "" if variable is None else variable.get().strip()
+            value = parse_number(text) if text else 0.0
+            if value is None:
+                raise ParseError(f"{name} is not a number.")
+            given.append(float(value))
+        told = self.designation.get()
+        return builder(*given,
+                       name=told if told and told != "-" else
+                       self.shape.get())
+
+    def draw(self) -> tuple:
+        section = self.section()
+        found = section.properties()
+
+        self.figure.clear()
+        axes = self.figure.add_subplot(111)
+        self._draw_section(axes, section, found)
+
+        rows = list(found.rows())
+        self.stress = None
+        moment = parse_number(self.moment.get().strip() or "0")
+        if moment:
+            # Millimetres in, kilonewton metres on the form, newtons per
+            # square millimetre out - which is megapascals, and is the unit
+            # every steel grade is quoted in.
+            stress, at_x, at_y = section.worst_stress(
+                float(moment) * self.N_MM_PER_KN_M)
+            self.stress = (stress, at_x, at_y)
+            rows.append(("largest bending stress", stress, "N/mm^2"))
+            rows.append(("at", at_x - found.bounds[0],
+                         f"mm from the left, {at_y - found.bounds[2]:g} mm "
+                         f"up"))
+        return rows, self._notes(section, found)
+
+    def _notes(self, section, found) -> list:
+        """What the numbers do not say on their own."""
+        notes = []
+        told = self.designation.get()
+        if told and told != "-":
+            notes.append(
+                f"{told}: worked out from its dimensions, not looked up. "
+                f"The table only fills the boxes in.")
+        else:
+            notes.append("Worked out from the dimensions as typed.")
+        if abs(found.ixy) > 1e-9 * max(found.ixx, found.iyy, 1.0):
+            _first, _second, turn = found.principal()
+            notes.append(
+                f"No axis of symmetry, so the stiff and weak axes are not "
+                f"the ones drawn - they lie {turn:.1f} degrees round. "
+                f"Bending it about x alone also bends it sideways, and the "
+                f"stress is worked out with the term that says so rather "
+                f"than by M y / I.")
+        if self.stress and abs(self.stress[0]) > self.YIELD:
+            notes.append(
+                f"{abs(self.stress[0]):.0f} N/mm2 is past the yield of "
+                f"ordinary structural steel, so the elastic answer above "
+                f"describes a section that is no longer elastic. The "
+                f"arithmetic is right and the section is too small.")
+        return notes
+
+    # -- the drawing --------------------------------------------------------
+    def _draw_section(self, axes, section, found) -> None:
+        """The shape, to scale, with the centroid on it.
+
+        The centroid is the one number on the list that can be checked by
+        looking at it, which is reason enough to draw the thing.
+        """
+        # Painted in the order the parts are listed, each one over the last:
+        # material in colour, holes in the background. That is the order the
+        # section was built in, so a corner cut off the outside and put back
+        # on the inside comes out the way it was meant to. Drawing all the
+        # solids first and then all the holes gave a rounded tube with
+        # square corners inside it.
+        for part in section.parts:
+            points = part.outline()
+            axes.fill([px for px, _ in points], [py for _, py in points],
+                      color="#1f4e79" if part.solid else "white",
+                      zorder=2, linewidth=0)
+
+        # Framed on the section, with the axes drawn long and left to the
+        # view to cut them off. The other way round - fitting the view to
+        # the lines - put a 100 mm angle in a 250 mm window.
+        left, right, bottom, top = found.bounds
+        span = max(right - left, top - bottom)
+        pad = 0.14 * span
+        reach = span * 1.5
+
+        axes.plot([found.cx - reach, found.cx + reach],
+                  [found.cy, found.cy], "--", color="#c0392b",
+                  linewidth=0.9, zorder=4)
+        axes.plot([found.cx, found.cx],
+                  [found.cy - reach, found.cy + reach], "--",
+                  color="#c0392b", linewidth=0.9, zorder=4)
+        axes.plot([found.cx], [found.cy], marker="o", markersize=5,
+                  color="#c0392b", zorder=5)
+        # Labelled on whichever side of the centroid has more room.
+        towards = 1 if (right - found.cx) > (found.cx - left) else -1
+        axes.annotate(f"centroid\n{found.cx - left:.4g}, "
+                      f"{found.cy - bottom:.4g} mm",
+                      (found.cx, found.cy), textcoords="offset points",
+                      xytext=(9 * towards, 9), fontsize=7, color="#c0392b",
+                      ha="left" if towards > 0 else "right")
+
+        if abs(found.ixy) > 1e-9 * max(found.ixx, found.iyy, 1.0):
+            # Only drawn when they are somewhere else. On a symmetrical
+            # section they lie along the axes already drawn, and a picture
+            # that says a thing twice is saying nothing the second time.
+            _first, _second, turn = found.principal()
+            for offset in (0.0, 90.0):
+                angle = math.radians(turn + offset)
+                axes.plot(
+                    [found.cx - reach * math.cos(angle),
+                     found.cx + reach * math.cos(angle)],
+                    [found.cy - reach * math.sin(angle),
+                     found.cy + reach * math.sin(angle)],
+                    "-.", color="#0b7a3b", linewidth=1.0, zorder=4)
+            axes.annotate(f"principal axes, {turn:.1f} deg", (0.02, 0.02),
+                          xycoords="axes fraction", fontsize=7,
+                          color="#0b7a3b")
+
+        axes.set_xlim(left - pad, right + pad)
+        axes.set_ylim(bottom - pad, top + pad)
+        axes.set_aspect("equal", adjustable="box")
+        axes.set_xlabel("mm", fontsize=8)
+        axes.grid(True, alpha=0.25, linestyle=":")
+        axes.tick_params(labelsize=7)
+        axes.set_title(section.name, fontsize=9, color="#333333")
+
+
 CHARTS = [
     ("  Stress and strain  ", TensileTab),
     ("  Beam  ", BeamTab),
+    ("  Section  ", SectionTab),
     ("  Mohr's circle  ", MohrTab),
     ("  Moody  ", MoodyTab),
 ]

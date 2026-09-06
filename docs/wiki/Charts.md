@@ -95,6 +95,75 @@ Sign convention: upward loads positive, sagging moment positive,
 anticlockwise couples positive, tension positive, distances from the
 left-hand end.
 
+## Section
+
+Area, centroid, second moment of area, section modulus and radius of
+gyration, for the shape a beam is actually made of. Give it a bending moment
+and it gives the stress as well.
+
+Two ways in. Pick a designation from the table - universal beams and
+columns, channels, equal and unequal angles, circular hollow sections - and
+it fills the dimension boxes in. Or ignore the table and type the dimensions
+of whatever you have. Either way the properties are worked out from the
+geometry, so the two routes cannot disagree with each other, and a section
+that is not in the list is served exactly as well as one that is.
+
+Shapes: I section, channel, tee, angle, rectangular hollow, circular hollow,
+round bar and flat bar. Anything else can be built from rectangles, circles
+and holes in the core module.
+
+### About the table
+
+A table of numbers in a program is a liability - nobody can see where it
+came from and a transposed digit reads like an answer forever. So this one
+carries its own check. Each row holds the dimensions *and* the published
+area and second moments, and the test suite works the properties out from
+the dimensions and compares. Five dimensions producing three published
+quantities at once is tight: a wrong web thickness moves the area, a wrong
+flange moves Ixx and Iyy by different amounts.
+
+Forty-eight rows agree, most of them to better than a fifth of a percent.
+Two more were removed rather than shipped, because they did not.
+
+What the check cannot tell you is whether the right name is on the row. It
+says the geometry is self-consistent, not that anyone looked the designation
+up correctly - so check the designation against your own tables before it
+goes into something that matters.
+
+### Radii
+
+The root radii are in, and so are the toe radii on angles. This is not
+fussiness. Square corners read a universal beam about 2% stiff and an angle
+2 to 3% stiff, and 2% of a second moment is 2% of every deflection worked
+from it. Putting the toe radii in at half the root radius took eleven angles
+from 2-3% out to under a third of a percent - which is the argument for
+having them.
+
+Rectangular hollow sections are rounded outside and inside too. Square
+corners read those about 3% stiff.
+
+### Bending stress
+
+Not `M y / I`. That is the stress in a section with an axis of symmetry,
+which is every shape here except the angles - and the angles are where it
+matters. The general form is used throughout:
+
+    sigma = [(Mx Iyy + My Ixy) y - (Mx Ixy + My Ixx) x] / (Ixx Iyy - Ixy^2)
+
+which collapses back to `M y / I` the moment Ixy is zero, so there is no
+need for both. On a 100x75x10 angle the term `M y / I` drops is a third of
+the answer.
+
+With that term in, the worst-stressed point is no longer the furthest fibre
+from the x axis - it is the furthest corner from the neutral axis, and the
+neutral axis is not horizontal. So every corner of the shape is asked and
+the tab says which one won.
+
+A section without an axis of symmetry also gets its principal axes drawn on
+the picture and reported in the table, because the weak axis of an angle is
+nowhere near either of its legs. That is why an unrestrained angle moves
+sideways when you load it downwards.
+
 ## Mohr's circle
 
 Give σx, σy and τxy and it draws the circle, marks the principal stresses,
