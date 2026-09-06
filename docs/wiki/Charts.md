@@ -648,6 +648,35 @@ It gives the answers these charts are famous for: **wood and carbon fibre
 beat steel for a light stiff beam** - which is why aircraft spars were made
 of spruce - and magnesium tops a light strong beam.
 
+### Into a calculation
+
+The beam and column tabs take a modulus and a yield stress from a grade,
+and so does the formula library: formulas that have somewhere to put a
+material grow a **Made of** box, and picking one fills those slots.
+
+The value arrives in whatever unit the formula is written in. The database
+quotes a modulus in GPa because that is how a modulus is quoted; the
+library writes its formulas in pascals; a slot asking for `g/cm^3` gets
+0.905 where the database holds 905. Converting at the point of use rather
+than storing a second copy means the two can never drift apart, and there
+is a test that every declared slot can actually be converted into - a slot
+nobody could convert into would fill with a number a thousand million
+times wrong and look perfectly fine.
+
+**Which slots take a material is declared on the formula, not worked out
+from the words**, and that is the whole of it. The word "density" appears
+twenty-one times in the library and six of those want a solid out of the
+database. The rest are air in a duct or water in a pipe. `rho` in the drag
+force equation and `rho` in the sheet weight equation have the same symbol,
+the same unit and the same description, and only one of them should ever
+be offered steel. No amount of reading the description separates them, so
+the formula says. Formulas with nothing to fill do not show the box.
+
+A property the chosen material does not record is left alone, and the box
+says which one - softwood has a density and no yield strength, so it fills
+one field of the specific-strength formula and tells you about the other.
+Every filled field stays editable, and says where its number came from.
+
 ### What it is not
 
 Indicative data for choosing between materials and for teaching the method.

@@ -10,13 +10,15 @@ FORMULAS = [
       {"Q": ("Heat transfer rate", "W"),
        "k": ("Thermal conductivity", "W/(m*K)"), "A": ("Area", "m^2"),
        "dT": ("Temperature difference", "K"), "L": ("Wall thickness", "m")},
+      made_of={"k": "conductivity"},
       assumptions="Steady, one-dimensional, constant k.",
       tags=("conduction",)),
 
     f("wall_resistance", "Conduction resistance - plane wall", "Resistance",
       "Rth = L/(k*A)",
       {"Rth": ("Thermal resistance", "K/W"), "L": ("Thickness", "m"),
-       "k": ("Thermal conductivity", "W/(m*K)"), "A": ("Area", "m^2")}),
+       "k": ("Thermal conductivity", "W/(m*K)"), "A": ("Area", "m^2")},
+      made_of={"k": "conductivity"}),
 
     f("cylinder_conduction", "Conduction through a cylindrical wall",
       "Conduction", "Q = 2*pi*k*L*dT/log(r2/r1)",
@@ -24,6 +26,7 @@ FORMULAS = [
        "k": ("Thermal conductivity", "W/(m*K)"), "L": ("Cylinder length", "m"),
        "dT": ("Temperature difference", "K"), "r2": ("Outer radius", "m"),
        "r1": ("Inner radius", "m")},
+      made_of={"k": "conductivity"},
       notes="log() is the natural logarithm."),
 
     f("newton_cooling", "Newton's law of cooling", "Convection",
@@ -84,6 +87,7 @@ FORMULAS = [
       {"Bi": ("Biot number", "-"), "h": ("Convective coefficient", "W/(m^2*K)"),
        "Lc": ("Characteristic length (V/A)", "m"),
        "k": ("Thermal conductivity of the solid", "W/(m*K)")},
+      made_of={"k": "conductivity"},
       notes="Bi < 0.1 justifies the lumped capacitance model."),
 
     f("lumped_capacitance", "Lumped capacitance cooling", "Transient",
@@ -93,6 +97,7 @@ FORMULAS = [
        "h": ("Convective coefficient", "W/(m^2*K)"), "A": ("Surface area", "m^2"),
        "t": ("Time", "s"), "rho": ("Density", "kg/m^3"), "V": ("Volume", "m^3"),
        "cp": ("Specific heat", "J/(kg*K)")},
+      made_of={"rho": "density", "cp": "specific_heat"},
       assumptions="Bi < 0.1."),
 
     f("nusselt", "Nusselt number", "Dimensionless", "Nu = h*L/k",
@@ -123,5 +128,6 @@ FORMULAS = [
       "alpha = k/(rho*cp)",
       {"alpha": ("Thermal diffusivity", "m^2/s"),
        "k": ("Thermal conductivity", "W/(m*K)"), "rho": ("Density", "kg/m^3"),
-       "cp": ("Specific heat", "J/(kg*K)")}),
+       "cp": ("Specific heat", "J/(kg*K)")},
+      made_of={"k": "conductivity", "rho": "density", "cp": "specific_heat"}),
 ]

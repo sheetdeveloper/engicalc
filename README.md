@@ -189,10 +189,11 @@ Geometry & Maths, and **HVAC & Sheet Metal**.
 The HVAC branch covers duct sizing and airflow, velocity pressure, duct
 friction, air changes, sensible load, fan power and the fan laws; and on the
 sheet-metal side bend allowance, setback, bend deduction, K-factor, sheet
-weight and rolled blank length. The bend maths matches the flat-pattern
-generator in the Sheet.Developments project exactly - a test checks the two
-against each other, because a blank cut from a number worked out here has to
-fold to the size the drawing says.
+weight and rolled blank length. The bend maths is the K-factor method a
+flat-pattern generator uses, and is checked against fixed values that any
+reader can verify by hand - because a blank cut from a number worked out
+here has to fold to the size the drawing says. Nothing here reaches into
+another program to check that; the numbers are written down.
 
 Every formula carries its variables, units, descriptions, typical values and
 assumptions. Pick what to solve for, fill in what you know, press Calculate.
@@ -206,6 +207,24 @@ parsed without evaluation and printed with the ordering left alone.
 800 of the 804 possible rearrangements (every variable of every formula) resolve
 symbolically; the four that can't - fin efficiency, Heron for the semi-perimeter,
 annuity interest rate - are solved numerically instead, and say so.
+
+**Made of** appears on the formulas that have somewhere to put a material,
+and fills those slots from the material database - a modulus into `E`, a
+yield strength into `sigma_y`, a conductivity into `k` - converted into
+whatever unit that formula is written in, so a database that quotes 210 GPa
+puts 2.1e11 into a slot asking for pascals.
+
+Which slots take a material is declared on the formula rather than worked
+out from the words, and that is the point of it. "Density" appears
+twenty-one times in the library and only six of those want a solid: the
+rest are air in a duct or water in a pipe. Nothing in the description tells
+those apart, so a picker that guessed would offer steel to a drag force.
+The ones that do not take a material do not show the picker at all.
+
+Only grades are offered, never classes, for the same reason the beam tab
+only offers grades. A property the chosen material does not record is left
+alone and said so, rather than filled from the materials that do record it.
+Every filled field stays editable and says where its number came from.
 
 **Sensitivity plot** sweeps one input across a range and plots the result.
 

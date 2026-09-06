@@ -42,6 +42,9 @@ def images_are_stale(owner: str) -> bool:
     _CACHE_ROOTS[owner] = root
     return True
 
+#: What a material picker says when nothing has been picked.
+BY_HAND = "typed in"
+
 MONO = ("Consolas", 10)
 MONO_BIG = ("Consolas", 12)
 

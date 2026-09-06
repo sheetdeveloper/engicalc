@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import units
 from .parsing import ParseError
 
 #: (what it is, its unit, whether processing moves it). The unit strings are
@@ -395,6 +396,67 @@ def with_property(name: str, grades=None) -> list:
     return [material for material in all_materials()
             if material.has(name) and (grades is None
                                        or material.grade == grades)]
+
+
+def value_in(material, prop: str, unit: str) -> float:
+    """One property of one material, in whatever unit is being asked for.
+
+    The database keeps each property in the unit it is normally quoted in
+    - a modulus in GPa, a strength in N/mm2 - and a formula asks in
+    whatever unit that formula is written in, which is usually pascals.
+    Converting here rather than storing a second copy means the two can
+    never drift apart.
+    """
+    if isinstance(material, str):
+        found = find(material)
+        if found is None:
+            raise MaterialError(f"No material called {material!r}.")
+        material = found
+    if prop not in PROPERTIES:
+        raise MaterialError(f"{prop!r} is not a material property.")
+    held = PROPERTIES[prop][1]
+    value = material.typical(prop)
+    if not unit or not held or unit == held:
+        return value
+    return float(units.convert(value, held, unit))
+
+
+def fill(material, variables) -> dict:
+    """Every slot in *variables* this material can fill, in the slot's unit.
+
+    A material that does not record a property fills nothing for it,
+    rather than filling it with the middle of the ones that do.
+    """
+    if isinstance(material, str):
+        material = find(material)
+    if material is None:
+        return {}
+    filled = {}
+    for variable in variables:
+        prop = getattr(variable, "material", "")
+        if prop and material.has(prop):
+            filled[variable.symbol] = value_in(material, prop, variable.unit)
+    return filled
+
+
+def can_fill(variables) -> list:
+    """The material properties a set of slots between them ask for."""
+    wanted = []
+    for variable in variables:
+        prop = getattr(variable, "material", "")
+        if prop and prop not in wanted:
+            wanted.append(prop)
+    return wanted
+
+
+def knowing(variables, grades=None) -> list:
+    """The materials that can fill at least one of these slots."""
+    wanted = can_fill(variables)
+    if not wanted:
+        return []
+    return [material.name for material in all_materials()
+            if (grades is None or material.grade == grades)
+            and any(material.has(prop) for prop in wanted)]
 
 
 # --------------------------------------------------------------------------

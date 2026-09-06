@@ -28,6 +28,7 @@ FORMULAS = [
       {"Q": ("Heat transferred", "J"), "m": ("Mass", "kg"),
        "c": ("Specific heat capacity", "J/(kg*K)", "4186"),
        "T2": ("Final temperature", "K"), "T1": ("Initial temperature", "K")},
+      made_of={"c": "specific_heat"},
       assumptions="No phase change; c constant over the range.",
       tags=("heat", "calorimetry")),
 
@@ -127,5 +128,6 @@ FORMULAS = [
        "c1": ("Specific heat 1", "J/(kg*K)"), "T1": ("Temperature 1", "K"),
        "m2": ("Mass 2", "kg"), "c2": ("Specific heat 2", "J/(kg*K)"),
        "T2": ("Temperature 2", "K")},
+      made_of={"c1": "specific_heat", "c2": "specific_heat"},
       assumptions="Adiabatic mixing, no phase change."),
 ]

@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import sympy as sp
 
+from ..core import materials
 from ..core.display import unicode_symbol
 from ..core.parsing import parse_input
 from ..export.excel import export_formula
@@ -14,7 +15,8 @@ from ..formulas.library import solve_formula
 from ..formulas.model import Formula, Variable
 from ..plotting.plot import sweep
 from . import mathrender
-from .widgets import AsyncRunner, MONO, ReadOnlyText, ScrollFrame
+from .widgets import (AsyncRunner, BY_HAND, MONO, ReadOnlyText,
+                      ScrollFrame)
 
 
 class LibraryTab(ttk.Frame):
@@ -25,6 +27,9 @@ class LibraryTab(ttk.Frame):
         self.runner = AsyncRunner(self)
         self.formula: Formula | None = None
         self.entries: dict[str, tk.StringVar] = {}
+        #: Slots the chosen material filled, so a rebuild of
+        #: the form does not quietly lose them.
+        self.filled: dict[str, float] = {}
         self.solution = None
         self._build()
         self.populate_tree()
@@ -105,6 +110,22 @@ class LibraryTab(ttk.Frame):
                        "field that wants metres and it converts.").pack(
                            anchor="w", pady=(2, 0))
 
+        # Only shown for the formulas that have somewhere to put a
+        # material. Most of the library has none, and a picker offering to
+        # fill nothing is worse than no picker.
+        self.material_row = ttk.Frame(right)
+        ttk.Label(self.material_row, text="Made of").pack(side="left")
+        self.material = tk.StringVar(value=BY_HAND)
+        self.material_box = ttk.Combobox(
+            self.material_row, textvariable=self.material, width=24,
+            state="readonly")
+        self.material_box.pack(side="left", padx=(4, 8))
+        self.material_box.bind("<<ComboboxSelected>>",
+                               lambda e: self.take_material())
+        self.material_hint = ttk.Label(self.material_row, text="",
+                                       style="Hint.TLabel")
+        self.material_hint.pack(side="left")
+
         self.inputs = ScrollFrame(right, height=210)
         self.inputs.pack(fill="both", expand=True, pady=8)
 
@@ -177,7 +198,53 @@ class LibraryTab(ttk.Frame):
         if symbols:
             self.target_var.set(symbols[0])
         self.result_math.clear()
+        self._offer_materials()
         self._build_inputs()
+
+    def _offer_materials(self) -> None:
+        """Show the picker if this formula has anywhere to put a material."""
+        self.filled = {}
+        wanted = materials.can_fill(self.formula.variables)
+        if not wanted:
+            self.material_row.pack_forget()
+            self.material.set(BY_HAND)
+            return
+        # Grades only. A class is a range, and a formula wants a number;
+        # handing over the middle of 250 to 1500 N/mm2 would look like an
+        # answer rather than like the guess it is.
+        offered = materials.knowing(self.formula.variables, grades=True)
+        self.material_box.configure(values=[BY_HAND] + offered)
+        if self.material.get() not in offered:
+            self.material.set(BY_HAND)
+        self.material_hint.configure(text=self._fills_what(wanted))
+        self.material_row.pack(fill="x", pady=(6, 0), before=self.inputs)
+
+    def take_material(self) -> None:
+        """Put this material's properties into the slots that take them."""
+        if self.formula is None:
+            return
+        self.filled = materials.fill(self.material.get(),
+                                     self.formula.variables)
+        wanted = materials.can_fill(self.formula.variables)
+        got = {v.material for v in self.formula.variables
+               if v.symbol in self.filled}
+        missing = [materials.PROPERTIES[p][0].lower()
+                   for p in wanted if p not in got]
+        if self.material.get() == BY_HAND:
+            self.material_hint.configure(text=self._fills_what(wanted))
+        elif missing:
+            # Said rather than filled from the materials that do record it,
+            # which would be a guess wearing an answer's face.
+            self.material_hint.configure(
+                text="no " + ", ".join(missing) + " recorded for this one")
+        else:
+            self.material_hint.configure(text="")
+        self._build_inputs()
+
+    @staticmethod
+    def _fills_what(wanted) -> str:
+        return "fills " + ", ".join(
+            materials.PROPERTIES[p][0].lower() for p in wanted)
 
     def _build_inputs(self) -> None:
         self.inputs.clear()
@@ -204,7 +271,11 @@ class LibraryTab(ttk.Frame):
                 row=index, column=0, sticky="w", padx=4, pady=1)
             ttk.Label(body, text=var.description).grid(
                 row=index, column=1, sticky="w", padx=4)
-            value = tk.StringVar(value="" if is_target else var.typical)
+            start = var.typical
+            from_material = var.symbol in self.filled and not is_target
+            if from_material:
+                start = f"{self.filled[var.symbol]:.6g}"
+            value = tk.StringVar(value="" if is_target else start)
             entry = ttk.Entry(body, textvariable=value, width=16, font=MONO)
             entry.grid(row=index, column=2, sticky="w", padx=4)
             if is_target:
@@ -214,10 +285,17 @@ class LibraryTab(ttk.Frame):
             self.entries[var.symbol] = value
             ttk.Label(body, text=var.unit).grid(row=index, column=3, sticky="w",
                                                 padx=4)
+            if from_material:
+                # Where a number came from matters as much as the number,
+                # and it stays editable - the database is indicative and
+                # the certificate for the actual batch is the authority.
+                ttk.Label(body, text=f"from {self.material.get()}",
+                          style="Hint.TLabel").grid(
+                    row=index, column=4, sticky="w", padx=4)
         # Column 4 absorbs the slack so the value boxes stay beside the
         # descriptions instead of being pushed to the far right.
         body.columnconfigure(1, minsize=200)
-        body.columnconfigure(4, weight=1)
+        body.columnconfigure(5, weight=1)
 
     def fill_defaults(self) -> None:
         if self.formula is None:

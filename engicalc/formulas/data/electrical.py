@@ -21,6 +21,7 @@ FORMULAS = [
       {"R": ("Resistance", "ohm"), "rho_e": ("Resistivity", "ohm*m", "1.68e-8"),
        "L": ("Conductor length", "m"),
        "A": ("Cross-sectional area", "m^2")},
+      made_of={"rho_e": "resistivity"},
       notes="Copper resistivity at 20 C is about 1.68e-8 ohm*m."),
 
     f("series_resistance", "Resistors in series", "Networks",
@@ -114,7 +115,8 @@ FORMULAS = [
       "Installation", "Vd = 2*I*rho_e*L/A",
       {"Vd": ("Voltage drop", "V"), "I": ("Current", "A"),
        "rho_e": ("Resistivity", "ohm*m", "1.68e-8"),
-       "L": ("One-way cable length", "m"), "A": ("Conductor area", "m^2")}),
+       "L": ("One-way cable length", "m"), "A": ("Conductor area", "m^2")},
+      made_of={"rho_e": "resistivity"}),
 
     f("energy_cost", "Energy cost of running a load", "Power",
       "Cost = P*t*rate/1000",

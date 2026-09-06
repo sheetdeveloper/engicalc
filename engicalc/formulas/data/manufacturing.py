@@ -29,18 +29,21 @@ FORMULAS = [
       "Materials", "UTS = 3.45*HB",
       {"UTS": ("Approx. tensile strength", "MPa"),
        "HB": ("Brinell hardness number", "-")},
+      made_of={"UTS": "uts"},
       notes="Rule of thumb for steels only; +/- 10% is typical.",
       assumptions="Carbon and low-alloy steels."),
 
     f("resilience", "Modulus of resilience", "Materials",
       "Ur = sigma_y^2/(2*E)",
       {"Ur": ("Modulus of resilience", "J/m^3"),
-       "sigma_y": ("Yield strength", "Pa"), "E": ("Young's modulus", "Pa")}),
+       "sigma_y": ("Yield strength", "Pa"), "E": ("Young's modulus", "Pa")},
+      made_of={"sigma_y": "yield", "E": "youngs"}),
 
     f("specific_strength", "Specific strength", "Materials",
       "SS = sigma_y/rho",
       {"SS": ("Specific strength", "N*m/kg"),
-       "sigma_y": ("Yield strength", "Pa"), "rho": ("Density", "kg/m^3")}),
+       "sigma_y": ("Yield strength", "Pa"), "rho": ("Density", "kg/m^3")},
+      made_of={"sigma_y": "yield", "rho": "density"}),
 
     f("arrhenius", "Arrhenius rate (diffusion, creep, ageing)", "Materials",
       "K = A*exp(-Ea/(Ru*T))",
@@ -76,6 +79,7 @@ FORMULAS = [
       {"m": ("Part mass", "g"), "rho": ("Material density", "g/cm^3", "1.24"),
        "Vpart": ("Bounding solid volume", "mm^3"),
        "IF": ("Effective infill/solidity fraction", "-", "0.2")},
+      made_of={"rho": "density"},
       notes="PLA ~1.24, PETG ~1.27, ABS ~1.04 g/cm^3.",
       tags=("3d printing", "quoting")),
 

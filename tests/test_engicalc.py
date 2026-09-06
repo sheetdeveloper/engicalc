@@ -5171,6 +5171,156 @@ class TestMaterials(unittest.TestCase):
             self.assertTrue(materials.find(name).grade)
 
 
+class TestMaterialsIntoFormulas(unittest.TestCase):
+    """Filling a formula from the database.
+
+    The interesting part is not the filling, it is the refusing: the word
+    "density" appears twenty-one times in the library and only six of
+    those want a solid out of the database. The rest are air in a duct or
+    water in a pipe, and nothing in the description tells the two apart.
+    """
+
+    def test_every_declared_slot_names_a_real_property(self):
+        from engicalc.core import materials
+        from engicalc.formulas.library import FormulaLibrary
+
+        library = FormulaLibrary(load_user=False)
+        declared = 0
+        for formula in library.all():
+            for variable in formula.variables:
+                if not variable.material:
+                    continue
+                declared += 1
+                with self.subTest(formula=formula.key, symbol=variable.symbol):
+                    self.assertIn(variable.material, materials.PROPERTIES)
+        self.assertGreater(declared, 30)
+
+    def test_every_declared_slot_can_be_converted_into(self):
+        from engicalc.core import materials, units
+        from engicalc.formulas.library import FormulaLibrary
+
+        # The database keeps a modulus in GPa and a strength in N/mm2,
+        # because that is how they are quoted; the library writes its
+        # formulas in pascals. A slot nobody can convert into would fill
+        # with a number a thousand million times wrong and look fine.
+        library = FormulaLibrary(load_user=False)
+        for formula in library.all():
+            for variable in formula.variables:
+                if not variable.material:
+                    continue
+                held = materials.PROPERTIES[variable.material][1]
+                with self.subTest(formula=formula.key, symbol=variable.symbol):
+                    self.assertTrue(
+                        units.compatible(held, variable.unit)
+                        or units.is_dimensionless(held),
+                        f"{held} does not convert to {variable.unit}")
+
+    def test_the_value_arrives_in_the_unit_the_formula_wants(self):
+        from engicalc.core import materials
+        from engicalc.formulas.library import FormulaLibrary
+
+        library = FormulaLibrary(load_user=False)
+        formula = library.get("strength_of_materials.hookes_law")
+        filled = materials.fill("S275 steel", formula.variables)
+        # The database says 210 GPa; the formula is written in pascals.
+        self.assertAlmostEqual(filled["E"], 210e9, delta=1e9)
+
+        # And the same property into a different unit.
+        grams = library.get("materials_manufacturing.print_mass")
+        self.assertEqual("g/cm^3", grams.variable("rho").unit)
+        filled = materials.fill("6082-T6 aluminium", grams.variables)
+        self.assertAlmostEqual(filled["rho"], 2.70, places=2)
+
+    def test_a_fluid_density_is_not_offered_a_solid(self):
+        from engicalc.core import materials
+        from engicalc.formulas.library import FormulaLibrary
+
+        # The whole reason the slot is declared rather than guessed from
+        # the words. Both of these call their variable a density.
+        library = FormulaLibrary(load_user=False)
+        drag = library.get("fluid_mechanics.drag_force")
+        self.assertIn("density", drag.variable("rho").description.lower())
+        self.assertEqual([], materials.can_fill(drag.variables))
+        self.assertEqual({}, materials.fill("S275 steel", drag.variables))
+
+        sheet = library.get("hvac_sheet_metal.sheet_weight")
+        self.assertIn("density", sheet.variable("rho").description.lower())
+        self.assertEqual(["density"], materials.can_fill(sheet.variables))
+
+    def test_a_gas_property_is_not_offered_one_either(self):
+        from engicalc.core import materials
+        from engicalc.formulas.library import FormulaLibrary
+
+        # The ratio of specific heats is dimensionless and belongs to a
+        # gas; nothing in the database has one, so nothing is offered.
+        library = FormulaLibrary(load_user=False)
+        for key in ("thermodynamics.cp_cv", "thermodynamics.otto_efficiency",
+                    "fluid_mechanics.speed_of_sound"):
+            with self.subTest(formula=key):
+                self.assertEqual(
+                    [], materials.can_fill(library.get(key).variables))
+
+    def test_a_property_the_material_lacks_is_left_alone(self):
+        from engicalc.core import materials
+        from engicalc.formulas.library import FormulaLibrary
+
+        # Rather than filled from the materials that do record it, which
+        # would be a guess wearing an answer's face.
+        library = FormulaLibrary(load_user=False)
+        formula = library.get("materials_manufacturing.specific_strength")
+        wood = materials.find("Softwood, along the grain")
+        self.assertFalse(wood.has("yield"))
+        filled = materials.fill(wood, formula.variables)
+        self.assertIn("rho", filled)
+        self.assertNotIn("sigma_y", filled)
+
+    def test_only_materials_that_can_fill_something_are_offered(self):
+        from engicalc.core import materials
+        from engicalc.formulas.library import FormulaLibrary
+
+        library = FormulaLibrary(load_user=False)
+        formula = library.get("electrical.resistivity")
+        offered = materials.knowing(formula.variables)
+        self.assertTrue(offered)
+        for name in offered:
+            with self.subTest(material=name):
+                self.assertTrue(materials.find(name).has("resistivity"))
+
+    def test_a_formula_filled_from_the_database_returns_the_database(self):
+        from engicalc.core import materials
+        from engicalc.formulas.library import FormulaLibrary, solve_formula
+
+        # The round trip that checks the declaration, the conversion and
+        # the algebra at once: fill E and nu for a grade, solve for G, and
+        # get back that grade's own recorded shear modulus.
+        library = FormulaLibrary(load_user=False)
+        formula = library.get("strength_of_materials.shear_modulus")
+        for name in materials.names(grades=True):
+            material = materials.find(name)
+            if not {"youngs", "poisson", "shear"} <= set(material.values):
+                continue
+            with self.subTest(material=name):
+                filled = materials.fill(material, formula.variables)
+                got = solve_formula(formula, "G",
+                                    {"E": repr(filled["E"]),
+                                     "nu": repr(filled["nu"])})
+                self.assertAlmostEqual(
+                    float(got.value) / filled["G"], 1.0,
+                    delta=materials.ELASTIC_TOLERANCE)
+
+    def test_declaring_a_slot_that_is_not_a_variable_is_refused(self):
+        from engicalc.formulas.model import make_builder
+
+        # A typo in a symbol would otherwise declare nothing and say
+        # nothing, and the picker would quietly fill one field short.
+        build = make_builder("Test")
+        with self.assertRaises(KeyError):
+            build("bad", "Bad", "Test", "y = E*x",
+                  {"y": ("Out", "Pa"), "E": ("Young's modulus", "Pa"),
+                   "x": ("Strain", "-")},
+                  made_of={"EE": "youngs"})
+
+
 class TestFailureTheories(unittest.TestCase):
     """Tresca and von Mises, against the states with known answers."""
 

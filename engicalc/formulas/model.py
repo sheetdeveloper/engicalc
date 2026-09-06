@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import sympy as sp
 
@@ -13,10 +13,20 @@ from ..core.parsing import parse_for_display, parse_input
 
 @dataclass(frozen=True)
 class Variable:
+    """One slot in a formula.
+
+    ``material`` names the property of a solid this slot takes, if it
+    takes one - and it is said on the formula rather than worked out from
+    the words. A drag force and a sheet of steel both call something
+    "density", and only one of them wants a material out of the database;
+    nothing in the description tells the two apart, so the formula has to.
+    """
+
     symbol: str
     description: str
     unit: str = ""
     typical: str = ""      # a sensible default value, as a string
+    material: str = ""     # the material property this slot takes, if any
 
     def label(self) -> str:
         return f"{self.symbol} - {self.description}" + (f" [{self.unit}]" if self.unit else "")
@@ -103,9 +113,17 @@ def make_builder(branch: str):
     """Return a short constructor bound to *branch* (keeps the data files terse)."""
 
     def build(key, name, category, equation, variables, notes="",
-              assumptions="", tags=(), reference=""):
+              assumptions="", tags=(), reference="", made_of=None):
+        made_of = made_of or {}
         vs = [Variable(sym, *rest) if isinstance(rest, tuple) else Variable(sym, rest)
               for sym, rest in variables.items()]
+        if made_of:
+            unknown = set(made_of) - {v.symbol for v in vs}
+            if unknown:
+                raise KeyError(f"{key}: made_of names {sorted(unknown)}, "
+                               f"which are not variables of this formula")
+            vs = [replace(v, material=made_of[v.symbol])
+                  if v.symbol in made_of else v for v in vs]
         slug = re.sub(r"[^a-z0-9]+", "_", branch.lower()).strip("_")
         return Formula(key=f"{slug}.{key}", name=name,
                        branch=branch, category=category, equation=equation,

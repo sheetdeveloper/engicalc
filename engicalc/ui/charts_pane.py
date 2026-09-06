@@ -31,11 +31,7 @@ from ..core.mohr import Mohr
 from ..core.parsing import ParseError, parse_number
 from ..export.excel import export_table
 from . import figures
-from .widgets import MONO, ScrollFrame
-
-
-#: What a material picker says when nothing is picked.
-BY_HAND = "typed in"
+from .widgets import BY_HAND, MONO, ScrollFrame
 
 
 def material_picker(tab, parent, label: str = "Material"):

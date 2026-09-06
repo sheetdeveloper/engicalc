@@ -9,6 +9,7 @@ FORMULAS = [
       "w = rho*g*t",
       {"w": ("Load per unit area", "N/m^2"), "rho": ("Density", "kg/m^3", "2400"),
        "g": ("Gravity", "m/s^2", "9.80665"), "t": ("Slab thickness", "m")},
+      made_of={"rho": "density"},
       notes="Reinforced concrete is about 2400 kg/m^3."),
 
     f("udl_reaction", "End reaction - simply supported UDL", "Beams",
@@ -46,13 +47,15 @@ FORMULAS = [
       {"N": ("Squash load", "N"), "fc": ("Concrete strength", "Pa"),
        "Ac": ("Net concrete area", "m^2"), "fy": ("Steel yield strength", "Pa"),
        "As": ("Steel area", "m^2")},
+      made_of={"fy": "yield"},
       notes="Unfactored, indicative only - apply the relevant code factors."),
 
     f("shrinkage_movement", "Thermal movement of a member", "Serviceability",
       "dL = alpha*L*dT",
       {"dL": ("Length change", "m"),
        "alpha": ("Coefficient of thermal expansion", "1/K", "12e-6"),
-       "L": ("Member length", "m"), "dT": ("Temperature change", "K")}),
+       "L": ("Member length", "m"), "dT": ("Temperature change", "K")},
+      made_of={"alpha": "expansion"}),
 
     f("survey_grade", "Gradient between two points", "Surveying",
       "G = (h2 - h1)/D*100",

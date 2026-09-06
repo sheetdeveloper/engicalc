@@ -172,6 +172,7 @@ FORMULAS = [
        "rho": ("Material density", "kg/m^3", "7850"),
        "t": ("Thickness", "m", "0.0012"),
        "A": ("Sheet area", "m^2", "1")},
+      made_of={"rho": "density"},
       notes="Mild steel is about 7850 kg/m^3, aluminium 2700, stainless "
             "8000. Watch the thickness unit - it is metres here, so 1.2 mm "
             "is 0.0012, or type 1.2 mm and it will convert.",
