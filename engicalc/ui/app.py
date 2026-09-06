@@ -14,7 +14,7 @@ from ..plotting.plot import spec_from_result
 from ..storage.history import DEFAULT_DB, History
 from .calculator_pane import CalculatorPane
 from .cards_tab import CardsTab
-from .graph_tab import GraphTab
+from .graph_pane import GraphPane
 from .history_tab import HistoryTab
 from .interpolate_tab import InterpolateTab
 from .matrix_tab import MatrixTab
@@ -23,6 +23,7 @@ from .properties_pane import PropertiesPane
 from .statistics_tab import StatisticsTab
 from .library_tab import LibraryTab
 from .reference_window import ReferenceWindow
+from .splash import Splash
 from .widgets import AsyncRunner, apply_theme
 
 ABOUT = """EngiCalc
@@ -62,7 +63,7 @@ def _remember_check_setting(value: bool) -> None:
 
 
 class EngiCalcApp(tk.Tk):
-    def __init__(self, db_path: str = DEFAULT_DB):
+    def __init__(self, db_path: str = DEFAULT_DB, show_splash: bool = False):
         super().__init__()
         self.title("EngiCalc - equation solver, grapher and formula library")
         self.geometry("1200x780")
@@ -84,8 +85,23 @@ class EngiCalcApp(tk.Tk):
             "write", lambda *a: _remember_check_setting(
                 self.check_at_start.get()))
 
+        # Up before the body, because the body is the slow part - the
+        # formula library and matplotlib are most of the second it takes.
+        splash = None
+        if show_splash:
+            try:
+                splash = Splash(self)
+            except Exception:                         # noqa: BLE001
+                splash = None     # never let the splash stop the app opening
+
         self._build_menu()
+        if splash:
+            splash.say("Loading the tabs...")
         self._build_body()
+        if splash:
+            splash.say("Ready")
+            self.after(Splash.LINGER if hasattr(Splash, "LINGER") else 450,
+                       splash.finish)
         self._maybe_check_at_start()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -238,7 +254,8 @@ class EngiCalcApp(tk.Tk):
         self.calculator_tab = self.calculator_pane.calculator
         self.simultaneous_tab = self.calculator_pane.simultaneous
         self.units_tab = self.calculator_pane.units
-        self.graph_tab = GraphTab(self.notebook, self)
+        self.graph_pane = GraphPane(self.notebook, self)
+        self.graph_tab = self.graph_pane.curves
         self.library_tab = LibraryTab(self.notebook, self)
         self.cards_tab = CardsTab(self.notebook, self)
         self.interpolate_tab = InterpolateTab(self.notebook, self)
@@ -251,19 +268,32 @@ class EngiCalcApp(tk.Tk):
         self.history_tab = HistoryTab(self.notebook, self)
 
         self.notebook.add(self.calculator_pane, text="  Calculator  ")
-        self.notebook.add(self.graph_tab, text="  Graph  ")
+        self.notebook.add(self.graph_pane, text="  Graph  ")
         self.notebook.add(self.library_tab, text="  Formula library  ")
         self.notebook.add(self.cards_tab, text="  Formula cards  ")
         self.notebook.add(self.interpolate_tab, text="  Interpolate  ")
         self.notebook.add(self.matrix_tab, text="  Matrices  ")
-        self.notebook.add(self.sheet_tab, text="  Sheet  ")
-        self.notebook.add(self.properties_pane, text="  Properties  ")
+        # "Sheet" reads as sheet metal or a spreadsheet, and it is neither -
+        # it is a calculation worked down the page in named steps. The
+        # operation string stays "sheet" so entries already in the history
+        # still reopen.
+        self.notebook.add(self.sheet_tab, text="  Worksheet  ")
+        # "Properties" says nothing - everything in the app is a
+        # property of something. These are fluid properties.
+        self.notebook.add(self.properties_pane,
+                          text="  Fluid properties  ")
         self.notebook.add(self.statistics_tab, text="  Data  ")
         self.notebook.add(self.history_tab, text="  History  ")
 
-        self.status = ttk.Label(self, text="Ready", style="Hint.TLabel",
+        footer = ttk.Frame(self)
+        footer.pack(fill="x", side="bottom")
+        self.status = ttk.Label(footer, text="Ready", style="Hint.TLabel",
                                 anchor="w", padding=(10, 2))
-        self.status.pack(fill="x", side="bottom")
+        self.status.pack(side="left")
+        # Readable without opening a menu: "which version is this" should
+        # not need a dialog to answer.
+        ttk.Label(footer, text=f"EngiCalc {__version__}",
+                  style="Hint.TLabel", padding=(10, 2)).pack(side="right")
 
     # -- cross-tab plumbing ----------------------------------------------
     def set_status(self, text: str) -> None:
@@ -294,11 +324,13 @@ class EngiCalcApp(tk.Tk):
 
     def plot_result(self, result) -> None:
         self.graph_tab.show_spec(spec_from_result(result))
-        self.notebook.select(self.graph_tab)
+        self.notebook.select(self.graph_pane)
+        self.graph_pane.show_curves()
 
     def show_series(self, xs, ys, xlabel, ylabel, title) -> None:
         self.graph_tab.show_series(xs, ys, xlabel, ylabel, title)
-        self.notebook.select(self.graph_tab)
+        self.notebook.select(self.graph_pane)
+        self.graph_pane.show_curves()
 
     def reopen_entry(self, entry) -> None:
         """Load a stored calculation back into the tab it came from."""
@@ -393,5 +425,7 @@ Graph tab
 
 
 def main() -> None:
-    app = EngiCalcApp()
+    # The splash is for someone starting the app, not for a test opening a
+    # window - hence the flag rather than always.
+    app = EngiCalcApp(show_splash=True)
     app.mainloop()

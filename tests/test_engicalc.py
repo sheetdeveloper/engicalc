@@ -2403,8 +2403,8 @@ class TestReopenFromHistory(unittest.TestCase):
         self.app.update_idletasks()
 
         expected = {"convert": "Calculator / Units",
-                    "system": "Calculator / Solved together",
-                    "sheet": "Sheet",
+                    "system": "Calculator / Simultaneous",
+                    "sheet": "Worksheet",
                     "statistics": "Data"}
         for entry in self.app.history.recent(limit=20):
             if entry.operation not in expected:
@@ -2935,6 +2935,265 @@ class TestSweep(unittest.TestCase):
         self.assertTrue(list(kept.values())[0].has(sp.I))
         tidied = _tidy({sp.Symbol("x"): sp.Float(3.0) + sp.Float(1e-18) * sp.I})
         self.assertFalse(list(tidied.values())[0].has(sp.I))
+
+
+# --------------------------------------------------------------------------
+# The standard engineering charts
+# --------------------------------------------------------------------------
+class TestBeamDiagrams(unittest.TestCase):
+    """Shear and moment, against the results every textbook quotes."""
+
+    def test_a_point_load_on_a_simple_span(self):
+        from engicalc.core.beams import Beam, PointLoad, analyse
+
+        # 12 kN at 2 m of a 6 m span: reactions 8 and 4 kN, and the moment
+        # under the load is Pab/L = 16 kN m.
+        result = analyse(Beam(length=6, supports=[0, 6],
+                              loads=[PointLoad(2, -12000)]))
+        self.assertAlmostEqual(result.reactions[0], 8000.0, places=6)
+        self.assertAlmostEqual(result.reactions[6], 4000.0, places=6)
+        at, moment = result.max_moment
+        self.assertAlmostEqual(at, 2.0, places=2)
+        self.assertAlmostEqual(moment, 16000.0, places=3)
+
+    def test_a_spread_load_on_a_simple_span(self):
+        from engicalc.core.beams import Beam, Distributed, analyse
+
+        # wL^2/8 at midspan, which is the one everybody remembers.
+        result = analyse(Beam(length=4, supports=[0, 4],
+                              loads=[Distributed(0, 4, -5000)]))
+        self.assertAlmostEqual(result.reactions[0], 10000.0, places=6)
+        at, moment = result.max_moment
+        self.assertAlmostEqual(at, 2.0, places=2)
+        self.assertAlmostEqual(moment, 10000.0, places=2)
+
+    def test_a_cantilever_hogs_at_the_wall_and_is_free_at_the_tip(self):
+        from engicalc.core.beams import Beam, PointLoad, analyse
+
+        # This was wrong: the couple and the sagging moment have opposite
+        # signs, and adding them as though they agreed put 30 kN m at the
+        # free end, where there is nothing left to bend it.
+        result = analyse(Beam(length=3, supports=[0], kind="cantilever",
+                              loads=[PointLoad(3, -5000)]))
+        self.assertAlmostEqual(float(result.moment[0]), -15000.0, places=3)
+        self.assertAlmostEqual(float(result.moment[-1]), 0.0, places=6)
+
+    def test_a_cantilever_under_a_spread_load(self):
+        from engicalc.core.beams import Beam, Distributed, analyse
+
+        # wL^2/2 at the wall.
+        result = analyse(Beam(length=4, supports=[0], kind="cantilever",
+                              loads=[Distributed(0, 4, -2000)]))
+        self.assertAlmostEqual(float(result.moment[0]), -16000.0, places=3)
+        self.assertAlmostEqual(float(result.moment[-1]), 0.0, places=6)
+
+    def test_the_diagrams_close_to_zero(self):
+        from engicalc.core.beams import Beam, PointLoad, analyse
+
+        # A beam in equilibrium has both back at zero at the far end. If it
+        # does not, the reactions were wrong rather than the drawing.
+        result = analyse(Beam(length=6, supports=[0, 6],
+                              loads=[PointLoad(2, -12000)]))
+        self.assertEqual([], result.notes)
+        self.assertAlmostEqual(float(result.shear[-1]), 0.0, places=6)
+
+    def test_a_load_off_the_end_is_refused(self):
+        from engicalc.core.beams import Beam, BeamError, PointLoad, analyse
+
+        with self.assertRaises(BeamError):
+            analyse(Beam(length=3, supports=[0, 3],
+                         loads=[PointLoad(5, -1000)]))
+
+
+class TestMohrsCircle(unittest.TestCase):
+    """Exact - there is nothing fitted or iterated here."""
+
+    def test_a_textbook_state(self):
+        from engicalc.core.mohr import Mohr
+
+        state = Mohr(80, -40, 25)
+        self.assertAlmostEqual(state.sigma_1, 85.0, places=9)
+        self.assertAlmostEqual(state.sigma_2, -45.0, places=9)
+        self.assertAlmostEqual(state.tau_max, 65.0, places=9)
+
+    def test_the_sum_of_the_principals_is_invariant(self):
+        from engicalc.core.mohr import Mohr
+
+        # Turning the axes cannot change it, which is what makes it a check.
+        for state in (Mohr(80, -40, 25), Mohr(-10, 60, -30), Mohr(5, 5, 0)):
+            with self.subTest(state=state):
+                self.assertAlmostEqual(state.sigma_1 + state.sigma_2,
+                                       state.sigma_x + state.sigma_y,
+                                       places=9)
+
+    def test_the_shear_vanishes_on_the_principal_planes(self):
+        from engicalc.core.mohr import Mohr
+
+        state = Mohr(80, -40, 25)
+        direct, shear = state.at_angle(state.theta_p)
+        self.assertAlmostEqual(shear, 0.0, places=9)
+        self.assertAlmostEqual(direct, state.sigma_1, places=9)
+
+    def test_pure_shear_gives_equal_and_opposite_principals_at_45(self):
+        from engicalc.core.mohr import Mohr
+
+        state = Mohr(0, 0, 50)
+        self.assertAlmostEqual(state.sigma_1, 50.0, places=9)
+        self.assertAlmostEqual(state.sigma_2, -50.0, places=9)
+        self.assertAlmostEqual(state.theta_p, 45.0, places=9)
+
+
+class TestMoody(unittest.TestCase):
+    """Colebrook solved rather than approximated."""
+
+    def test_laminar_is_exactly_64_over_re(self):
+        from engicalc.core.moody import friction_factor
+
+        factor, regime, _note = friction_factor(1000.0, 0.0)
+        self.assertAlmostEqual(factor, 0.064, places=12)
+        self.assertEqual(regime, "laminar")
+
+    def test_colebrook_is_actually_solved(self):
+        import math
+
+        from engicalc.core.moody import colebrook
+
+        # The equation has the factor on both sides; the answer has to
+        # satisfy it, not merely be near it.
+        for reynolds, roughness in ((1e5, 0.001), (1e6, 0.0), (1e7, 0.02)):
+            with self.subTest(re=reynolds, rr=roughness):
+                factor = colebrook(reynolds, roughness)
+                left = 1.0 / math.sqrt(factor)
+                right = -2.0 * math.log10(
+                    roughness / 3.7 + 2.51 / (reynolds * math.sqrt(factor)))
+                self.assertAlmostEqual(left, right, places=10)
+
+    def test_it_lands_where_the_printed_chart_does(self):
+        from engicalc.core.moody import friction_factor
+
+        self.assertAlmostEqual(friction_factor(1e5, 0.0)[0], 0.0180,
+                               places=3)
+        self.assertAlmostEqual(friction_factor(1e5, 0.001)[0], 0.0222,
+                               places=3)
+
+    def test_the_transition_says_it_is_not_dependable(self):
+        from engicalc.core.moody import friction_factor
+
+        # Between about 2300 and 4000 the answer depends on the pipe rather
+        # than on the numbers, and saying so is more use than a figure that
+        # looks as firm as the others.
+        _factor, regime, note = friction_factor(3000.0, 0.0)
+        self.assertEqual(regime, "transitional")
+        self.assertIn("estimate", note)
+
+
+class TestTensile(unittest.TestCase):
+    """Reading a stress-strain curve the way a ruler would."""
+
+    def curve(self):
+        import numpy as np
+
+        modulus, yield_stress = 200000.0, 250.0
+        elastic = np.linspace(0, yield_stress / modulus, 30)
+        plastic = np.linspace(yield_stress / modulus, 0.20, 120)[1:]
+        strain = np.concatenate([elastic, plastic])
+        stress = np.where(strain <= yield_stress / modulus,
+                          modulus * strain,
+                          400 - 150 * np.exp(
+                              -(strain - yield_stress / modulus) * 25))
+        return strain, stress
+
+    def test_it_finds_the_modulus_it_was_built_with(self):
+        from engicalc.core.tensile import read_curve
+
+        strain, stress = self.curve()
+        result = read_curve(strain, stress)
+        self.assertAlmostEqual(result.modulus / 200000.0, 1.0, places=3)
+
+    def test_it_finds_where_the_straight_part_ends(self):
+        from engicalc.core.tensile import read_curve
+
+        # The curve was built with exactly thirty straight points, and how
+        # much of it counts as straight is the one judgement in the reading.
+        strain, stress = self.curve()
+        self.assertEqual(read_curve(strain, stress).elastic_points, 30)
+
+    def test_the_proof_stress_sits_above_the_proportional_limit(self):
+        from engicalc.core.tensile import read_curve
+
+        strain, stress = self.curve()
+        result = read_curve(strain, stress)
+        self.assertGreater(result.proof_stress, result.proportional_limit)
+        self.assertLess(result.proof_stress, result.ultimate)
+
+    def test_the_offset_line_is_where_it_should_be(self):
+        from engicalc.core.tensile import read_curve
+
+        # The proof stress lies on the offset line by construction, so it
+        # has to satisfy its equation.
+        strain, stress = self.curve()
+        result = read_curve(strain, stress, offset=0.002)
+        expected = result.modulus * (result.proof_strain - 0.002)
+        self.assertAlmostEqual(result.proof_stress / expected, 1.0, places=2)
+
+    def test_a_curve_with_no_straight_part_is_refused(self):
+        from engicalc.core.tensile import TensileError, read_curve
+
+        with self.assertRaises(TensileError):
+            read_curve([0, 1, 2, 3, 4, 5], [0, 9, 1, 8, 2, 7])
+
+    def test_readings_have_to_be_in_order(self):
+        from engicalc.core.tensile import TensileError, read_curve
+
+        with self.assertRaises(TensileError):
+            read_curve([0, 0.1, 0.05, 0.2, 0.3], [0, 10, 20, 30, 40])
+
+
+class TestPhasors(unittest.TestCase):
+    """Complex numbers the way an engineer writes them."""
+
+    def test_polar_and_rectangular_are_the_same_number(self):
+        from engicalc.core.phasor import read
+
+        rectangular = read("3+4j")
+        self.assertAlmostEqual(rectangular.magnitude, 5.0, places=9)
+        self.assertAlmostEqual(rectangular.angle, 53.13010235, places=6)
+        polar = read("5 angle 53.13010235")
+        self.assertAlmostEqual(polar.real, 3.0, places=6)
+        self.assertAlmostEqual(polar.imaginary, 4.0, places=6)
+
+    def test_multiplying_multiplies_the_magnitudes_and_adds_the_angles(self):
+        from engicalc.core.phasor import combine, read
+
+        # Which is the reason polar form exists.
+        answer = combine(read("5 angle 53.13"), "x", read("5 angle 30"))
+        self.assertAlmostEqual(answer.magnitude, 25.0, places=6)
+        self.assertAlmostEqual(answer.angle, 83.13, places=6)
+
+    def test_the_argument_knows_which_quadrant_it_is_in(self):
+        from engicalc.core.phasor import from_rectangular
+
+        # atan(y/x) cannot tell these apart and returns 45 for both.
+        self.assertAlmostEqual(from_rectangular(1, 1).angle, 45.0, places=9)
+        self.assertAlmostEqual(from_rectangular(-1, -1).angle, -135.0,
+                               places=9)
+
+    def test_the_roots_are_all_of_them_and_evenly_spaced(self):
+        from engicalc.core.phasor import from_rectangular, roots
+
+        found = roots(from_rectangular(1, 0), 3)
+        self.assertEqual(len(found), 3)
+        angles = sorted(root.angle for root in found)
+        self.assertAlmostEqual(angles[1] - angles[0], 120.0, places=6)
+        self.assertAlmostEqual(angles[2] - angles[1], 120.0, places=6)
+
+    def test_something_that_is_not_a_complex_number_is_refused(self):
+        from engicalc.core.phasor import PhasorError, read
+
+        with self.assertRaises(PhasorError):
+            read("")
+        with self.assertRaises(PhasorError):
+            read("not a number at all")
 
 
 # --------------------------------------------------------------------------

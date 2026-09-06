@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from . import mathrender
-from .pad import GROUPS, by_group, common_items
+from .pad import GROUPS, TOPICS, by_group, common_items
 from .widgets import ScrollFrame
 
 
@@ -36,8 +36,12 @@ class SymbolPad(ttk.Frame):
         self.columns = 12
         self._images: dict[str, tk.PhotoImage] = {}
         self._sections: list[tuple] = []     # (frame, [buttons]) to re-grid
+        #: (group name, its heading, its frame) so a topic can hide the
+        #: groups it does not want without rebuilding anything.
+        self._groups: list[tuple] = []
         self._cell = None                    # measured key width
         self.expanded = tk.BooleanVar(value=False)
+        self.topic = tk.StringVar(value="Everything")
 
         self.compact = ttk.Frame(self)
         self.compact.pack(fill="x")
@@ -49,6 +53,11 @@ class SymbolPad(ttk.Frame):
         self.toggle_button = ttk.Button(toggle, text="Full pad  v", width=11,
                                         command=self.toggle)
         self.toggle_button.pack()
+        self.topic_box = ttk.Combobox(toggle, state="readonly", width=11,
+                                      textvariable=self.topic,
+                                      values=list(TOPICS))
+        self.topic_box.bind("<<ComboboxSelected>>",
+                            lambda e: self.show_topic(self.topic.get()))
 
         self.full = ScrollFrame(self, height=self.FULL_HEIGHT)
 
@@ -105,8 +114,29 @@ class SymbolPad(ttk.Frame):
             header.pack(fill="x", padx=2, pady=(6, 1))
             frame = ttk.Frame(self.full.body)
             frame.pack(fill="x")
+            self._groups.append((group, header, frame))
             self._sections.append(
                 (frame, [self._button(frame, item) for item in items]))
+
+    def show_topic(self, topic: str) -> None:
+        """Show only the groups of keys that topic wants.
+
+        Nothing is rebuilt - the groups are packed and unpacked - so the
+        keys keep their images and their measured width and switching is
+        instant.
+        """
+        wanted = TOPICS.get(topic, GROUPS)
+        for group, header, frame in self._groups:
+            header.pack_forget()
+            frame.pack_forget()
+        for group, header, frame in self._groups:
+            if group in wanted:
+                header.pack(fill="x", padx=2, pady=(6, 1))
+                frame.pack(fill="x")
+        self.topic.set(topic)
+        if self.expanded.get():
+            self.after_idle(self._regrid)
+
 
     # -- layout -----------------------------------------------------------
     def _cell_width(self) -> int:
@@ -171,10 +201,14 @@ class SymbolPad(ttk.Frame):
     def toggle(self) -> None:
         if self.expanded.get():
             self.full.pack_forget()
+            self.topic_box.pack_forget()
             self.toggle_button.configure(text="Full pad  v")
             self.expanded.set(False)
         else:
             self.full.pack(fill="x", pady=(6, 0))
+            # Only worth offering while the full pad is showing: the compact
+            # row is the same handful of keys whatever you are doing.
+            self.topic_box.pack(pady=(4, 0))
             self.toggle_button.configure(text="Hide pad  ^")
             self.expanded.set(True)
             self.after_idle(self._regrid)

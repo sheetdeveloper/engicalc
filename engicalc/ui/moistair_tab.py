@@ -175,9 +175,13 @@ class MoistAirTab(ttk.Frame):
     def _fill(self) -> None:
         self.table.clear()
         body = self.table.body
-        for index, (label, value, unit) in enumerate(self.air.rows()):
-            ttk.Label(body, text=label, width=22, anchor="w").grid(
-                row=index, column=0, sticky="w", pady=1)
+        for index, (symbol, label, value, unit) in enumerate(
+                self.air.rows()):
+            ttk.Label(body, text=symbol, width=5, anchor="w",
+                      font=("Cambria", 11, "italic")).grid(
+                          row=index, column=0, sticky="w", padx=(2, 0))
+            ttk.Label(body, text=label, width=20, anchor="w").grid(
+                row=index, column=0, sticky="w", pady=1, padx=(40, 0))
             shown = "-" if value != value else fmt_number(value, 7)
             ttk.Label(body, text=shown, width=16, anchor="e",
                       font=MONO).grid(row=index, column=1, sticky="e", padx=6)
@@ -189,9 +193,9 @@ class MoistAirTab(ttk.Frame):
         if self.air is None:
             return ""
         lines = [f"Moist air at {self.air.pressure:g} kPa"]
-        for label, value, unit in self.air.rows():
+        for symbol, label, value, unit in self.air.rows():
             shown = "-" if value != value else fmt_number(value, 7)
-            lines.append(f"    {label:20} {shown} {unit}")
+            lines.append(f"    {symbol:5} {label:20} {shown} {unit}")
         if self.air.note:
             lines.append(f"    ({self.air.note})")
         return "\n".join(lines)
@@ -216,9 +220,10 @@ class MoistAirTab(ttk.Frame):
                        f"{self.air.relative_humidity * 100:.1f}% RH",
             variable="humidity ratio, enthalpy")
         result.result_text = self._as_text()
-        for label, value, unit in self.air.rows():
+        for symbol, label, value, unit in self.air.rows():
             shown = "-" if value != value else fmt_number(value, 7)
-            result.steps.append(Step(label, detail=f"{shown} {unit}"))
+            result.steps.append(Step(f"{symbol}, {label}",
+                                     detail=f"{shown} {unit}"))
         self.app.history.add_result(
             result, project=self.app.project.get(),
             source={"dry": self.dry.get(), "pressure": self.pressure.get(),
@@ -248,10 +253,10 @@ class MoistAirTab(ttk.Frame):
             initialfile="moist-air.xlsx")
         if not path:
             return
-        rows = [[label, value, unit] for label, value, unit
-                in self.air.rows()]
+        rows = [[symbol, label, value, unit]
+                for symbol, label, value, unit in self.air.rows()]
         try:
-            export_table(("Property", "Value", "Unit"), rows, path,
+            export_table(("Symbol", "Property", "Value", "Unit"), rows, path,
                          title="Moist air", sheet="Moist air")
             self.status.configure(text="Exported")
         except Exception as exc:                       # noqa: BLE001

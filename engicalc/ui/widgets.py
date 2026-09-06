@@ -172,7 +172,28 @@ def apply_theme(root: tk.Tk) -> None:
     style.configure("TPanedwindow", background=BG)
     style.configure("Sash", sashthickness=6, gripcount=0)
 
+    _side_tabs(style)
     root.configure(background=BG)
+
+
+
+#: Sub-tabs run down the left with an icon as well as a label. Set on the
+#: notebook with style="Side.TNotebook".
+def _side_tabs(style) -> None:
+    """A notebook whose tabs run down the left-hand side.
+
+    Only clam lets `tabposition` be set at all, which is why the app is on
+    clam; the native themes draw their own tabs and ignore it.
+    """
+    style.configure("Side.TNotebook", tabposition="wn", background=BG,
+                    borderwidth=0, tabmargins=(0, 4, 0, 0))
+    style.configure("Side.TNotebook.Tab", background=BG, foreground=MUTED,
+                    padding=(12, 9), borderwidth=0, anchor="w",
+                    font=("Segoe UI", 9))
+    style.map("Side.TNotebook.Tab",
+              background=[("selected", SURFACE), ("active", ACCENT_SOFT)],
+              foreground=[("selected", ACCENT), ("active", ACCENT)],
+              font=[("selected", ("Segoe UI", 9, "bold"))])
 
 
 class ScrollFrame(ttk.Frame):

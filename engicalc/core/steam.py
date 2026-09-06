@@ -246,14 +246,16 @@ class State:
         return 1.0 / self.v if self.v else float("inf")
 
     def rows(self) -> list:
+        """(symbol, name, value, unit) - the symbol first, because that is
+        the one that turns up in the equation the number is going into."""
         return [
-            ("pressure", self.p * 1000.0, "kPa"),
-            ("temperature", self.T - 273.15, "deg C"),
-            ("specific volume", self.v, "m3/kg"),
-            ("density", self.density, "kg/m3"),
-            ("specific enthalpy", self.h, "kJ/kg"),
-            ("internal energy", self.u, "kJ/kg"),
-            ("entropy", self.s, "kJ/(kg K)"),
+            ("p", "pressure", self.p * 1000.0, "kPa"),
+            ("T", "temperature", self.T - 273.15, "deg C"),
+            ("v", "specific volume", self.v, "m3/kg"),
+            ("\u03c1", "density", self.density, "kg/m3"),
+            ("h", "specific enthalpy", self.h, "kJ/kg"),
+            ("u", "internal energy", self.u, "kJ/kg"),
+            ("s", "entropy", self.s, "kJ/(kg K)"),
         ]
 
 

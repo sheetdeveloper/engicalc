@@ -207,7 +207,20 @@ def equation_steps(eq: sp.Basic, var: sp.Symbol, solutions: list) -> list[Step]:
         steps.append(Step("This is a quadratic",
                           detail=f"a = {_pretty(a)},  b = {_pretty(b)},  c = {_pretty(c)}"))
         disc = sp.simplify(b ** 2 - 4 * a * c)
+        # With the numbers in it. `(-5)^2 - 4(2)(-3)` is the step somebody
+        # writes down; `49` is the result of having taken it.
+        steps.append(Step(
+            "Put the numbers into  D = b^2 - 4ac",
+            latex=(r"D = \left(" + sp.latex(b) + r"\right)^{2} - 4\left("
+                   + sp.latex(a) + r"\right)\left(" + sp.latex(c)
+                   + r"\right) = " + sp.latex(disc)),
+            minor=True))
         steps.append(Step("Discriminant  D = b^2 - 4ac", expr=disc))
+        if disc.is_number and disc.is_nonnegative:
+            steps.append(Step("Root of the discriminant",
+                              expr=sp.Eq(sp.sqrt(sp.Symbol("D")),
+                                         sp.sqrt(disc)),
+                              minor=True))
         if disc.is_number:
             if disc.is_positive:
                 note = "D > 0: two distinct real roots."
@@ -220,11 +233,20 @@ def equation_steps(eq: sp.Basic, var: sp.Symbol, solutions: list) -> list[Step]:
         if factored != expr and factored.is_Mul:
             steps.append(Step("It factorises, so set each factor to zero",
                               expr=sp.Eq(factored, 0)))
+            for piece in factored.args:
+                if piece.has(var):
+                    steps.extend(_solve_factor(piece, var))
         else:
             steps.append(Step(
                 "The quadratic formula",
                 latex=sp.latex(var) + r" = \frac{-b \pm \sqrt{b^{2} - 4ac}}"
                       r"{2a}",
+                minor=True))
+            steps.append(Step(
+                "With the numbers in",
+                latex=(sp.latex(var) + r" = \frac{-\left(" + sp.latex(b)
+                       + r"\right) \pm \sqrt{" + sp.latex(disc)
+                       + r"}}{2\left(" + sp.latex(a) + r"\right)}"),
                 minor=True))
             steps.append(Step("Apply the quadratic formula  x = (-b +/- sqrt(D)) / (2a)",
                               expr=sp.Eq(var, (-b + sp.sqrt(disc)) / (2 * a))))
@@ -382,6 +404,36 @@ def _rule_steps(term, var, rule_for) -> list[Step]:
             out.append(Step(inner[0], latex=inner[1], minor=True))
     return out
 
+
+
+def _solve_factor(factor, var: sp.Symbol) -> list[Step]:
+    """Set one factor to zero and transpose it, a move at a time.
+
+    A factorised quadratic is two linear equations, and the working on each
+    is the working on any linear equation - which is what somebody turning
+    the steps on is asking to see.
+    """
+    out = []
+    try:
+        poly = sp.Poly(factor, var)
+    except Exception:                                 # noqa: BLE001
+        return out
+    if poly.degree() != 1:
+        return out
+    a, b = poly.all_coeffs()
+    out.append(Step(f"Set {_pretty(factor)} to zero",
+                    expr=sp.Eq(factor, 0), minor=True))
+    if b != 0:
+        moving = sp.simplify(-b)
+        word = "Add" if moving.is_positive else "Take"
+        amount = _pretty(moving if moving.is_positive else b)
+        out.append(Step(
+            f"{word} {amount} {'to' if word == 'Add' else 'from'} both sides",
+            expr=sp.Eq(a * var, moving), minor=True))
+    if a != 1:
+        out.append(Step(f"Divide both sides by {_pretty(a)}",
+                        expr=sp.Eq(var, sp.simplify(-b / a)), minor=True))
+    return out
 
 def _both_sides(what: str, equation) -> Step:
     """One move of a transposition, with the equation it leaves behind."""

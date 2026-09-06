@@ -323,7 +323,7 @@ wet bulb are left out with the reason on screen; everything that does not
 depend on that curve is still exactly right.
 
 
-### Sheet
+### Worksheet
 
 Real work is never one calculation. It is a diameter, then an area from that
 diameter, then a velocity, then a Reynolds number - and if the diameter
@@ -332,7 +332,7 @@ changes, everything after it should follow.
 A sheet is a list of named steps worked down the page. Each step can use any
 name defined above it, and nothing may use a name defined below it. Change
 the bore from 50 mm to 100 mm, press Calculate, and every line beneath moves.
-Sheets save and reopen as files.
+Worksheets save and reopen as files.
 
 A step that fails is reported and the ones after it carry on, because one
 broken line in the middle should not blank the page.

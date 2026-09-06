@@ -75,7 +75,7 @@ class SheetTab(ttk.Frame):
 
         title_row = ttk.Frame(self)
         title_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(title_row, text="Sheet").pack(side="left")
+        ttk.Label(title_row, text="Worksheet").pack(side="left")
         self.title_var = tk.StringVar(value="Calculation sheet")
         ttk.Entry(title_row, textvariable=self.title_var, width=40).pack(
             side="left", padx=(4, 12))

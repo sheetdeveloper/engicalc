@@ -212,6 +212,23 @@ PAD: list[PadItem] = [
 GROUPS = ["Basic", "Powers & roots", "Logarithms", "Calculus", "Trigonometry",
           "Constants & Greek", "Relations", "Functions"]
 
+
+#: Which groups of keys each topic puts in front of you. The groups
+#: themselves are unchanged - this only decides which are shown, because the
+#: solver is the same box whatever branch of maths is being done and a tab
+#: per topic would suggest four calculators that happen to look alike.
+TOPICS = {
+    "Everything": list(GROUPS),
+    "Arithmetic": ["Basic", "Powers & roots", "Constants & Greek"],
+    "Algebra": ["Basic", "Powers & roots", "Relations", "Constants & Greek"],
+    "Trigonometry": ["Trigonometry", "Basic", "Constants & Greek",
+                     "Relations"],
+    "Logs and exponentials": ["Logarithms", "Powers & roots", "Basic",
+                              "Constants & Greek"],
+    "Calculus": ["Calculus", "Functions", "Basic", "Powers & roots",
+                 "Constants & Greek"],
+}
+
 SYNTAX_NOTES = [
     ("Implicit multiplication",
      "2x, 3sin(x) and 2(x + 1) all mean what you expect - the * is optional "

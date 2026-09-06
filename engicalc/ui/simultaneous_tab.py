@@ -96,7 +96,9 @@ class SimultaneousTab(ttk.Frame):
         self.result = None
         self._syncing = False
         self._build()
-        self.set_text(EXAMPLES[1][1])
+        # Two bars to start with: the smallest set worth calling
+        # simultaneous, and the shape the screen is meant to suggest.
+        self.set_text(EXAMPLES[0][1])
 
     # -- layout -----------------------------------------------------------
     def _build(self) -> None:
@@ -138,6 +140,8 @@ class SimultaneousTab(ttk.Frame):
         self.example.pack(side="left", padx=4)
         self.example.bind("<<ComboboxSelected>>", self._load_example)
         ttk.Button(picker, text="Clear", command=self.clear).pack(side="left")
+        ttk.Button(picker, text="Add equation",
+                   command=self.add_equation).pack(side="right")
 
         # The text box stays: pasting five lines at once is still the
         # quickest way to start. The two are kept in step, either can drive.
@@ -386,8 +390,10 @@ class SimultaneousTab(ttk.Frame):
         if text.strip().startswith("#"):
             field = _CommentRow(holder, text, self._fields_edited)
         else:
+            # The same size as the calculator's bar: one equation, one bar,
+            # whichever screen you are on.
             field = mathfield.MathField(
-                holder, fontsize=15, height=44,
+                holder, fontsize=17, height=56,
                 on_change=self._fields_edited,
                 on_submit=lambda f=None: self._return_in(field))
         field.pack(side="left", fill="x", expand=True)
@@ -402,6 +408,12 @@ class SimultaneousTab(ttk.Frame):
         self.fields.insert(index, field)
         self._repack_fields()
         return field
+
+    def add_equation(self) -> None:
+        """One more equation, at the end, with the caret in it."""
+        field = self._add_field()
+        field.focus_set()
+        self._fields_edited()
 
     def _repack_fields(self) -> None:
         for field in self.fields:
@@ -487,8 +499,12 @@ class SimultaneousTab(ttk.Frame):
         for field in self.fields:
             field.master.destroy()
         self.fields = []
-        for line in lines or [""]:
+        # Never fewer than two: this is the simultaneous screen, and one
+        # empty bar on it looks like the calculator with something missing.
+        for line in lines or ["", ""]:
             self._add_field(line)
+        while len(self.fields) < 2:
+            self._add_field("")
 
     # -- the text -----------------------------------------------------------
     def get_text(self) -> str:

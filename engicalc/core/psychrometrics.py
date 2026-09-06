@@ -119,19 +119,22 @@ class MoistAir:
         return self.relative_humidity >= 0.999
 
     def rows(self) -> list:
+        """(symbol, name, value, unit), the symbol first - it is the one
+        written on a psychrometric chart and in the equations."""
         return [
-            ("dry bulb", self.temperature, "deg C"),
-            ("wet bulb", self.wet_bulb,
+            ("t", "dry bulb", self.temperature, "deg C"),
+            ("t_wb", "wet bulb", self.wet_bulb,
              "deg C" if self.wet_bulb == self.wet_bulb
              else "below freezing - see the note"),
-            ("dew point", self.dew_point,
+            ("t_dp", "dew point", self.dew_point,
              "deg C" if self.dew_point == self.dew_point
              else "below freezing - see the note"),
-            ("relative humidity", self.relative_humidity * 100.0, "%"),
-            ("humidity ratio", self.humidity_ratio, "kg/kg dry air"),
-            ("vapour pressure", self.vapour_pressure, "kPa"),
-            ("enthalpy", self.enthalpy, "kJ/kg dry air"),
-            ("specific volume", self.specific_volume, "m3/kg dry air"),
+            ("\u03c6", "relative humidity", self.relative_humidity * 100.0,
+             "%"),
+            ("W", "humidity ratio", self.humidity_ratio, "kg/kg dry air"),
+            ("p_v", "vapour pressure", self.vapour_pressure, "kPa"),
+            ("h", "enthalpy", self.enthalpy, "kJ/kg dry air"),
+            ("v", "specific volume", self.specific_volume, "m3/kg dry air"),
         ]
 
 

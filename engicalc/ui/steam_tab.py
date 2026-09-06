@@ -252,16 +252,22 @@ class SteamTab(ttk.Frame):
                       font=("Segoe UI", 9, "bold")).grid(
                           row=0, column=column, sticky="e", padx=6)
 
-        rows = [("temperature", "deg C", lambda s: s.T - 273.15),
-                ("pressure", "kPa", lambda s: s.p * 1000.0),
-                ("specific volume", "m3/kg", lambda s: s.v),
-                ("density", "kg/m3", lambda s: s.density),
-                ("specific enthalpy", "kJ/kg", lambda s: s.h),
-                ("internal energy", "kJ/kg", lambda s: s.u),
-                ("entropy", "kJ/(kg K)", lambda s: s.s)]
-        for index, (label, unit, get) in enumerate(rows, start=1):
-            ttk.Label(body, text=label, width=22, anchor="w").grid(
-                row=index, column=0, sticky="w", pady=1)
+        # The symbol first: it is the one that turns up in the equation the
+        # number is going into, and seeing the two together is how the
+        # mapping between them gets learned.
+        rows = [("T", "temperature", "deg C", lambda s: s.T - 273.15),
+                ("p", "pressure", "kPa", lambda s: s.p * 1000.0),
+                ("v", "specific volume", "m3/kg", lambda s: s.v),
+                ("\u03c1", "density", "kg/m3", lambda s: s.density),
+                ("h", "specific enthalpy", "kJ/kg", lambda s: s.h),
+                ("u", "internal energy", "kJ/kg", lambda s: s.u),
+                ("s", "entropy", "kJ/(kg K)", lambda s: s.s)]
+        for index, (symbol, label, unit, get) in enumerate(rows, start=1):
+            ttk.Label(body, text=symbol, width=4, anchor="w",
+                      font=("Cambria", 11, "italic")).grid(
+                          row=index, column=0, sticky="w", padx=(2, 0))
+            ttk.Label(body, text=label, width=20, anchor="w").grid(
+                row=index, column=0, sticky="w", pady=1, padx=(34, 0))
             for column, one in enumerate(states, start=1):
                 ttk.Label(body, text=fmt_number(get(one), 7), width=18,
                           anchor="e", font=MONO).grid(
@@ -274,13 +280,18 @@ class SteamTab(ttk.Frame):
         if len(states) == 2:
             liquid, vapour = states
             ttk.Label(body, text="").grid(row=len(rows) + 1, column=0)
-            for offset, (label, value, unit) in enumerate([
-                    ("h_fg  (latent heat)", vapour.h - liquid.h, "kJ/kg"),
-                    ("s_fg", vapour.s - liquid.s, "kJ/(kg K)"),
-                    ("v_fg", vapour.v - liquid.v, "m3/kg")]):
+            for offset, (symbol, label, value, unit) in enumerate([
+                    ("h_fg", "latent heat", vapour.h - liquid.h, "kJ/kg"),
+                    ("s_fg", "entropy of evaporation",
+                     vapour.s - liquid.s, "kJ/(kg K)"),
+                    ("v_fg", "volume change",
+                     vapour.v - liquid.v, "m3/kg")]):
                 line = len(rows) + 2 + offset
-                ttk.Label(body, text=label, width=22, anchor="w").grid(
-                    row=line, column=0, sticky="w", pady=1)
+                ttk.Label(body, text=symbol, width=5, anchor="w",
+                          font=("Cambria", 11, "italic")).grid(
+                              row=line, column=0, sticky="w", padx=(2, 0))
+                ttk.Label(body, text=label, width=20, anchor="w").grid(
+                    row=line, column=0, sticky="w", pady=1, padx=(40, 0))
                 ttk.Label(body, text=fmt_number(value, 7), width=18,
                           anchor="e", font=MONO).grid(row=line, column=2,
                                                       sticky="e", padx=6)
@@ -309,8 +320,10 @@ class SteamTab(ttk.Frame):
         lines = []
         for one in self.result or []:
             lines.append(one.phase)
-            for label, value, unit in one.rows():
-                lines.append(f"    {label:20} {fmt_number(value, 7)} {unit}")
+            for symbol, label, value, unit in one.rows():
+                lines.append(
+                    f"    {symbol:5} {label:20} "
+                    f"{fmt_number(value, 7)} {unit}")
         return "\n".join(lines)
 
     def copy(self) -> None:
@@ -334,9 +347,9 @@ class SteamTab(ttk.Frame):
             variable=", ".join(one.phase for one in self.result))
         result.result_text = self._as_text()
         for one in self.result:
-            for label, value, unit in one.rows():
+            for symbol, label, value, unit in one.rows():
                 result.steps.append(
-                    Step(f"{one.phase}: {label}",
+                    Step(f"{one.phase}: {symbol}, {label}",
                          detail=f"{fmt_number(value, 7)} {unit}"))
         self.app.history.add_result(
             result, project=self.app.project.get(),
