@@ -63,19 +63,26 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
+# A folder rather than one packed file. A one-file build unpacks the whole
+# sixty megabytes to a temporary directory on every launch and shows nothing
+# while it does it - twenty or thirty seconds on a cold start, which reads as
+# a program that has failed to open. It is also the shape of a dropper, and
+# with UPX on top it is about as close to a guaranteed antivirus false
+# positive as an unsigned build gets.
+#
+# One-file earns its keep when somebody is handed a bare executable. There is
+# an installer here, so it earns nothing.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='EngiCalc-debug' if DEBUG else 'EngiCalc',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=DEBUG,          # windowed normally, console for a debug build
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -83,4 +90,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=icon_path,
+)
+
+collected = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='EngiCalc-debug' if DEBUG else 'EngiCalc',
 )

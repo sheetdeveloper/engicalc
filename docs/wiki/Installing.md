@@ -53,3 +53,28 @@ always included:
 then `pip install -r requirements.txt` and `python main.py`. The app is
 tested on Windows; the others should work but are not part of the test runs,
 so treat anything odd as a bug worth reporting rather than as expected.
+
+## If it goes wrong
+
+Every unhandled error is written to:
+
+    %USERPROFILE%\.engicalc\errors.log
+
+with the time, the version and the whole traceback, and the dialog that
+appears says where that file is. Send that file rather than describing the
+message - it says which line, which is the part a description cannot carry.
+
+The log is capped at a quarter of a megabyte and the oldest entries are
+dropped, so it will not grow without limit.
+
+## Why the installed program is a folder
+
+It used to be a single packed executable. That is convenient to hand
+somebody directly, and it has two costs that only show up once it is
+installed: it unpacks sixty megabytes to a temporary folder on **every**
+launch, which took twenty or thirty seconds with no window and nothing to
+look at, and a packed executable that writes files and runs code out of them
+is the shape of a dropper, so antivirus software flagged it.
+
+Since there is an installer anyway, the folder costs nothing. It opens in
+about two and a half seconds and the download is smaller than it was.

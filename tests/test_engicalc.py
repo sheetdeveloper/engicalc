@@ -3570,6 +3570,127 @@ class TestBeamDeflection(unittest.TestCase):
             deflect(beam, analyse(beam), -1.0)
 
 
+class TestTorsion(unittest.TestCase):
+    """Shear stress and twist in a shaft, against the closed forms."""
+
+    def test_the_three_equations(self):
+        from engicalc.core.torsion import Shaft
+
+        # A 50 mm solid steel shaft, a metre long, carrying 1 kN m.
+        shaft = Shaft(outer=0.050, length=1.0, modulus=80e9, torque=1000.0)
+        self.assertAlmostEqual(shaft.j, math.pi * 0.05 ** 4 / 32.0,
+                               places=15)
+        self.assertAlmostEqual(shaft.max_stress,
+                               16 * 1000.0 / (math.pi * 0.05 ** 3), places=6)
+        self.assertAlmostEqual(shaft.twist,
+                               1000.0 * 1.0 / (80e9 * shaft.j), places=12)
+        # Nothing at the centre, which is the shape of the whole thing.
+        self.assertAlmostEqual(shaft.stress_at(0.0), 0.0, places=12)
+
+    def test_a_tube_is_the_difference_of_two_bars(self):
+        from engicalc.core.torsion import polar_second_moment
+
+        self.assertAlmostEqual(
+            polar_second_moment(0.060, 0.040),
+            math.pi * (0.060 ** 4 - 0.040 ** 4) / 32.0, places=15)
+
+    def test_the_metal_near_the_axis_is_doing_almost_nothing(self):
+        from engicalc.core.torsion import Shaft
+
+        # The point of the subject. Boring out two thirds of the diameter
+        # takes away more than half the weight and less than a fifth of the
+        # strength, because of the fourth power.
+        solid = Shaft(outer=0.060, torque=800.0)
+        tube = Shaft(outer=0.060, inner=0.040, torque=800.0)
+        self.assertGreater(tube.j / solid.j, 0.75)
+        self.assertLess(tube.area / solid.area, 0.60)
+        self.assertTrue([n for n in tube.notes() if "tubes" in n])
+
+    def test_power_and_torque_go_round_and_come_back(self):
+        from engicalc.core.torsion import power_from_torque, torque_from_power
+
+        for kilowatts, rpm in ((15, 1450), (75, 2950), (2.2, 960)):
+            with self.subTest(kw=kilowatts, rpm=rpm):
+                torque = torque_from_power(kilowatts * 1000.0, rpm)
+                self.assertAlmostEqual(
+                    power_from_torque(torque, rpm) / 1000.0, kilowatts,
+                    places=9)
+        # 15 kW at 1450 rev/min is about 99 N m, which is worth pinning
+        # down rather than only checking against itself.
+        self.assertAlmostEqual(torque_from_power(15000.0, 1450.0), 98.786,
+                               places=2)
+
+    def test_a_standstill_has_no_torque_to_give(self):
+        from engicalc.core.torsion import TorsionError, torque_from_power
+
+        with self.assertRaises(TorsionError):
+            torque_from_power(15000.0, 0.0)
+
+    def test_sizing_for_a_stress_gives_back_that_stress(self):
+        from engicalc.core.torsion import Shaft, diameter_for_stress
+
+        # Solved rather than iterated, so it should land exactly.
+        for ratio in (0.0, 0.5, 0.7):
+            with self.subTest(bore_ratio=ratio):
+                found = diameter_for_stress(500.0, 60e6, ratio)
+                shaft = Shaft(outer=found, inner=found * ratio, torque=500.0)
+                self.assertAlmostEqual(shaft.max_stress, 60e6, places=3)
+
+    def test_sizing_for_a_twist_gives_back_that_twist(self):
+        from engicalc.core.torsion import Shaft, diameter_for_twist
+
+        wanted = math.radians(1.0)
+        found = diameter_for_twist(500.0, 2.0, 80e9, wanted)
+        shaft = Shaft(outer=found, length=2.0, modulus=80e9, torque=500.0)
+        self.assertAlmostEqual(shaft.twist, wanted, places=9)
+
+    def test_a_hollow_shaft_is_bigger_but_lighter_for_the_same_stress(self):
+        from engicalc.core.torsion import Shaft, diameter_for_stress
+
+        solid = diameter_for_stress(500.0, 60e6, 0.0)
+        tube = diameter_for_stress(500.0, 60e6, 0.7)
+        self.assertGreater(tube, solid)
+        light = Shaft(outer=tube, inner=tube * 0.7)
+        heavy = Shaft(outer=solid)
+        self.assertLess(light.area, heavy.area * 0.7)
+
+    def test_a_torque_part_way_along_splits_inversely_with_length(self):
+        from engicalc.core.torsion import shared_torque
+
+        # Statically indeterminate, and settled the way a propped beam is:
+        # both halves twist by the same amount where they meet.
+        near, far = shared_torque(900.0, 0.3, 0.6)
+        self.assertAlmostEqual(near + far, 900.0, places=9)
+        self.assertAlmostEqual(near, 600.0, places=9)
+        self.assertAlmostEqual(far, 300.0, places=9)
+        # Applied in the middle it splits evenly, which is the case anybody
+        # can check without doing the algebra.
+        self.assertEqual(shared_torque(900.0, 0.5, 0.5), (450.0, 450.0))
+
+    def test_the_shafts_that_are_not_shafts_are_refused(self):
+        from engicalc.core.torsion import (Shaft, TorsionError,
+                                           polar_second_moment)
+
+        with self.assertRaises(TorsionError):
+            polar_second_moment(0.0)
+        with self.assertRaises(TorsionError):
+            polar_second_moment(0.05, 0.05)
+        with self.assertRaises(TorsionError):
+            polar_second_moment(0.05, 0.06)
+        with self.assertRaises(TorsionError):
+            Shaft(outer=0.05, length=0.0).twist
+        with self.assertRaises(TorsionError):
+            Shaft(outer=0.05, modulus=0.0).twist
+
+    def test_it_mentions_a_shaft_that_twists_too_much(self):
+        from engicalc.core.torsion import Shaft
+
+        # A degree per metre is the usual limit, and past it the stiffness
+        # sizes the shaft rather than the stress.
+        bendy = Shaft(outer=0.020, length=1.0, modulus=80e9, torque=100.0)
+        self.assertTrue([n for n in bendy.notes() if "per metre" in n])
+
+
 class TestSectionProperties(unittest.TestCase):
     """Against the closed forms, and against the tables for real sections."""
 

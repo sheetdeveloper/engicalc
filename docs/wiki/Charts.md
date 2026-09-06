@@ -194,6 +194,54 @@ the picture and reported in the table, because the weak axis of an angle is
 nowhere near either of its legs. That is why an unrestrained angle moves
 sideways when you load it downwards.
 
+## Torsion
+
+Shear stress and angle of twist in a round shaft, drawn the way it is drawn
+on paper: the section cut across a diameter, and underneath it the stress -
+nothing at the centre, most at the surface, straight in between.
+
+    tau = T r / J        theta = T L / (G J)        P = T omega
+
+Give it an outside diameter, a bore, a length and a modulus of rigidity, and
+either a torque or **a power at a speed** - because a torque is usually not
+what anybody has. It is a motor rating, and converting it is the first step
+of every one of these problems.
+
+Out come J, the polar section modulus, the stress at the surface and at the
+bore, the angle of twist over the length and per metre, and the torsional
+stiffness in newton metres per radian. Give it an allowable shear stress and
+it adds the factor against it and **the smallest diameter that would do** -
+which is the question behind the answer.
+
+### Why shafts are tubes
+
+The picture makes the case better than the numbers. Stress is proportional
+to radius, so the metal near the axis is carrying almost nothing - and
+because J goes as the fourth power of diameter, taking that metal out costs
+far less strength than weight.
+
+Bore a 60 mm shaft out to 40 mm and it still carries 80% of the torque for
+56% of the weight. The tab says so, in those terms, whenever there is a
+bore.
+
+### What it will not do
+
+The polar second moment of area is the torsion constant **for a circular
+section and nothing else**. A square bar's resistance to twist is not the
+sum of its two second moments; non-circular sections warp as they twist,
+which is a different theory. Using J for them overstates the stiffness by
+something like forty per cent, so this covers round bars and tubes and says
+nothing about anything else.
+
+### A shaft fixed at both ends
+
+`shared_torque` in the core splits a torque applied part way along between
+two built-in ends. It is statically indeterminate - two unknowns and one
+equation of equilibrium - and it is settled the same way a propped beam is:
+both halves twist by the same amount where they meet, so the torque divides
+inversely with the lengths. A torque a third of the way along a shaft sends
+two thirds of itself to the near end.
+
 ## Motion
 
 Distance, velocity and acceleration against time, stacked on one time axis.

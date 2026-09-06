@@ -19,10 +19,10 @@ from tkinter import filedialog, messagebox, ttk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-from matplotlib.patches import Arc
+from matplotlib.patches import Arc, Rectangle
 
 from ..core import (beams, motion, moody, section_table, sections,
-                    tensile)
+                    tensile, torsion)
 from ..core.display import fmt_number
 from ..core.mohr import Mohr
 from ..core.parsing import ParseError, parse_number
@@ -1488,10 +1488,147 @@ class MotionTab(ChartTab):
                                     bottom=0.11)
 
 
+# --------------------------------------------------------------------------
+class TorsionTab(ChartTab):
+    """Shear stress and angle of twist in a round shaft."""
+
+    title = "Torsion"
+    hint = "shear stress and twist in a shaft, from the torque or the power"
+
+    #: How the torque is known. Usually it is not - it is a motor rating.
+    BY_TORQUE, BY_POWER = "a torque", "power at a speed"
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        self.outer = self.field(first, "Outside dia", "30", "mm")
+        self.bore = self.field(first, "bore", "0", "mm")
+        self.length = self.field(first, "Length", "1", "m")
+        self.modulus = self.field(first, "G", "80", "GPa")
+
+        second = ttk.Frame(parent)
+        second.pack(fill="x", pady=(6, 0))
+        ttk.Label(second, text="Driven by").pack(side="left")
+        self.driven = tk.StringVar(value=self.BY_POWER)
+        box = ttk.Combobox(second, state="readonly", width=15,
+                           textvariable=self.driven,
+                           values=[self.BY_TORQUE, self.BY_POWER])
+        box.pack(side="left", padx=(4, 14))
+        box.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        self.torque = self.field(second, "Torque", "500", "N m")
+        self.power = self.field(second, "Power", "15", "kW")
+        self.speed = self.field(second, "at", "1450", "rev/min")
+        self.allowable = self.field(second, "Allowable", "60", "N/mm2")
+
+    def shaft(self):
+        outer = self.number(self.outer, "the outside diameter") / 1000.0
+        bore = self.number(self.bore, "the bore") / 1000.0
+        if self.driven.get() == self.BY_POWER:
+            torque = torsion.torque_from_power(
+                self.number(self.power, "the power") * 1000.0,
+                self.number(self.speed, "the speed"))
+        else:
+            torque = self.number(self.torque, "the torque")
+        return torsion.Shaft(
+            outer=outer, inner=bore,
+            length=self.number(self.length, "the length"),
+            modulus=self.number(self.modulus, "the modulus") * 1e9,
+            torque=torque,
+            allowable=self.number(self.allowable, "the allowable stress")
+            * 1e6)
+
+    def draw(self) -> tuple:
+        shaft = self.shaft()
+        rows = list(shaft.rows())
+        notes = list(shaft.notes())
+
+        # The torque is worth showing when it was worked out rather than
+        # typed, since it is the number every other answer came from.
+        if self.driven.get() == self.BY_POWER:
+            rows.insert(0, ("torque", shaft.torque, "N m"))
+        else:
+            rows.insert(0, ("power at " + self.speed.get() + " rev/min",
+                            torsion.power_from_torque(
+                                shaft.torque,
+                                self.number(self.speed, "the speed"))
+                            / 1000.0, "kW"))
+
+        # What it would have to be, which is the question behind the answer.
+        if shaft.allowable > 0:
+            needed = torsion.diameter_for_stress(
+                shaft.torque, shaft.allowable,
+                shaft.inner / shaft.outer if shaft.outer else 0.0)
+            rows.append(("smallest diameter for that stress", needed * 1000.0,
+                         "mm"))
+
+        self.figure.clear()
+        grid = self.figure.add_gridspec(2, 1, hspace=0.12,
+                                        height_ratios=[0.7, 1.3])
+        section = self.figure.add_subplot(grid[0])
+        stress = self.figure.add_subplot(grid[1], sharex=section)
+        self._draw_section(section, shaft)
+        self._draw_stress(stress, shaft)
+        return rows, notes
+
+    def _draw_section(self, axes, shaft) -> None:
+        """The shaft cut across a diameter, above the stress it carries."""
+        outer = shaft.outer / 2.0 * 1000.0
+        inner = shaft.inner / 2.0 * 1000.0
+        for side in (-1.0, 1.0):
+            axes.add_patch(Rectangle(
+                (side * inner if side > 0 else -outer, -1.0),
+                outer - inner, 2.0, facecolor="#1f4e79", edgecolor="none"))
+        axes.axvline(0, color="#888888", linewidth=0.8, linestyle="--")
+        if inner > 0:
+            axes.annotate("bore", (0, 0), fontsize=6.5, ha="center",
+                          va="center", color="#666666")
+        axes.set_ylim(-1.6, 1.6)
+        axes.set_yticks([])
+        axes.tick_params(labelbottom=False, length=0)
+        for edge in ("left", "right", "top", "bottom"):
+            axes.spines[edge].set_visible(False)
+        _sideways_label(axes, "the shaft")
+
+    def _draw_stress(self, axes, shaft) -> None:
+        """Nothing at the centre, most at the surface, straight between.
+
+        Drawn across the whole diameter with the sign turning over, because
+        that is the picture: the two halves of a twisted shaft are sheared
+        in opposite directions.
+        """
+        radii, stresses = shaft.profile()
+        # The two sides drawn separately. Joined up, the line runs
+        # straight across the bore - through the middle of a hole,
+        # where there is no metal and no stress to draw.
+        for side in (1.0, -1.0):
+            across = [side * r * 1000.0 for r in radii]
+            values = [side * v / 1e6 for v in stresses]
+            axes.plot(across, values, color="#c0392b", linewidth=1.6)
+            axes.fill_between(across, values, 0, color="#c0392b",
+                              alpha=0.15)
+        axes.axhline(0, color="#888888", linewidth=0.8)
+        if shaft.allowable > 0:
+            for side in (1, -1):
+                axes.axhline(side * shaft.allowable / 1e6, color="#0b7a3b",
+                             linewidth=0.9, linestyle=":")
+            axes.annotate("allowable", (0.985, shaft.allowable / 1e6),
+                          xycoords=("axes fraction", "data"), fontsize=6.5,
+                          ha="right", va="bottom", color="#0b7a3b")
+        axes.set_xlabel("distance from the axis  mm", fontsize=8)
+        axes.grid(True, alpha=0.3, linestyle=":")
+        axes.tick_params(labelsize=7)
+        _sideways_label(axes, "shear stress  N/mm2")
+
+    def layout(self) -> None:
+        self.figure.subplots_adjust(left=0.19, right=0.97, top=0.97,
+                                    bottom=0.14)
+
+
 CHARTS = [
     ("  Stress and strain  ", TensileTab),
     ("  Beam  ", BeamTab),
     ("  Section  ", SectionTab),
+    ("  Torsion  ", TorsionTab),
     ("  Motion  ", MotionTab),
     ("  Mohr's circle  ", MohrTab),
     ("  Moody  ", MoodyTab),

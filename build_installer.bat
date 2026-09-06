@@ -31,9 +31,9 @@ if not defined ISCC (
     exit /b 1
 )
 
-if not exist dist\EngiCalc.exe (
+if not exist dist\EngiCalc\EngiCalc.exe (
     echo.
-    echo ERROR: dist\EngiCalc.exe not found.
+    echo ERROR: dist\EngiCalc\EngiCalc.exe not found.
     echo Run build_exe.bat first.
     pause
     exit /b 1

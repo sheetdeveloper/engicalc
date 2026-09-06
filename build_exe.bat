@@ -3,7 +3,7 @@ REM ===================================================================
 REM  EngiCalc - build a standalone Windows .exe
 REM
 REM  Double-click this, or run it from a command prompt in this folder.
-REM  Produces dist\EngiCalc.exe, which runs on a machine with no Python
+REM  Produces dist\EngiCalc\, which runs on a machine with no Python
 REM  installed at all.
 REM
 REM  Requires Python 3.10+ on PATH. Everything else (the build venv,
@@ -132,20 +132,20 @@ if errorlevel 1 (
 REM ---- [5/5] check it is really there --------------------------------
 echo.
 echo [5/5] Checking the result...
-if not exist "dist\%EXENAME%.exe" (
+if not exist "dist\%EXENAME%\%EXENAME%.exe" (
     echo.
-    echo ERROR: PyInstaller reported success but dist\%EXENAME%.exe
+    echo ERROR: PyInstaller reported success but dist\%EXENAME%\%EXENAME%.exe
     echo is not there. Check the output above.
     pause
     exit /b 1
 )
 
-for %%F in ("dist\%EXENAME%.exe") do set "EXESIZE=%%~zF"
+for %%F in ("dist\%EXENAME%\%EXENAME%.exe") do set "EXESIZE=%%~zF"
 echo.
 echo ============================================
 echo  SUCCESS
 echo ============================================
-echo  Built:  dist\%EXENAME%.exe
+echo  Built:  dist\%EXENAME%\%EXENAME%.exe
 echo  Size:   %EXESIZE% bytes
 echo.
 echo  Run it once yourself before handing it out - a frozen build

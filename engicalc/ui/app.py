@@ -11,6 +11,7 @@ from .. import __version__
 from ..core import display
 from ..formulas.library import get_library
 from ..plotting.plot import spec_from_result
+from .. import faults
 from ..storage.history import DEFAULT_DB, History
 from .calculator_pane import CalculatorPane
 from .cards_tab import CardsTab
@@ -65,6 +66,9 @@ def _remember_check_setting(value: bool) -> None:
 class EngiCalcApp(tk.Tk):
     def __init__(self, db_path: str = DEFAULT_DB, show_splash: bool = False):
         super().__init__()
+        # First, so that anything below which fails is written down rather
+        # than thrown at a stderr the windowed build has not got.
+        faults.attach(self)
         self.title("EngiCalc - equation solver, grapher and formula library")
         self.geometry("1200x780")
         self.minsize(980, 640)

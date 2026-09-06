@@ -50,7 +50,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
-Source: "dist\EngiCalc.exe"; DestDir: "{app}"; Flags: ignoreversion
+; The whole build folder. PyInstaller puts the executable at the top and
+; everything it needs in _internal beside it; both have to arrive.
+Source: "dist\EngiCalc\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -65,4 +67,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 ; Someone removing the app to install a newer build should not lose their
 ; work; someone who really wants it gone can delete that folder.
 [UninstallDelete]
+; The build folder has subdirectories of its own, and Inno only removes the
+; files it put there - which leaves the empty tree behind without this.
+Type: filesandordirs; Name: "{app}\_internal"
 Type: dirifempty; Name: "{app}"

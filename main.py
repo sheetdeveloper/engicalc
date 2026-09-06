@@ -40,6 +40,11 @@ def main() -> int:
     except ImportError as exc:
         _missing("SymPy and matplotlib", exc)
 
+    # Before the window, because an error during startup is the one nobody
+    # can screenshot - the window it would have appeared in never opens.
+    from engicalc import faults
+    faults.install()
+
     from engicalc.ui.app import main as gui_main
     gui_main()
     return 0
