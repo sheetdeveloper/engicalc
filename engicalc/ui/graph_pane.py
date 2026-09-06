@@ -30,6 +30,11 @@ class GraphPane(ttk.Frame):
             chart = builder(self.tabs, app)
             self.charts[label.strip()] = chart
             self.tabs.add(chart, text=label)
+        # Once they all exist, each is told about the others. The beam uses
+        # it to put the section worked out next door straight onto itself,
+        # which is better than copying an I across by hand.
+        for chart in self.charts.values():
+            chart.linked(self.charts)
 
     def show_curves(self) -> None:
         self.tabs.select(self.curves)

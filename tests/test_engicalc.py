@@ -3341,6 +3341,129 @@ class TestBeamDiagrams(unittest.TestCase):
                          loads=[PointLoad(1, -1000)]))
 
 
+class TestBeamDeflection(unittest.TestCase):
+    """Against the formulae in the back of every book, then beyond them."""
+
+    #: A 305x165x40 UB in steel, which is a beam somebody might use.
+    EI = 210e9 * 8503e-8
+
+    def test_the_five_cases_everybody_has_memorised(self):
+        from engicalc.core.beams import (Beam, Distributed, PointLoad,
+                                         Support, analyse)
+
+        for name, beam, expected in (
+                # 5 w L^4 / 384 EI
+                ("simply supported under a spread load",
+                 Beam(length=6.0, supports=[0, 6.0],
+                      loads=[Distributed(0, 6.0, -10000.0)]),
+                 5 * 10000.0 * 6.0 ** 4 / (384 * self.EI)),
+                # P L^3 / 48 EI
+                ("simply supported, load at midspan",
+                 Beam(length=6.0, supports=[0, 6.0],
+                      loads=[PointLoad(3.0, -20000.0)]),
+                 20000.0 * 6.0 ** 3 / (48 * self.EI)),
+                # P L^3 / 3 EI
+                ("cantilever with a load on the end",
+                 Beam(length=4.0, supports=[Support(0, "fixed")],
+                      loads=[PointLoad(4.0, -5000.0)]),
+                 5000.0 * 4.0 ** 3 / (3 * self.EI)),
+                # w L^4 / 8 EI
+                ("cantilever under a spread load",
+                 Beam(length=4.0, supports=[Support(0, "fixed")],
+                      loads=[Distributed(0, 4.0, -8000.0)]),
+                 8000.0 * 4.0 ** 4 / (8 * self.EI))):
+            with self.subTest(case=name):
+                got = analyse(beam, stiffness=self.EI)
+                _at, drop = got.max_deflection
+                self.assertAlmostEqual(abs(drop) / expected, 1.0, places=4)
+                # And it sags rather than rises, which is half of getting
+                # the sign convention right and the half that shows.
+                self.assertLess(drop, 0.0)
+
+    def test_a_load_off_the_middle_deflects_by_the_formula_too(self):
+        from engicalc.core.beams import Beam, PointLoad, analyse
+
+        # P a^2 b^2 / (3 EI L), under the load rather than at midspan -
+        # which is the case that catches a method that only ever looks in
+        # the middle.
+        span, load, along = 6.0, 20000.0, 2.0
+        got = analyse(Beam(length=span, supports=[0, span],
+                           loads=[PointLoad(along, -load)]),
+                      stiffness=self.EI)
+        index = int(np.argmin(np.abs(got.x - along)))
+        expected = (load * along ** 2 * (span - along) ** 2
+                    / (3 * self.EI * span))
+        self.assertAlmostEqual(abs(float(got.deflection[index])) / expected,
+                               1.0, places=4)
+
+    def test_it_is_held_down_where_the_supports_are(self):
+        from engicalc.core.beams import Beam, PointLoad, analyse
+
+        # The two constants of integration are exactly the two things the
+        # supports say, so if the answer moves at a support the constants
+        # were fitted to something else.
+        got = analyse(Beam(length=6.0, supports=[1.0, 5.0],
+                           loads=[PointLoad(0.0, -10000.0),
+                                  PointLoad(6.0, -10000.0)]),
+                      stiffness=self.EI)
+        biggest = float(np.max(np.abs(got.deflection)))
+        for place in (1.0, 5.0):
+            index = int(np.argmin(np.abs(got.x - place)))
+            self.assertLess(abs(float(got.deflection[index])),
+                            1e-9 * max(biggest, 1e-9))
+        # The loaded overhangs go down and the span between the supports
+        # arches up, which is the shape a constant hogging moment makes and
+        # is the case a pair of supports at the ends cannot produce.
+        self.assertLess(float(got.deflection[0]), 0.0)
+        self.assertLess(float(got.deflection[-1]), 0.0)
+        middle = int(np.argmin(np.abs(got.x - 3.0)))
+        self.assertGreater(float(got.deflection[middle]), 0.0)
+        # M is a constant -10 kN m between the supports, so the arch is
+        # M (x - a)(x - b) / 2EI and can be checked outright.
+        self.assertAlmostEqual(
+            float(got.deflection[middle]),
+            -10000.0 / (2 * self.EI) * (3.0 - 1.0) * (3.0 - 5.0), places=9)
+
+    def test_a_built_in_end_is_held_level_as_well_as_down(self):
+        from engicalc.core.beams import Beam, PointLoad, Support, analyse
+
+        got = analyse(Beam(length=4.0, supports=[Support(0, "fixed")],
+                           loads=[PointLoad(4.0, -5000.0)]),
+                      stiffness=self.EI)
+        self.assertAlmostEqual(float(got.deflection[0]), 0.0, places=12)
+        # Level, which is what a built-in end means and a pinned one does
+        # not. Compared with the slope at the free end rather than with a
+        # fixed number, because a difference taken over one step of the
+        # grid carries half a step of the curvature with it whatever the
+        # answer is - the ratio is the part that means something.
+        def slope_at(index):
+            return ((float(got.deflection[index + 1])
+                     - float(got.deflection[index]))
+                    / (float(got.x[index + 1]) - float(got.x[index])))
+
+        self.assertLess(abs(slope_at(0)), abs(slope_at(-2)) / 100.0)
+
+    def test_without_a_stiffness_it_is_left_alone(self):
+        from engicalc.core.beams import Beam, PointLoad, analyse
+
+        # The shear and the moment do not depend on what the beam is made
+        # of, so asking for a material before drawing them would be asking
+        # for something that is not needed yet.
+        got = analyse(Beam(length=6.0, supports=[0, 6.0],
+                           loads=[PointLoad(3.0, -20000.0)]))
+        self.assertIsNone(got.deflection)
+        self.assertEqual((0.0, 0.0), got.max_deflection)
+
+    def test_a_stiffness_that_is_not_one_is_refused(self):
+        from engicalc.core.beams import Beam, BeamError, PointLoad, deflect
+
+        beam = Beam(length=6.0, supports=[0, 6.0],
+                    loads=[PointLoad(3.0, -20000.0)])
+        from engicalc.core.beams import analyse
+        with self.assertRaises(BeamError):
+            deflect(beam, analyse(beam), -1.0)
+
+
 class TestSectionProperties(unittest.TestCase):
     """Against the closed forms, and against the tables for real sections."""
 

@@ -31,6 +31,18 @@ from . import figures
 from .widgets import MONO, ScrollFrame
 
 
+def _sideways_label(axes, label: str) -> None:
+    """Name an axis across the margin rather than up the side of it.
+
+    A stacked diagram is short and a label written up the side of a short
+    panel runs into the one above. Written across it uses the margin, which
+    is the same width however many panels there are - so it stops being a
+    thing that breaks again each time one is added.
+    """
+    axes.set_ylabel(label.replace("  ", "\n"), fontsize=7, rotation=0,
+                    ha="right", va="center", labelpad=6)
+
+
 class ChartTab(ttk.Frame):
     """A form, a chart drawn from it, and the numbers worth quoting.
 
@@ -208,6 +220,14 @@ class ChartTab(ttk.Frame):
         self.status.configure(text="Chart copied - paste it into your report")
 
     # -- for subclasses -----------------------------------------------------
+    def linked(self, charts: dict) -> None:
+        """Told about the other charts once they all exist.
+
+        Nothing has to use it. The beam does, so that a section worked out
+        next door can be put straight on it rather than copied across by
+        hand, which is how a beam ends up analysed with somebody else's I.
+        """
+
     def layout(self) -> None:
         """Fit the drawing to the pane. Overridden where that is not enough."""
         self.figure.tight_layout()
@@ -221,6 +241,12 @@ class ChartTab(ttk.Frame):
 
 
 # --------------------------------------------------------------------------
+#: What the section chooser says when there is no section, and when it
+#: should take whatever the Section tab currently has.
+NO_SECTION = "-"
+FROM_SECTION_TAB = "from Section tab"
+
+
 class LoadRow:
     """One line of the beam's load table.
 
@@ -374,6 +400,20 @@ class BeamTab(ChartTab):
         self.support_hint = ttk.Label(first, text="", style="Hint.TLabel")
         self.support_hint.pack(side="left", padx=(10, 0))
 
+        second = ttk.Frame(parent)
+        second.pack(fill="x", pady=(6, 0))
+        ttk.Label(second, text="Section").pack(side="left")
+        self.section_name = tk.StringVar(value="-")
+        chooser = ttk.Combobox(second, state="readonly", width=17,
+                               textvariable=self.section_name,
+                               values=([NO_SECTION, FROM_SECTION_TAB]
+                                       + section_table.names()))
+        chooser.pack(side="left", padx=(4, 14))
+        chooser.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        self.modulus = self.field(second, "E", "210", "GPa")
+        self.section_hint = ttk.Label(second, text="", style="Hint.TLabel")
+        self.section_hint.pack(side="left", padx=(4, 0))
+
         heading = ttk.Frame(parent)
         heading.pack(fill="x", pady=(8, 0))
         ttk.Label(heading, text="Loads", width=9).pack(side="left")
@@ -409,6 +449,30 @@ class BeamTab(ChartTab):
         self.load_rows.append(LoadRow(self, self.load_table.body, **spec))
         self.refresh()
 
+    def linked(self, charts: dict) -> None:
+        self.section_tab = charts.get("Section")
+
+    def section(self):
+        """The section to work the stress and the movement out on.
+
+        None when there is not one, which is the ordinary case: the shear
+        and the moment do not depend on what the beam is made of, and asking
+        for a material before drawing them would be asking for something
+        that is not needed yet.
+        """
+        chosen = self.section_name.get()
+        if chosen in ("", NO_SECTION):
+            return None
+        if chosen == FROM_SECTION_TAB:
+            beside = getattr(self, "section_tab", None)
+            if beside is None:
+                return None
+            try:
+                return beside.section()
+            except Exception:                          # noqa: BLE001
+                return None      # half-typed next door is not an error here
+        return section_table.build(chosen)
+
     def _supports(self) -> list:
         """The supports as described, leaving out the ones set to none."""
         found = []
@@ -435,7 +499,17 @@ class BeamTab(ChartTab):
 
         supports = self._supports()
         beam = beams.Beam(length=length, supports=supports, loads=loads)
-        result = beams.analyse(beam)
+
+        # E I in newton metres squared. The section is in millimetres and
+        # the modulus in gigapascals, which is the conversion this exists to
+        # get right: 1 mm^4 is 1e-12 m^4 and 1 GPa is 1e9 N/m^2.
+        section = self.section()
+        properties = section.properties() if section is not None else None
+        stiffness = 0.0
+        if properties is not None:
+            stiffness = (self.number(self.modulus, "the modulus") * 1e9
+                         * properties.ixx * 1e-12)
+        result = beams.analyse(beam, stiffness=stiffness)
 
         places = [support.position for support in supports]
         overhanging = (len(supports) > 1
@@ -445,8 +519,9 @@ class BeamTab(ChartTab):
 
         has_axial = bool(result.axial is not None
                          and np.any(np.abs(result.axial) > 1e-9))
+        has_drop = result.deflection is not None
         sketches = 2 if self.free_body.get() else 1
-        curves = 3 if has_axial else 2
+        curves = 2 + (1 if has_axial else 0) + (1 if has_drop else 0)
 
         self.figure.clear()
         ratios = [1.3] * sketches + [1.15] * curves
@@ -472,13 +547,25 @@ class BeamTab(ChartTab):
         self._draw_curve(moment_axes, result.x, result.moment / 1000.0,
                          "#c0392b", "moment  kN m")
         last = moment_axes
+        drawn = [shear_axes, moment_axes]
+        step = sketches + 2
         if has_axial:
-            axial_axes = self.figure.add_subplot(grid[sketches + 2],
-                                                 sharex=top)
+            axial_axes = self.figure.add_subplot(grid[step], sharex=top)
             self._draw_curve(axial_axes, result.x, result.axial / 1000.0,
                              "#0b7a3b", "axial  kN")
+            drawn.append(axial_axes)
             last = axial_axes
-        for axes in (shear_axes, moment_axes):
+            step += 1
+        if has_drop:
+            drop_axes = self.figure.add_subplot(grid[step], sharex=top)
+            # Drawn in millimetres, which is the unit a deflection limit is
+            # always quoted in, and negative downwards because that is which
+            # way it went.
+            self._draw_curve(drop_axes, result.x, result.deflection * 1000.0,
+                             "#8a4fbf", "deflection  mm")
+            drawn.append(drop_axes)
+            last = drop_axes
+        for axes in drawn:
             if axes is not last:
                 axes.tick_params(labelbottom=False)
         last.set_xlabel("distance along the beam  m", fontsize=8)
@@ -486,7 +573,70 @@ class BeamTab(ChartTab):
 
         rows = [(label, value / 1000.0, unit.replace("N", "kN"))
                 for label, value, unit in result.rows()]
-        return rows, result.notes
+        notes = list(result.notes)
+        if properties is not None:
+            rows += self._section_rows(beam, result, section, properties)
+            notes += self._section_notes(rows)
+            self.section_hint.configure(
+                text=f"Ixx {properties.ixx / 1e4:.0f} cm4, "
+                     f"Z {properties.z / 1e3:.0f} cm3")
+        else:
+            self.section_hint.configure(text="")
+        return rows, notes
+
+    #: Where a bending stress stops describing anything elastic, and the
+    #: deflection a floor is commonly held to. Neither is a rule this
+    #: enforces - one is a grade of steel and the other is what the beam is
+    #: for - but a number on the wrong side of either is worth saying out
+    #: loud rather than leaving in a table.
+    YIELD = 355.0
+    FLOOR_LIMIT = 360.0
+
+    def _section_notes(self, rows) -> list:
+        """When the answer has stopped describing anything."""
+        found = dict((label, value) for label, value, _unit in rows)
+        said = []
+        stress = found.get("largest bending stress")
+        if stress is not None and abs(stress) > self.YIELD:
+            said.append(
+                f"{abs(stress):.0f} N/mm2 is past the yield of ordinary "
+                f"structural steel, so the deflection below - which assumes "
+                f"it springs back - is describing a beam that does not. The "
+                f"arithmetic is right and the section is too small.")
+        ratio = found.get("span over deflection")
+        if ratio is not None and 0 < ratio < self.FLOOR_LIMIT:
+            said.append(
+                f"It moves span/{ratio:.0f}. A floor is commonly held to "
+                f"span/360, though what is acceptable depends on what the "
+                f"beam is carrying and what is attached to it.")
+        return said
+
+    def _section_rows(self, beam, result, section, properties) -> list:
+        """What the section adds: how hard it is worked, and how far it
+        moves."""
+        _at, moment = result.max_moment
+        # Newton metres to newton millimetres, because the section is in
+        # millimetres and mixing the two is how a stress comes out a
+        # thousand times wrong and still looks like a number.
+        stress, _x, _y = section.worst_stress(moment * 1000.0)
+        rows = [("section", section.name, ""),
+                ("Ixx", properties.ixx / 1e4, "cm^4"),
+                ("Z, the governing one", properties.z / 1e3, "cm^3"),
+                ("largest bending stress", stress, "N/mm^2")]
+
+        at_drop, drop = result.max_deflection
+        rows.append(("largest deflection", drop * 1000.0,
+                     f"mm, at {at_drop:g} m"))
+        # Against the span it is spanning, which is what a limit is quoted
+        # against - the distance between the supports, or the reach of a
+        # cantilever, not the length of the timber.
+        places = sorted(support.position for support in beam.held)
+        span = (beam.length - places[0] if len(places) == 1
+                else places[-1] - places[0])
+        if drop and span:
+            rows.append(("span over deflection", span / abs(drop),
+                         f"({span:g} m span)"))
+        return rows
 
     def layout(self) -> None:
         """Left to the gridspec.
@@ -496,17 +646,14 @@ class BeamTab(ChartTab):
         deliberate: the two sketches want to sit closer to each other than
         the diagrams below them do.
         """
-        self.figure.subplots_adjust(left=0.13, right=0.98, top=0.97,
+        self.figure.subplots_adjust(left=0.155, right=0.98, top=0.97,
                                     bottom=0.1)
 
     def _draw_curve(self, axes, x, values, colour: str, label: str) -> None:
         axes.plot(x, values, color=colour, linewidth=1.5)
         axes.axhline(0, color="#888888", linewidth=0.8)
         axes.fill_between(x, values, 0, color=colour, alpha=0.12)
-        # Small, because the label is written up the side of the panel and
-        # five panels in one figure leaves each of them shorter than the
-        # words. At eight point "moment  kN m" ran into the label above it.
-        axes.set_ylabel(label, fontsize=7, labelpad=2)
+        _sideways_label(axes, label)
         axes.grid(True, alpha=0.3, linestyle=":")
         axes.tick_params(labelsize=7)
 
@@ -618,7 +765,8 @@ class BeamTab(ChartTab):
         # diagrams below. Written inside it, it sat on top of the wall of a
         # cantilever, which is exactly where a caption must not be.
         axes.set_ylabel("free body" if free_body else "the beam",
-                        fontsize=7, labelpad=2, color="#666666")
+                        fontsize=7, rotation=0, ha="right", va="center",
+                        labelpad=6, color="#666666")
 
     def _draw_supports(self, axes, beam) -> None:
         """Each support drawn as the thing it is.
@@ -1329,14 +1477,14 @@ class MotionTab(ChartTab):
         axes.plot(x, y, color=colour, linewidth=1.5,
                   drawstyle="steps-post" if step else "default")
         axes.axhline(0, color="#888888", linewidth=0.8)
-        axes.set_ylabel(label, fontsize=7, labelpad=2)
+        _sideways_label(axes, label)
         axes.grid(True, alpha=0.3, linestyle=":")
         axes.tick_params(labelsize=7)
 
     def layout(self) -> None:
         # Room at the top for the stage names, which sit above the first
-        # panel where nothing else is.
-        self.figure.subplots_adjust(left=0.13, right=0.98, top=0.93,
+        # panel where nothing else is, and at the left for the labels.
+        self.figure.subplots_adjust(left=0.155, right=0.98, top=0.93,
                                     bottom=0.11)
 
 

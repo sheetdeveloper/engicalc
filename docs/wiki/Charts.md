@@ -76,6 +76,36 @@ free: the shear, the moment and the axial force all have to return to zero
 at the far end of a beam in equilibrium, and if they do not you are told the
 reactions are wrong rather than shown a plausible drawing.
 
+### Giving it a section
+
+Pick a section - one off the list, or whatever the Section tab currently
+has - and give it a modulus, and two more things follow.
+
+**The stress**, at the hardest-worked fibre, worked out on the section
+itself. On a shape with no axis of symmetry that is not `M y / I` and not at
+the top or bottom fibre either; see the Section notes above.
+
+**The deflection**, drawn as a fourth diagram underneath the others.
+`EI y'' = M`, so it is the moment diagram integrated twice, and the two
+constants that fall out of integrating twice are exactly what the supports
+say: held down in two places, or held down and held level in one. Doing it
+numerically along the diagram already drawn means it works for any beam this
+can draw rather than for the six with formulae in the back of a book - an
+overhang, a triangular load, three loads at once.
+
+It is checked against those six all the same. `5wL^4/384EI`, `PL^3/48EI`,
+`Pa^2b^2/3EIL`, `PL^3/3EI` and `wL^4/8EI` all come back to within five parts
+in a million.
+
+Beside the deflection is the span over it - span/360 and so on - because
+that is the number a floor is actually checked against, and the span it uses
+is the distance between the supports rather than the length of the beam.
+
+Two things get said out loud rather than left in the table: a stress past
+the yield of ordinary structural steel, since the deflection below it
+assumes the beam springs back, and a movement worse than span/360, which is
+what a floor is commonly held to.
+
 ### What it will not do
 
 All of this comes out of equilibrium, and equilibrium settles a beam with

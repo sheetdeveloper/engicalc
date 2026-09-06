@@ -233,6 +233,15 @@ class Diagram:
     axial: np.ndarray | None = None
     reactions: dict = field(default_factory=dict)
     notes: list = field(default_factory=list)
+    #: Set when a stiffness was given. In metres, positive upwards, so a
+    #: beam that sags reads negative.
+    deflection: np.ndarray | None = None
+
+    @property
+    def max_deflection(self) -> tuple:
+        if self.deflection is None:
+            return 0.0, 0.0
+        return self._peak(self.deflection)
 
     def _peak(self, values) -> tuple:
         index = int(np.argmax(np.abs(values)))
@@ -272,6 +281,53 @@ class Diagram:
                          f"N, at {at_axial:g} m "
                          f"({'tension' if axial > 0 else 'compression'})"))
         return rows
+
+
+def _cumulative(values, x):
+    """Running integral of *values* along *x*, by the trapezium rule.
+
+    Starting at nought, so what comes out is the integral from the left-hand
+    end and the constant of integration is left for the supports to fix.
+    """
+    steps = np.diff(x)
+    middles = (values[:-1] + values[1:]) / 2.0
+    return np.concatenate([[0.0], np.cumsum(middles * steps)])
+
+
+def deflect(beam: Beam, diagram: Diagram, stiffness: float) -> np.ndarray:
+    """Deflection along the beam, from EI y'' = M.
+
+    *stiffness* is EI in newton metres squared. Positive is upwards, so an
+    ordinary beam under an ordinary load comes out negative.
+
+    The moment diagram is integrated twice and the two constants that fall
+    out are fixed by what the supports do: a simply supported beam is held
+    down in two places, and a built-in end is held down and held level in
+    one. Two conditions either way, which is what makes the problem
+    determinate - and doing it along the diagram already worked out means it
+    applies to any beam that can be drawn rather than to the handful with
+    formulae in the back of a book.
+    """
+    if stiffness <= 0:
+        raise BeamError("EI has to be positive.")
+    slope = _cumulative(diagram.moment / stiffness, diagram.x)
+    drop = _cumulative(slope, diagram.x)
+
+    def at(place: float, values) -> float:
+        return float(np.interp(place, diagram.x, values))
+
+    built_in = [support for support in beam.held if support.holds_turning]
+    if built_in:
+        # Held down and held level at the wall.
+        wall = built_in[0].position
+        first = -at(wall, slope)
+        second = -(at(wall, drop) + first * wall)
+    else:
+        left, right = sorted(support.position for support in beam.held)
+        # Held down at both, which fixes the straight line through them.
+        first = -(at(right, drop) - at(left, drop)) / (right - left)
+        second = -(at(left, drop) + first * left)
+    return drop + first * diagram.x + second
 
 
 def _reaction_label(key: str) -> str:
@@ -365,8 +421,13 @@ def _reactions(beam: Beam) -> dict:
     return found
 
 
-def analyse(beam: Beam) -> Diagram:
-    """Work the shear, moment and axial force out along the beam."""
+def analyse(beam: Beam, stiffness: float = 0.0) -> Diagram:
+    """Work the shear, moment and axial force out along the beam.
+
+    Given a *stiffness* - EI in newton metres squared - the deflection is
+    worked out too. Without one it is left alone, because a beam's shape
+    does not depend on what it is made of and its movement does.
+    """
     beam.check()
     reactions = _reactions(beam)
     x = np.linspace(0.0, beam.length, POINTS)
@@ -443,4 +504,7 @@ def analyse(beam: Beam) -> Diagram:
         diagram.notes.append(
             f"The axial force does not close to zero at the end - it "
             f"finishes at {axial[-1]:.4g} N.")
+
+    if stiffness:
+        diagram.deflection = deflect(beam, diagram, stiffness)
     return diagram
