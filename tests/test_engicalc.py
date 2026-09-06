@@ -5009,6 +5009,117 @@ class TestMohrsCircle(unittest.TestCase):
         self.assertAlmostEqual(state.theta_p, 45.0, places=9)
 
 
+class TestTheLibraryBalances(unittest.TestCase):
+    """Does every formula agree with its own declared units?
+
+    Each variable declares a unit and nothing had ever checked that the
+    equation they sit in holds together - that the left side measures what
+    the right side measures. Running the question over all of them found
+    two declared units that were simply wrong: Antoine's temperature was
+    declared C, which is a coulomb, and the integral of an error was
+    declared dimensionless when integrating over time gives it a second.
+
+    A formula whose two sides genuinely do not balance has to say why. An
+    exemption with no reason beside it is where a mistake goes to hide.
+    """
+
+    #: Two sets of values to try. Distinct, because substituting one
+    #: everywhere makes every (x2 - x1) zero and every formula with a
+    #: difference in it divides by nothing. And a second set inside the
+    #: unit interval, because a damping ratio above one puts a square root
+    #: of a negative number in the way of an answer that was only ever
+    #: going to be about dimensions.
+    TRIES = ((2.0, 3.0, 5.0, 7.0, 11.0, 13.0, 17.0, 19.0, 23.0, 29.0,
+              31.0, 37.0, 41.0, 43.0, 47.0),
+             (0.2, 0.3, 0.5, 0.7, 0.11, 0.13, 0.17, 0.19, 0.23, 0.29,
+              0.31, 0.37, 0.41, 0.43, 0.47))
+
+    #: Units that mean "this is not a physical quantity", so the formula
+    #: they appear in cannot be checked this way.
+    OPAQUE = ("currency", "varies")
+
+    def _balances(self, formula):
+        """(did it balance, what happened) for one formula."""
+        import sympy as sp
+
+        from engicalc.core import dimensional
+        from engicalc.core.quantity import Quantity, QuantityError
+
+        for sizes in self.TRIES:
+            given, spare = {}, iter(sizes)
+            try:
+                for variable in formula.variables:
+                    unit = variable.unit or ""
+                    if any(word in unit.lower() for word in self.OPAQUE):
+                        return None, "not a physical quantity"
+                    given[variable.symbol] = Quantity.of(next(spare), unit)
+            except (QuantityError, StopIteration) as exc:
+                return None, str(exc)
+
+            equation = formula.eq
+            if not isinstance(equation, sp.Eq):
+                return None, "not an equation"
+            try:
+                left = dimensional.walk(equation.lhs, given).tidy()
+                right = dimensional.walk(equation.rhs, given).tidy()
+            except Exception as exc:                   # noqa: BLE001
+                last = str(exc)
+                continue
+            return (left.dimension() == right.dimension(),
+                    f"{left.unit or '-'} against {right.unit or '-'}")
+        return None, last
+
+    def test_every_formula_balances_or_says_why_not(self):
+        from engicalc.formulas.library import FormulaLibrary
+
+        library = FormulaLibrary(load_user=False)
+        checked = 0
+        for formula in library.all():
+            balanced, why = self._balances(formula)
+            if balanced is None:
+                continue
+            checked += 1
+            with self.subTest(formula=formula.key):
+                if formula.dimensional_constant:
+                    # Marked as carrying a constant with units in it, so
+                    # it is not expected to balance - and if it starts to,
+                    # the marking is out of date and should go.
+                    self.assertFalse(
+                        balanced,
+                        f"{formula.key} balances now, so the note about a "
+                        f"dimensional constant is no longer true.")
+                    continue
+                self.assertTrue(balanced,
+                                f"{formula.key}: {why}")
+        # A guard on the guard: if the checking itself broke, this would
+        # pass by checking nothing.
+        self.assertGreater(checked, 200)
+
+    def test_an_exemption_has_to_give_a_reason(self):
+        from engicalc.formulas.library import FormulaLibrary
+
+        library = FormulaLibrary(load_user=False)
+        exempt = [f for f in library.all() if f.dimensional_constant]
+        self.assertTrue(exempt)
+        for formula in exempt:
+            with self.subTest(formula=formula.key):
+                # Long enough to be a reason rather than a label.
+                self.assertGreater(len(formula.dimensional_constant), 40)
+
+    def test_the_two_that_were_wrong_are_right_now(self):
+        from engicalc.formulas.library import FormulaLibrary
+
+        library = FormulaLibrary(load_user=False)
+        # C is a coulomb. Antoine's T is a temperature.
+        antoine = library.get("chemical_process.antoine")
+        self.assertEqual(antoine.variable("T").unit, "degC")
+        # Integrating a dimensionless error over time gives it a second,
+        # which is what makes the integral gain's 1/s cancel.
+        pid = library.get("control_signals.pid_output")
+        self.assertEqual(pid.variable("integral_e").unit, "s")
+        self.assertEqual(pid.variable("Ki").unit, "1/s")
+
+
 class TestQuantities(unittest.TestCase):
     """A number that knows what it measures.
 

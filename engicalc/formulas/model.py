@@ -44,6 +44,11 @@ class Formula:
     assumptions: str = ""
     tags: tuple = ()
     reference: str = ""
+    #: Set where a number in the formula carries units of its own, so the
+    #: two sides do not balance dimensionally and are not meant to. It
+    #: holds the reason, because "this one is exempt" with no explanation
+    #: is how an exemption becomes a place to hide a mistake.
+    dimensional_constant: str = ""
 
     # -- lazily built SymPy objects ---------------------------------------
     _eq: sp.Eq | None = field(default=None, repr=False, compare=False)
@@ -113,7 +118,8 @@ def make_builder(branch: str):
     """Return a short constructor bound to *branch* (keeps the data files terse)."""
 
     def build(key, name, category, equation, variables, notes="",
-              assumptions="", tags=(), reference="", made_of=None):
+              assumptions="", tags=(), reference="", made_of=None,
+              dimensional_constant=""):
         made_of = made_of or {}
         vs = [Variable(sym, *rest) if isinstance(rest, tuple) else Variable(sym, rest)
               for sym, rest in variables.items()]
@@ -128,6 +134,7 @@ def make_builder(branch: str):
         return Formula(key=f"{slug}.{key}", name=name,
                        branch=branch, category=category, equation=equation,
                        variables=vs, notes=notes, assumptions=assumptions,
-                       tags=tuple(tags), reference=reference)
+                       tags=tuple(tags), reference=reference,
+                       dimensional_constant=dimensional_constant)
 
     return build

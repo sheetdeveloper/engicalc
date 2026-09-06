@@ -43,7 +43,10 @@ FORMULAS = [
 
     f("ph", "pH from hydrogen ion activity", "Solutions",
       "pH = -log(aH)/log(10)",
-      {"pH": ("pH", "-"), "aH": ("Hydrogen ion concentration", "mol/L")}),
+      {"pH": ("pH", "-"),
+       "aH": ("Hydrogen ion activity, relative to 1 mol/L", "-")},
+      notes="Activity, not concentration - which is why it has no units. "
+            "In a dilute solution the two are the same number."),
 
     f("raoult", "Raoult's law", "Separations", "pi_p = xi*psat",
       {"pi_p": ("Partial pressure", "Pa"), "xi": ("Liquid mole fraction", "-"),
@@ -61,6 +64,10 @@ FORMULAS = [
       "logP = Aa - Ba/(Ca + T)",
       {"logP": ("log10 of vapour pressure", "-"), "Aa": ("Antoine A", "-"),
        "Ba": ("Antoine B", "-"), "Ca": ("Antoine C", "-"),
-       "T": ("Temperature", "C")},
-      notes="Coefficients are specific to the units used - check the source."),
+       "T": ("Temperature", "degC")},
+      notes="Coefficients are specific to the units used - check the source.",
+      dimensional_constant="A, B and C carry whatever units the table they "
+                           "came from was written in - B and C are "
+                           "temperatures - so the equation does not balance "
+                           "as written and is not meant to."),
 ]

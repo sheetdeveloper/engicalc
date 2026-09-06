@@ -133,7 +133,12 @@ FORMULAS = [
       "v = Rh^(2/3)*S^(1/2)/n",
       {"v": ("Mean velocity", "m/s"), "Rh": ("Hydraulic radius", "m"),
        "S": ("Channel slope", "m/m"), "n": ("Manning roughness", "-", "0.013")},
-      notes="SI form. Rh = area / wetted perimeter."),
+      notes="SI form. Rh = area / wetted perimeter.",
+      dimensional_constant="Manning's n is quoted as a bare number and is "
+                           "not one - it carries s/m^(1/3). The SI form "
+                           "hides a factor of 1 with those units in it, "
+                           "which is why the same n gives a different "
+                           "answer in feet."),
 
     f("hydraulic_diameter", "Hydraulic diameter", "Pipe flow",
       "Dh = 4*A/P",

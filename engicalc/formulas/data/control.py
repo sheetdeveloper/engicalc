@@ -67,6 +67,6 @@ FORMULAS = [
       "u = Kc*e + Ki*integral_e + Kd*de",
       {"u": ("Controller output", "-"), "Kc": ("Proportional gain", "-"),
        "e": ("Error", "-"), "Ki": ("Integral gain", "1/s"),
-       "integral_e": ("Integral of error", "-"),
+       "integral_e": ("Integral of error over time", "s"),
        "Kd": ("Derivative gain", "s"), "de": ("Derivative of error", "1/s")}),
 ]

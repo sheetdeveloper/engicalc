@@ -99,8 +99,24 @@ class Quantity:
 
     @property
     def plain(self) -> bool:
-        """True when it is just a number."""
+        """True when it is written as just a number."""
         return not self.powers
+
+    @property
+    def measureless(self) -> bool:
+        """True when it measures nothing, whatever it is written as.
+
+        Not the same question as :attr:`plain`. Radians measure nothing
+        and are written; so do seconds over farad-ohms, which is what the
+        exponent of an RC charging curve comes out as. A function that
+        wants a plain number wants this one.
+        """
+        if self.plain:
+            return True
+        try:
+            return not self.dimension()
+        except Exception:                              # noqa: BLE001
+            return False
 
     def expression(self):
         """The unit as a SymPy quantity, for asking what dimension it is."""
@@ -121,6 +137,10 @@ class Quantity:
         """*other* as a number in this one's unit, or a refusal."""
         if self.powers == other.powers:
             return other.value
+        if self.measureless and other.measureless:
+            # Radians and a bare number, or seconds over farad-ohms and a
+            # bare number. Both measure nothing, so both are numbers.
+            return other.tidy().value
         if self.plain != other.plain:
             plain, sized = ((self, other) if self.plain else (other, self))
             raise QuantityError(
@@ -172,11 +192,12 @@ class Quantity:
 
     def __pow__(self, other):
         other = _as_quantity(other)
-        if not other.plain:
+        if not other.measureless:
             raise QuantityError(
                 f"Raising something to the power of {other.value:g} "
                 f"{other.unit}. An exponent has to be a plain number - "
                 f"there is no such thing as x to the power of a length.")
+        other = other.tidy()
         if self.value == 0 and other.value < 0:
             # F/A arrives here as F * A**-1, so a zero area never reaches
             # the check in __truediv__ and comes out as a ZeroDivisionError
@@ -602,7 +623,7 @@ def apply(name: str, value: Quantity) -> Quantity:
     if name in TRIGONOMETRY:
         angle = as_angle(value)
         if name.startswith("a"):
-            if not value.plain:
+            if not value.measureless:
                 raise QuantityError(
                     f"{name} of {value.unit} - an inverse trigonometric "
                     f"function takes a ratio, which is a plain number.")
@@ -610,7 +631,7 @@ def apply(name: str, value: Quantity) -> Quantity:
                             {"rad": Power(1)})
         return Quantity(getattr(math, name)(angle), {})
     if name in PLAIN_ONLY:
-        if not value.plain:
+        if not value.measureless:
             raise QuantityError(
                 f"{name} of {value.value:g} {value.unit}, which measures "
                 f"{value.measures()}. {name} wants a plain number - a "
@@ -620,7 +641,7 @@ def apply(name: str, value: Quantity) -> Quantity:
                     "log10": math.log10}.get(name, None)
         if function is None:
             function = getattr(math, name)
-        return Quantity(function(value.value), {})
+        return Quantity(function(value.tidy().value), {})
     if name == "sqrt":
         return value ** Quantity(0.5, {})
     if name == "abs":

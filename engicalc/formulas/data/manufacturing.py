@@ -31,7 +31,10 @@ FORMULAS = [
        "HB": ("Brinell hardness number", "-")},
       made_of={"UTS": "uts"},
       notes="Rule of thumb for steels only; +/- 10% is typical.",
-      assumptions="Carbon and low-alloy steels."),
+      assumptions="Carbon and low-alloy steels.",
+      dimensional_constant="The 3.45 carries MPa. It is a fitted number, "
+                           "not a conversion, which is why it holds for "
+                           "steels and not for anything else."),
 
     f("resilience", "Modulus of resilience", "Materials",
       "Ur = sigma_y^2/(2*E)",
