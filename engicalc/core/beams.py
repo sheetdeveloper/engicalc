@@ -28,11 +28,20 @@ and the one a fixed pair of supports at the ends cannot show. Which support
 is the pin decides which part of the beam an inclined load pulls and which
 part it pushes, so it is asked rather than assumed.
 
-What this cannot do is say so. Everything here comes out of equilibrium, and
-equilibrium settles a beam with two simple supports or one built-in end and
-nothing more. A propped cantilever, a beam on three supports, two pins
-sharing a thrust - all real, all common, none of them solvable without the
-deflections as well. Each is refused by name.
+Equilibrium settles a beam with two simple supports, or one built-in end,
+and nothing more. Beyond that - a propped cantilever, a beam on three
+supports, a beam built in at both ends - the deflection is the missing
+equation: a support is a place where the beam cannot move, and a built-in
+end is a place where it cannot turn either. So those are solved rather than
+refused, by taking the extra supports away, seeing how far the beam would
+move without them, and finding the forces that put it back.
+
+For a beam of one section throughout, the stiffness cancels out of that and
+the reactions are the beam's rather than the material's. Only the
+deflections depend on what it is made of.
+
+Two pins sharing a thrust is still refused, because that one is
+indeterminate in a direction the deflection here says nothing about.
 """
 
 from __future__ import annotations
@@ -51,6 +60,11 @@ POINTS = 601
 #: How far from zero the closing shear or moment may be, relative to the
 #: largest value on the diagram, before something is wrong.
 CLOSES = 1e-6
+
+#: How far before a couple the extra sample goes, as a fraction of the span.
+#: Small enough that the interval it makes contributes nothing to any
+#: integral, large enough to survive being stored as a double.
+JUST_BEFORE = 1e-9
 
 
 class BeamError(ParseError):
@@ -283,6 +297,24 @@ class Diagram:
         return rows
 
 
+def _stations(beam: Beam):
+    """Where along the beam the diagrams are worked out.
+
+    Evenly spaced, with a second point a hair before every applied couple.
+    The moment either side of a couple differs by the whole couple and at
+    the couple itself is not defined; with one sample there the integration
+    for the deflection draws a straight line across the step and loses half
+    a cell of area at it. Two samples make the step a step.
+    """
+    x = np.linspace(0.0, beam.length, POINTS)
+    edges = [load.position - JUST_BEFORE * beam.length
+             for load in beam.loads if isinstance(load, Moment)]
+    edges = [place for place in edges if 0.0 < place < beam.length]
+    if edges:
+        x = np.unique(np.concatenate([x, np.array(edges)]))
+    return x
+
+
 def _cumulative(values, x):
     """Running integral of *values* along *x*, by the trapezium rule.
 
@@ -308,6 +340,16 @@ def deflect(beam: Beam, diagram: Diagram, stiffness: float) -> np.ndarray:
     applies to any beam that can be drawn rather than to the handful with
     formulae in the back of a book.
     """
+    return _bending(beam, diagram, stiffness)[1]
+
+
+def _bending(beam: Beam, diagram: Diagram, stiffness: float) -> tuple:
+    """(slope, deflection) along the beam.
+
+    The slope is wanted for its own sake once a beam can be built in at more
+    than one place: a fixed end is a place where the beam is held level, and
+    that condition is one of the equations the force method needs.
+    """
     if stiffness <= 0:
         raise BeamError("EI has to be positive.")
     slope = _cumulative(diagram.moment / stiffness, diagram.x)
@@ -327,7 +369,100 @@ def deflect(beam: Beam, diagram: Diagram, stiffness: float) -> np.ndarray:
         # Held down at both, which fixes the straight line through them.
         first = -(at(right, drop) - at(left, drop)) / (right - left)
         second = -(at(left, drop) + first * left)
-    return drop + first * diagram.x + second
+    return slope + first, drop + first * diagram.x + second
+
+
+# --------------------------------------------------------------------------
+# Beams with more supports than statics can settle
+# --------------------------------------------------------------------------
+#: A stiffness to work the redundants out at. Any value will do - it cancels
+#: between the sag and the force that undoes it - so the reactions of a beam
+#: of one section throughout do not depend on what it is made of. Only the
+#: deflections do.
+ANY_STIFFNESS = 1.0
+
+
+def _release(beam: Beam) -> tuple:
+    """(the supports to keep, the ones to solve for).
+
+    Keep enough to make a determinate beam and treat the rest as unknown
+    forces. A built-in end alone is a cantilever and two simple supports are
+    a simple span; either is a beam these diagrams can already draw.
+
+    Each released support is one unknown force, and a released built-in end
+    is a moment as well, because it holds the beam level as well as up.
+    """
+    held = beam.held
+    built_in = [support for support in held if support.holds_turning]
+    if built_in:
+        wall = built_in[0]
+        primary = [Support(wall.position, "fixed")]
+        rest = [support for support in held if support is not wall]
+    else:
+        if len(held) <= 2:
+            return held, []
+        primary = [Support(held[0].position, "pin"),
+                   Support(held[1].position, "roller")]
+        rest = held[2:]
+
+    unknowns = []
+    for support in rest:
+        unknowns.append((support.position, "force"))
+        if support.holds_turning:
+            unknowns.append((support.position, "moment"))
+    return primary, unknowns
+
+
+def _unit(place: float, kind: str):
+    """The load that stands for one unit of a redundant."""
+    return (Moment(place, 1.0) if kind == "moment"
+            else PointLoad(place, 1.0))
+
+
+def _movement(beam: Beam, wanted: list) -> list:
+    """How far the beam moves at each released support, and which way.
+
+    A force redundant asks how far the beam sags there; a moment redundant
+    asks how much it turns. Both come out of the same integration.
+    """
+    diagram = analyse(beam)
+    slope, drop = _bending(beam, diagram, ANY_STIFFNESS)
+    return [float(np.interp(place, diagram.x,
+                            slope if kind == "moment" else drop))
+            for place, kind in wanted]
+
+
+def _solve_redundants(beam: Beam) -> list:
+    """The reactions statics cannot reach. Returns (place, kind, value).
+
+    Take the extra supports away, see how far the beam moves where they
+    were, and find the forces that put it back. With more than one they
+    interact - a force at the first prop lifts the beam at the second - so
+    it is a small set of simultaneous equations rather than one division.
+    """
+    primary, wanted = _release(beam)
+    if not wanted:
+        return []
+
+    bare = Beam(length=beam.length, supports=primary,
+                loads=list(beam.loads), kind=beam.kind)
+    sagged = np.array(_movement(bare, wanted))
+
+    influence = np.zeros((len(wanted), len(wanted)))
+    for column, (place, kind) in enumerate(wanted):
+        probe = Beam(length=beam.length, supports=primary,
+                     loads=[_unit(place, kind)], kind=beam.kind)
+        influence[:, column] = _movement(probe, wanted)
+
+    try:
+        found = np.linalg.solve(influence, -sagged)
+    except np.linalg.LinAlgError as exc:
+        raise BeamError(
+            "The supports do not settle the beam - two of them are asking "
+            "for the same thing, or one of them is somewhere it cannot "
+            "hold anything.") from exc
+    return [(place, kind, float(value))
+            for (place, kind), value in zip(wanted, found)]
 
 
 def _reaction_label(key: str) -> str:
@@ -386,11 +521,10 @@ def _reactions(beam: Beam) -> dict:
     if built_in:
         if len(built_in) > 1 or simple:
             raise BeamError(
-                "A beam built in at one end and held anywhere else has more "
-                "unknowns than equilibrium has equations - it is statically "
-                "indeterminate, and these diagrams are worked from "
-                "equilibrium alone. Make the built-in end a pin, or take "
-                "the other support away.")
+                "A beam built in at one end and held anywhere else is "
+                "statically indeterminate. It is solved from the deflection "
+                "before it gets here, so reaching this means the releasing "
+                "went wrong rather than the beam being impossible.")
         wall = built_in[0].position
         # The wall carries whatever is left over: force, moment and thrust.
         found = {wall: -total_load,
@@ -407,8 +541,9 @@ def _reactions(beam: Beam) -> dict:
     if len(simple) > 2:
         raise BeamError(
             f"{len(simple)} supports is more than equilibrium can solve "
-            f"for; two is the most a statically determinate beam has. "
-            f"Continuous beams need the deflections as well.")
+            f"for. A continuous beam is settled from the deflection before "
+            f"it gets here, so reaching this means the releasing went wrong "
+            f"rather than the beam being impossible.")
     left, right = simple[0].position, simple[1].position
     if abs(right - left) < 1e-12:
         raise BeamError("The two supports are in the same place.")
@@ -429,8 +564,26 @@ def analyse(beam: Beam, stiffness: float = 0.0) -> Diagram:
     does not depend on what it is made of and its movement does.
     """
     beam.check()
+    # More supports than statics can settle? Work the extra ones out first,
+    # then carry on with a beam that has them applied as loads - which is a
+    # beam these diagrams could already draw.
+    redundants = _solve_redundants(beam)
+    working = beam
+    if redundants:
+        primary, _wanted = _release(beam)
+        working = Beam(length=beam.length, supports=primary,
+                       loads=list(beam.loads)
+                       + [_unit(place, kind) for place, kind, _v in
+                          redundants],
+                       kind=beam.kind)
+        # The unit loads carry their solved size.
+        for load, (_p, _k, value) in zip(
+                working.loads[len(beam.loads):], redundants):
+            load.magnitude = value
+
+    beam, given = working, beam
     reactions = _reactions(beam)
-    x = np.linspace(0.0, beam.length, POINTS)
+    x = _stations(beam)
     shear = np.zeros_like(x)
     moment = np.zeros_like(x)
     thrust = np.zeros_like(x)     # forces along the beam, summed from the left
@@ -461,7 +614,13 @@ def analyse(beam: Beam, stiffness: float = 0.0) -> Diagram:
             if load.along:
                 thrust[x >= load.position - 1e-12] += load.along
         elif isinstance(load, Moment):
-            moment[x >= load.position - 1e-12] -= load.magnitude
+            # Nothing, if it sits at the far end. The internal moment at a
+            # section is the moment of everything to its left, and a couple
+            # at the end is to the right of every section in the beam - so
+            # it changes none of them. Stepping the last sample made a
+            # fixed end read zero where it carries its whole fixing moment.
+            if load.position < beam.length * (1.0 - JUST_BEFORE):
+                moment[x >= load.position - 1e-12] -= load.magnitude
         elif isinstance(load, Distributed):
             # Integrated along the part of the beam it covers, rather than
             # lumped at its centre - lumping gives the right reactions and
@@ -505,6 +664,24 @@ def analyse(beam: Beam, stiffness: float = 0.0) -> Diagram:
             f"The axial force does not close to zero at the end - it "
             f"finishes at {axial[-1]:.4g} N.")
 
+    # The solved reactions belong on the supports they came from, not on
+    # the loads they were applied as - a prop is a support, whatever the
+    # arithmetic had to call it to get there.
+    for place, kind, value in redundants:
+        if kind == "moment":
+            diagram.reactions[f"moment at {place:g}"] = value
+        else:
+            diagram.reactions[place] = value
+    if redundants:
+        many = len(redundants) > 1
+        diagram.notes.append(
+            f"Statically indeterminate to {len(redundants)}. The extra "
+            f"{'reactions were' if many else 'reaction was'} found from "
+            f"the deflection rather than from equilibrium, so "
+            f"{'they do' if many else 'it does'} not depend on what the "
+            f"beam is made of.")
+
     if stiffness:
         diagram.deflection = deflect(beam, diagram, stiffness)
+    del given
     return diagram

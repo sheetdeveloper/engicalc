@@ -380,10 +380,16 @@ class BeamTab(ChartTab):
         self.first_kind = tk.StringVar(value="pin")
         self.second_support = tk.StringVar(value="6")
         self.second_kind = tk.StringVar(value="roller")
+        # A third, off unless it is wanted. Two supports is a simple span
+        # and three is a continuous beam, which needs the deflection to
+        # settle and so could not be described here until it did.
+        self.third_support = tk.StringVar(value="3")
+        self.third_kind = tk.StringVar(value="none")
         self.support_entries = []
         for index, (where, kind) in enumerate(
                 ((self.first_support, self.first_kind),
-                 (self.second_support, self.second_kind))):
+                 (self.second_support, self.second_kind),
+                 (self.third_support, self.third_kind))):
             if index:
                 ttk.Label(first, text="and").pack(side="left", padx=(8, 0))
             entry = ttk.Entry(first, textvariable=where, width=6, font=MONO)
@@ -480,7 +486,9 @@ class BeamTab(ChartTab):
                 (self.first_support, self.first_kind,
                  "where the beam is held"),
                 (self.second_support, self.second_kind,
-                 "where the other support is")):
+                 "where the other support is"),
+                (self.third_support, self.third_kind,
+                 "where the third support is")):
             if kind.get() == "none":
                 continue
             found.append(beams.Support(self.number(where, what), kind.get()))
@@ -630,9 +638,13 @@ class BeamTab(ChartTab):
         # Against the span it is spanning, which is what a limit is quoted
         # against - the distance between the supports, or the reach of a
         # cantilever, not the length of the timber.
+        # The longest span between neighbouring supports, not the length of
+        # the beam. On a continuous beam over three supports those are not
+        # the same thing, and a limit of span/360 means the span that is
+        # sagging rather than the whole timber.
         places = sorted(support.position for support in beam.held)
         span = (beam.length - places[0] if len(places) == 1
-                else places[-1] - places[0])
+                else max(b - a for a, b in zip(places, places[1:])))
         if drop and span:
             rows.append(("span over deflection", span / abs(drop),
                          f"({span:g} m span)"))

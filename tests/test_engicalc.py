@@ -3376,18 +3376,25 @@ class TestBeamDiagrams(unittest.TestCase):
         self.assertAlmostEqual(float(right.axial[near]), 0.0, places=6)
         self.assertAlmostEqual(float(right.axial[far]), -5000.0, places=5)
 
-    def test_a_propped_cantilever_is_refused_rather_than_guessed(self):
-        from engicalc.core.beams import (Beam, BeamError, PointLoad, Support,
-                                         analyse)
+    def test_a_propped_cantilever_is_solved_from_the_deflection(self):
+        from engicalc.core.beams import Beam, PointLoad, Support, analyse
 
-        # Four unknowns and three equations. It is a real beam and a common
-        # one, and it cannot be done from equilibrium - so it says so rather
-        # than producing a number that looks like an answer.
-        with self.assertRaises(BeamError) as caught:
-            analyse(Beam(length=6, loads=[PointLoad(3, -10000)],
-                         supports=[Support(0, "fixed"),
-                                   Support(6, "roller")]))
-        self.assertIn("indeterminate", str(caught.exception))
+        # More unknowns than equilibrium has equations, and for a long time
+        # this was refused for exactly that reason. The deflection is the
+        # missing equation: the prop is a place where the beam cannot move,
+        # and that settles the one reaction statics could not reach.
+        #
+        # A load at midspan gives 5P/16 at the prop and 3PL/16 at the wall.
+        span, load = 6.0, 20000.0
+        got = analyse(Beam(length=span, loads=[PointLoad(span / 2, -load)],
+                           supports=[Support(0, "fixed"),
+                                     Support(span, "roller")]))
+        self.assertAlmostEqual(got.reactions[span], 5 * load / 16,
+                               delta=load * 1e-4)
+        self.assertAlmostEqual(got.reactions["moment at 0"],
+                               3 * load * span / 16,
+                               delta=load * span * 1e-4)
+        self.assertTrue([n for n in got.notes if "indeterminate" in n])
 
     def test_two_pins_cannot_share_a_thrust(self):
         from engicalc.core.beams import (Beam, BeamError, Support,
@@ -3416,14 +3423,27 @@ class TestBeamDiagrams(unittest.TestCase):
             analyse(Beam(length=6, loads=[PointLoad(3, -10000)],
                          supports=[Support(0, "roller")]))
 
-    def test_three_supports_are_more_than_statics_can_do(self):
-        from engicalc.core.beams import (Beam, BeamError, PointLoad, Support,
-                                         analyse)
+    def test_three_supports_are_solved_the_same_way(self):
+        from engicalc.core.beams import (Beam, Distributed, Support, analyse)
 
-        with self.assertRaises(BeamError):
-            analyse(Beam(length=6, loads=[PointLoad(3, -10000)],
-                         supports=[Support(0, "pin"), Support(3, "roller"),
-                                   Support(6, "roller")]))
+        # Two equal spans under a spread load. The middle support takes
+        # 10wL/8 and the ends 3wL/8 each, and the moment over the middle is
+        # hogging at wL^2/8 - which is why a continuous beam is worth having
+        # and why it cannot be done from equilibrium alone.
+        span, spread = 6.0, 10000.0
+        got = analyse(Beam(length=2 * span,
+                           loads=[Distributed(0, 2 * span, -spread)],
+                           supports=[Support(0, "pin"), Support(span,
+                                                                "roller"),
+                                     Support(2 * span, "roller")]))
+        self.assertAlmostEqual(got.reactions[span], 10 * spread * span / 8,
+                               delta=spread * span * 1e-4)
+        self.assertAlmostEqual(got.reactions[0.0], 3 * spread * span / 8,
+                               delta=spread * span * 1e-4)
+        over = int(np.argmin(np.abs(got.x - span)))
+        self.assertAlmostEqual(float(got.moment[over]),
+                               -spread * span ** 2 / 8,
+                               delta=spread * span ** 2 * 1e-4)
 
     def test_plain_distances_still_mean_what_they_meant(self):
         from engicalc.core.beams import Beam, analyse, inclined
@@ -3445,6 +3465,156 @@ class TestBeamDiagrams(unittest.TestCase):
         with self.assertRaises(BeamError):
             analyse(Beam(length=3, supports=[0, 7],
                          loads=[PointLoad(1, -1000)]))
+
+
+class TestIndeterminateBeams(unittest.TestCase):
+    """The ones with more supports than statics has equations.
+
+    All of these were refused until the deflection existed to settle them.
+    Each is checked against the closed form every textbook quotes, because
+    the force method is easy to write plausibly and wrongly.
+    """
+
+    SPAN, SPREAD, LOAD = 6.0, 10000.0, 20000.0
+
+    def _at(self, diagram, place):
+        return float(diagram.moment[
+            int(np.argmin(np.abs(diagram.x - place)))])
+
+    def test_a_propped_cantilever_under_a_spread_load(self):
+        from engicalc.core.beams import Beam, Distributed, Support, analyse
+
+        # R at the prop is 3wL/8, at the wall 5wL/8, and the wall holds
+        # wL^2/8.
+        span, spread = self.SPAN, self.SPREAD
+        got = analyse(Beam(length=span,
+                           loads=[Distributed(0, span, -spread)],
+                           supports=[Support(0, "fixed"),
+                                     Support(span, "roller")]))
+        self.assertAlmostEqual(got.reactions[span], 3 * spread * span / 8,
+                               delta=spread * span * 1e-4)
+        self.assertAlmostEqual(got.reactions[0.0], 5 * spread * span / 8,
+                               delta=spread * span * 1e-4)
+        self.assertAlmostEqual(got.reactions["moment at 0"],
+                               spread * span ** 2 / 8,
+                               delta=spread * span ** 2 * 1e-4)
+
+    def test_a_beam_built_in_at_both_ends(self):
+        from engicalc.core.beams import Beam, Distributed, Support, analyse
+
+        # wL^2/12 hogging at the ends, wL^2/24 sagging in the middle, and
+        # the contraflexure points at L/2 +- L/(2 root 3).
+        span, spread = self.SPAN, self.SPREAD
+        got = analyse(Beam(length=span,
+                           loads=[Distributed(0, span, -spread)],
+                           supports=[Support(0, "fixed"),
+                                     Support(span, "fixed")]))
+        self.assertAlmostEqual(got.reactions[0.0], spread * span / 2,
+                               delta=spread * span * 1e-4)
+        self.assertAlmostEqual(self._at(got, 0.0),
+                               -spread * span ** 2 / 12,
+                               delta=spread * span ** 2 * 1e-4)
+        self.assertAlmostEqual(self._at(got, span),
+                               -spread * span ** 2 / 12,
+                               delta=spread * span ** 2 * 1e-4)
+        self.assertAlmostEqual(self._at(got, span / 2),
+                               spread * span ** 2 / 24,
+                               delta=spread * span ** 2 * 1e-4)
+        for turn in (span / 2 - span / (2 * math.sqrt(3)),
+                     span / 2 + span / (2 * math.sqrt(3))):
+            self.assertAlmostEqual(self._at(got, turn), 0.0,
+                                   delta=spread * span ** 2 * 1e-3)
+
+    def test_a_beam_built_in_at_both_ends_under_a_point_load(self):
+        from engicalc.core.beams import Beam, PointLoad, Support, analyse
+
+        # PL/8 at the ends and PL/8 at the middle, which is the case worth
+        # knowing: building the ends in halves the moment a simple span has.
+        span, load = self.SPAN, self.LOAD
+        got = analyse(Beam(length=span, loads=[PointLoad(span / 2, -load)],
+                           supports=[Support(0, "fixed"),
+                                     Support(span, "fixed")]))
+        self.assertAlmostEqual(got.reactions[0.0], load / 2,
+                               delta=load * 1e-4)
+        self.assertAlmostEqual(self._at(got, 0.0), -load * span / 8,
+                               delta=load * span * 1e-4)
+        self.assertAlmostEqual(self._at(got, span / 2), load * span / 8,
+                               delta=load * span * 1e-4)
+
+    def test_two_equal_spans_under_a_spread_load(self):
+        from engicalc.core.beams import Beam, Distributed, Support, analyse
+
+        span, spread = self.SPAN, self.SPREAD
+        got = analyse(Beam(length=2 * span,
+                           loads=[Distributed(0, 2 * span, -spread)],
+                           supports=[Support(0, "pin"),
+                                     Support(span, "roller"),
+                                     Support(2 * span, "roller")]))
+        self.assertAlmostEqual(got.reactions[span], 10 * spread * span / 8,
+                               delta=spread * span * 1e-4)
+        self.assertAlmostEqual(got.reactions[0.0], 3 * spread * span / 8,
+                               delta=spread * span * 1e-4)
+        self.assertAlmostEqual(self._at(got, span),
+                               -spread * span ** 2 / 8,
+                               delta=spread * span ** 2 * 1e-4)
+
+    def test_the_reactions_do_not_depend_on_what_it_is_made_of(self):
+        from engicalc.core.beams import Beam, Distributed, Support, analyse
+
+        # For one section throughout the stiffness cancels between the sag
+        # and the force that undoes it. If it did not, a steel beam and an
+        # aluminium one of the same shape would carry their loads
+        # differently, which they do not.
+        beam = Beam(length=self.SPAN,
+                    loads=[Distributed(0, self.SPAN, -self.SPREAD)],
+                    supports=[Support(0, "fixed"),
+                              Support(self.SPAN, "roller")])
+        soft = analyse(beam, stiffness=1e5)
+        stiff = analyse(beam, stiffness=1e9)
+        self.assertAlmostEqual(soft.reactions[self.SPAN],
+                               stiff.reactions[self.SPAN], places=6)
+        # The movement does depend on it, and by the ratio of the two.
+        self.assertAlmostEqual(
+            abs(soft.max_deflection[1] / stiff.max_deflection[1]), 1e4,
+            delta=1.0)
+
+    def test_the_diagrams_still_close(self):
+        from engicalc.core.beams import Beam, Distributed, Support, analyse
+
+        # The check that caught the spread-load bug. It has to keep working
+        # when the reactions came from somewhere other than equilibrium.
+        for supports in ([Support(0, "fixed"), Support(6.0, "roller")],
+                         [Support(0, "pin"), Support(3.0, "roller"),
+                          Support(6.0, "roller")]):
+            with self.subTest(supports=len(supports)):
+                got = analyse(Beam(length=6.0,
+                                   loads=[Distributed(0, 6.0, -8000.0)],
+                                   supports=supports))
+                self.assertAlmostEqual(float(got.shear[-1]), 0.0, places=6)
+                self.assertFalse([n for n in got.notes
+                                  if "does not close" in n])
+
+    def test_it_says_when_it_had_to_go_beyond_equilibrium(self):
+        from engicalc.core.beams import Beam, PointLoad, Support, analyse
+
+        plain = analyse(Beam(length=6.0, loads=[PointLoad(3.0, -10000.0)],
+                             supports=[Support(0, "pin"),
+                                       Support(6.0, "roller")]))
+        self.assertFalse([n for n in plain.notes if "indeterminate" in n])
+        propped = analyse(Beam(length=6.0, loads=[PointLoad(3.0, -10000.0)],
+                               supports=[Support(0, "fixed"),
+                                         Support(6.0, "roller")]))
+        self.assertTrue([n for n in propped.notes if "indeterminate" in n])
+
+    def test_a_beam_on_one_roller_is_still_a_mechanism(self):
+        from engicalc.core.beams import (Beam, BeamError, PointLoad, Support,
+                                         analyse)
+
+        # Solving the indeterminate ones must not have made the impossible
+        # ones look solvable. Too few supports is still too few.
+        with self.assertRaises(BeamError):
+            analyse(Beam(length=6.0, loads=[PointLoad(3.0, -10000.0)],
+                         supports=[Support(0, "roller")]))
 
 
 class TestBeamDeflection(unittest.TestCase):

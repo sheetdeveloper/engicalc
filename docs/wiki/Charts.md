@@ -106,20 +106,47 @@ the yield of ordinary structural steel, since the deflection below it
 assumes the beam springs back, and a movement worse than span/360, which is
 what a floor is commonly held to.
 
-### What it will not do
+### Beams equilibrium cannot settle on its own
 
-All of this comes out of equilibrium, and equilibrium settles a beam with
-two simple supports, or one built-in end, and nothing more. These are real
-beams and it cannot do them:
+A propped cantilever, a beam built in at both ends, a beam continuous over
+three supports - all ordinary, and all with more unknown reactions than
+statics has equations. These were refused for a long time, and the refusal
+was honest while there was nothing else to go on.
 
-- a propped cantilever - built in at one end, resting on something at the
-  other
-- a beam continuous over three or more supports
-- two pinned supports with a load leaning against them, which share the
-  thrust in a proportion equilibrium cannot work out
+The deflection is the missing equation. A support is a place where the beam
+cannot move, and a built-in end is a place where it cannot turn either. So
+the extra supports are taken away, the sag where they were is worked out,
+and the forces that put it back are solved for - the force method, and the
+same idea as the compatibility condition that splits a torque between two
+fixed ends.
 
-Each is refused by name and by reason. They need the deflections as well as
-the forces, and this does not have them.
+Two things worth knowing. **The reactions do not depend on what the beam is
+made of.** For one section throughout, the stiffness cancels between the sag
+and the force that undoes it, so a steel beam and an aluminium one of the
+same shape share their load identically; only the movement differs. And the
+method is entirely general - it applies to any beam these diagrams can draw,
+so a propped cantilever with a triangular load on an overhang is no harder
+than the one in the book.
+
+It is checked against the cases that are in the book:
+
+| | | |
+| --- | --- | --- |
+| propped cantilever, spread load | R at the prop | 3wL/8 |
+| propped cantilever, load at midspan | R at the prop | 5P/16 |
+| built in both ends, spread load | moment at the ends | wL²/12 |
+| built in both ends, load at midspan | moment at the ends | PL/8 |
+| two equal spans, spread load | middle reaction | 10wL/8 |
+
+The tab takes three supports, which is what a continuous beam needs. The
+third starts as "none".
+
+### What it still will not do
+
+Two pinned supports with a load leaning against them. They share the thrust
+along the beam in a proportion equilibrium cannot settle, and the deflection
+worked out here says nothing about that direction - so that one is still
+refused rather than guessed.
 
 Sign convention: upward loads positive, sagging moment positive,
 anticlockwise couples positive, tension positive, distances from the
