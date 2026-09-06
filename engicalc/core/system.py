@@ -45,15 +45,23 @@ RESIDUAL_LIMIT = 1e-6
 
 @dataclass
 class Parsed:
-    """The equations, and what is unknown in them."""
+    """The equations, what is unknown in them, and what is allowed."""
 
     equations: list = field(default_factory=list)
     unknowns: list = field(default_factory=list)
     given: dict = field(default_factory=dict)
+    #: Inequalities written on lines of their own. They say which of the
+    #: answers is wanted, not what the answer is.
+    bounds: list = field(default_factory=list)
 
     @property
     def freedom(self) -> int:
-        """Unknowns minus equations. Zero is a set with one answer."""
+        """Unknowns minus equations. Zero is a set with one answer.
+
+        Bounds are not counted. A bound cannot make an under-determined set
+        solvable - `T > 0` rules answers out, it does not pin one down - and
+        counting it as an equation would say a set was ready when it is not.
+        """
         return len(self.unknowns) - len(self.equations)
 
 
@@ -66,13 +74,41 @@ def parse_set(text: str, given: dict | None = None) -> Parsed:
     given = {k: v for k, v in (given or {}).items()
              if str(v).strip() != ""}
     equations = []
+    bounds = []
     for chunk in re.split(r"[;\n]+", text or ""):
         line = chunk.strip()
         if not line or line.startswith("#"):
             continue
         # Declared first, or "Re" parses as R times e and the equation is
         # quietly about different quantities than the one typed.
-        parsed = parse_input(line, extra_symbols=symbols_in(text)).expr
+        try:
+            parsed = parse_input(line, extra_symbols=symbols_in(text)).expr
+        except ParseError as exc:
+            # A range written the way it is written on paper. Python cannot
+            # chain comparisons into one relation, and the message it gives
+            # mentions neither ranges nor what to do instead.
+            if line.count("<") + line.count(">") > 1:
+                raise ParseError(
+                    f"{line!r} is a range, and it needs writing as two "
+                    "lines - one for each end:\n"
+                    f"    {line.split('<')[1].strip() if '<' in line else 'x'}"
+                    " > (the lower end)\n"
+                    f"    {line.split('<')[1].strip() if '<' in line else 'x'}"
+                    " < (the upper end)") from exc
+            raise
+        if isinstance(parsed, sp.Rel) and not isinstance(parsed, sp.Eq):
+            # An inequality is a bound on the answer, not an equation to be
+            # satisfied. Turning it into `Eq(thing, 0)` - which is what used
+            # to happen to anything that was not an equation - gives False,
+            # which has no left hand side and crashed.
+            bounds.append(parsed)
+            continue
+        if isinstance(parsed, (sp.logic.boolalg.BooleanTrue,
+                               sp.logic.boolalg.BooleanFalse)):
+            raise ParseError(
+                f"{line!r} works out to just true or false, so there is "
+                "nothing to solve in it. A range needs writing as two lines "
+                "- `T > 0` and `T < 1000` - rather than as `0 < T < 1000`.")
         if not isinstance(parsed, sp.Eq):
             # "x + y - 10" on its own means it is zero.
             parsed = sp.Eq(parsed, 0)
@@ -91,9 +127,13 @@ def parse_set(text: str, given: dict | None = None) -> Parsed:
     if substitutions:
         equations = [e.subs(substitutions) for e in equations]
 
+    if substitutions:
+        bounds = [b.subs(substitutions) for b in bounds]
+    # A name that appears only in a bound is not an unknown - `T > 0` on its
+    # own does not introduce anything to solve for.
     unknowns = sorted({s for e in equations for s in e.free_symbols},
                       key=lambda s: s.name)
-    return Parsed(equations, unknowns, given)
+    return Parsed(equations, unknowns, given, bounds)
 
 
 
@@ -261,13 +301,57 @@ def _tidy(answer: dict) -> dict:
     return cleaned
 
 
+def within(answer: dict, bounds: list) -> bool:
+    """True when *answer* satisfies every bound.
+
+    A bound that cannot be decided - because it mentions something the
+    answer does not fix - is treated as satisfied. Discarding an answer over
+    a bound nobody can evaluate would be worse than showing it.
+    """
+    for bound in bounds:
+        try:
+            verdict = bound.subs(answer)
+            if verdict is sp.false or verdict is False:
+                return False
+            if isinstance(verdict, sp.Rel):
+                value = sp.simplify(verdict.lhs - verdict.rhs)
+                if not value.is_number:
+                    continue          # cannot be decided; let it pass
+                if verdict.func(value, 0) is sp.false:
+                    return False
+        except Exception:                             # noqa: BLE001
+            continue
+    return True
+
+
+def _guess_from(bounds: list, unknowns: list) -> list:
+    """Starting points suggested by the bounds, tried before the usual ones.
+
+    A bound says roughly where the answer is, which is exactly what an
+    iterative solver wants to be told. `T > 300` starts it somewhere useful
+    rather than at 1.
+    """
+    hints = {}
+    for bound in bounds:
+        for symbol in bound.free_symbols:
+            if symbol not in unknowns:
+                continue
+            other = sp.simplify(bound.rhs if bound.lhs == symbol
+                                else bound.lhs)
+            if other.is_number:
+                edge = float(other)
+                hints[symbol] = edge * 1.1 + 1.0 if edge >= 0 else edge * 0.9
+    return hints
+
+
 def _numeric(parsed: Parsed, result: CalcResult):
     """Try nsolve from several starting points. None if none of them land."""
     expressions = [e.lhs - e.rhs for e in parsed.equations]
+    hints = _guess_from(parsed.bounds, set(parsed.unknowns))
     for guess in GUESSES:
+        start = [hints.get(symbol, guess) for symbol in parsed.unknowns]
         try:
-            found = sp.nsolve(expressions, parsed.unknowns,
-                              [guess] * len(parsed.unknowns), dict=True)
+            found = sp.nsolve(expressions, parsed.unknowns, start, dict=True)
         except Exception:                             # noqa: BLE001
             continue
         answer = found[0] if isinstance(found, list) else dict(
@@ -275,6 +359,8 @@ def _numeric(parsed: Parsed, result: CalcResult):
         if not answer:
             continue
         answer = _tidy(answer)
+        if not within(answer, parsed.bounds):
+            continue                  # a root, but not one that is allowed
         worst = max(_residuals(parsed.equations, answer), default=0.0)
         if worst <= RESIDUAL_LIMIT:
             result.steps.append(Step(
@@ -333,15 +419,30 @@ def solve_set(text: str, given: dict | None = None) -> CalcResult:
         except Exception as exc:                      # noqa: BLE001
             result.warnings.append(f"The exact solver gave up ({exc}).")
 
-        if solutions:
-            answer = solutions[0]
-            if len(solutions) > 1:
+        allowed = [a for a in solutions if within(a, parsed.bounds)]
+        excluded = len(solutions) - len(allowed)
+        if excluded:
+            result.steps.append(Step(
+                f"Ruled out by the bounds: {excluded} of {len(solutions)}",
+                detail="They satisfy the equations but not what was said "
+                       "about the answer."))
+        if allowed:
+            answer = allowed[0]
+            if len(allowed) > 1:
                 result.warnings.append(
-                    f"{len(solutions)} sets of values satisfy these "
+                    f"{len(allowed)} sets of values satisfy these "
                     "equations; the first is shown. The others are just as "
                     "valid - which one is wanted is a question about the "
-                    "problem, not the algebra.")
-        else:
+                    "problem, not the algebra. A bound like `x > 0` on a "
+                    "line of its own will narrow it.")
+        elif solutions:
+            result.warnings.append(
+                f"All {len(solutions)} solutions were ruled out by the "
+                "bounds. Either a bound is wrong or the set has no answer "
+                "that satisfies them.")
+        if not allowed:
+            # Nothing exact survived, so try iteration - which honours the
+            # bounds too, and starts from them.
             answer = _numeric(parsed, result)
 
     if not answer:

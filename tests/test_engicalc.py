@@ -3197,6 +3197,105 @@ class TestPhasors(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# Saying which answer is the physical one
+# --------------------------------------------------------------------------
+class TestBounds(unittest.TestCase):
+    """A radiation balance came back as -316 K.
+
+    Four values satisfy the equations and that is one of them; it is also a
+    negative absolute temperature, and it was being shown as the answer with
+    a plausible q beside it. Warning that there were four solutions is not
+    the same as being right.
+    """
+
+    RADIATION = "T^4 = 1e10\nq = 5.67e-8*T^4"
+
+    def test_without_a_bound_it_can_pick_an_impossible_root(self):
+        from engicalc.core.system import solve_set
+
+        # Recorded because it is the reason bounds exist. If this ever stops
+        # being true the feature is still right, but the story changes.
+        result = solve_set(self.RADIATION)
+        temperature = {str(k): complex(v) for k, v in
+                       result.results[0].items()}["T"]
+        self.assertLess(temperature.real, 0)
+
+    def test_a_bound_picks_the_physical_root(self):
+        from engicalc.core.system import solve_set
+
+        result = solve_set(self.RADIATION + "\nT > 0")
+        values = {str(k): float(v) for k, v in result.results[0].items()}
+        self.assertAlmostEqual(values["T"], 316.227766, places=4)
+        self.assertAlmostEqual(values["q"], 567.0, places=3)
+
+    def test_it_says_what_it_ruled_out(self):
+        from engicalc.core.system import solve_set
+
+        result = solve_set(self.RADIATION + "\nT > 0")
+        self.assertTrue(any("Ruled out" in step.title
+                            for step in result.steps))
+
+    def test_a_bound_chooses_between_equally_valid_roots(self):
+        from engicalc.core.system import solve_set
+
+        self.assertIn("x = -4", solve_set("x^2 = 16\ny = x + 1").result_text)
+        self.assertIn("x = 4",
+                      solve_set("x^2 = 16\ny = x + 1\nx > 0").result_text)
+
+    def test_a_bound_is_not_an_equation(self):
+        from engicalc.core.system import parse_set
+
+        # It rules answers out; it does not pin one down, so counting it
+        # would say a short set was ready to solve when it is not.
+        parsed = parse_set("x + y = 10\nx > 0")
+        self.assertEqual(len(parsed.equations), 1)
+        self.assertEqual(len(parsed.bounds), 1)
+        self.assertEqual(parsed.freedom, 1)
+
+    def test_writing_one_no_longer_crashes(self):
+        from engicalc.core.system import solve_set
+
+        # Anything that was not an equation was turned into Eq(thing, 0),
+        # and Eq(T > 0, 0) collapses to False, which has no left hand side.
+        result = solve_set("T^4 = 1e10\nT > 0")
+        self.assertTrue(result.results)
+
+    def test_impossible_bounds_are_reported_not_ignored(self):
+        from engicalc.core.system import solve_set
+
+        result = solve_set("x^2 = 16\nx > 100")
+        self.assertFalse(result.results)
+        self.assertTrue(any("ruled out" in w.lower() or "bound" in w.lower()
+                            for w in result.warnings))
+
+    def test_a_range_says_how_to_write_it(self):
+        from engicalc.core.parsing import ParseError
+        from engicalc.core.system import solve_set
+
+        # `0 < T < 1000` is how a range is written on paper. SymPy's own
+        # message mentions neither ranges nor what to do instead.
+        with self.assertRaises(ParseError) as caught:
+            solve_set("T^4 = 1e10\n0 < T < 1000")
+        self.assertIn("two lines", str(caught.exception))
+
+    def test_the_two_line_form_works(self):
+        from engicalc.core.system import solve_set
+
+        result = solve_set(self.RADIATION + "\nT > 0\nT < 1000")
+        values = {str(k): float(v) for k, v in result.results[0].items()}
+        self.assertAlmostEqual(values["T"], 316.227766, places=4)
+
+    def test_bounds_reach_the_numerical_solver_too(self):
+        from engicalc.core.system import solve_set
+
+        # A fractional power skips the exact solver entirely, so the bound
+        # has to be honoured on the iterative path as well.
+        result = solve_set("x^0.5 = 4\ny = x + 1\nx > 0")
+        values = {str(k): float(v) for k, v in result.results[0].items()}
+        self.assertAlmostEqual(values["x"], 16.0, places=6)
+
+
+# --------------------------------------------------------------------------
 # Units
 # --------------------------------------------------------------------------
 class TestUnits(unittest.TestCase):
