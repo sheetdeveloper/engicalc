@@ -158,7 +158,11 @@ def main() -> None:
     for label, name in (("Stress and strain", "tensile.png"),
                         ("Section", "section.png"),
                         ("Motion", "motion.png"),
-                        ("Mohr's circle", "mohr.png"),
+                        ("Torsion", "torsion.png"),
+                        ("Columns", "columns.png"),
+                        ("Stress state", "mohr.png"),
+                        ("Pressure vessel", "vessel.png"),
+                        ("Truss", "truss.png"),
                         ("Moody", "moody.png")):
         app.graph_pane.tabs.select(app.graph_pane.charts[label])
         grab(app, name)

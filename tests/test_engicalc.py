@@ -5009,6 +5009,371 @@ class TestMohrsCircle(unittest.TestCase):
         self.assertAlmostEqual(state.theta_p, 45.0, places=9)
 
 
+class TestFailureTheories(unittest.TestCase):
+    """Tresca and von Mises, against the states with known answers."""
+
+    def test_uniaxial_tension_gives_the_stress_itself(self):
+        from engicalc.core.mohr import Mohr
+
+        # Both criteria are calibrated on a tensile test, so both have to
+        # return the tensile stress for a tensile state or neither means
+        # anything.
+        state = Mohr(100.0, 0.0, 0.0)
+        self.assertAlmostEqual(state.tresca, 100.0, places=9)
+        self.assertAlmostEqual(state.von_mises, 100.0, places=9)
+
+    def test_pure_shear_is_where_they_disagree_most(self):
+        from engicalc.core.mohr import Mohr
+
+        # Tresca says 2 tau and von Mises says root 3 tau, and the ratio
+        # 2/root3 is the furthest apart they ever get.
+        state = Mohr(0.0, 0.0, 100.0)
+        self.assertAlmostEqual(state.tresca, 200.0, places=9)
+        self.assertAlmostEqual(state.von_mises, math.sqrt(3) * 100.0,
+                               places=9)
+        self.assertAlmostEqual(state.tresca / state.von_mises,
+                               2.0 / math.sqrt(3), places=12)
+
+    def test_tresca_is_never_below_von_mises_and_never_far_above(self):
+        from engicalc.core.mohr import Mohr
+
+        # Which is what makes Tresca the safe one to use. Checked over a
+        # spread of states rather than at a point, because the bound is a
+        # statement about all of them.
+        worst, best = 0.0, 9.9
+        for across in range(-200, 201, 25):
+            for up in range(-200, 201, 25):
+                for shear in range(0, 201, 25):
+                    state = Mohr(float(across), float(up), float(shear))
+                    if state.von_mises > 1e-9:
+                        ratio = state.tresca / state.von_mises
+                        worst, best = max(worst, ratio), min(best, ratio)
+        self.assertGreaterEqual(best, 1.0 - 1e-12)
+        self.assertLessEqual(worst, 2.0 / math.sqrt(3) + 1e-12)
+
+    def test_the_third_principal_stress_is_not_forgotten(self):
+        from engicalc.core.mohr import Mohr
+
+        # The trap. With both in-plane stresses the same sign, Tresca is
+        # the larger against zero - not the gap between the two.
+        state = Mohr(100.0, 60.0, 0.0)
+        self.assertAlmostEqual(state.tresca, 100.0, places=9)
+        self.assertNotAlmostEqual(state.tresca, 40.0, places=3)
+
+    def test_hydrostatic_pressure_does_not_yield_anything(self):
+        from engicalc.core.mohr import von_mises_of
+
+        # Squeeze something equally from every side and it changes volume
+        # but not shape, and von Mises is about changing shape.
+        self.assertAlmostEqual(von_mises_of(-500.0, -500.0, -500.0), 0.0,
+                               places=9)
+
+    def test_the_ellipse_satisfies_its_own_equation(self):
+        from engicalc.core.mohr import Mohr
+
+        state = Mohr(100.0, 0.0, 50.0)
+        first, second = state.mises_locus(275.0, 361)
+        for one, two in zip(first, second):
+            self.assertAlmostEqual(
+                math.sqrt(one * one - one * two + two * two), 275.0,
+                places=6)
+
+
+class TestStrainRosettes(unittest.TestCase):
+    """Three gauge readings back to the state that made them."""
+
+    TRUE = (450e-6, -120e-6, 300e-6)
+
+    def _reading(self, degrees):
+        across, up, shear = self.TRUE
+        angle = math.radians(degrees)
+        return (across * math.cos(angle) ** 2 + up * math.sin(angle) ** 2
+                + shear * math.sin(angle) * math.cos(angle))
+
+    def test_every_rosette_reads_the_state_back(self):
+        from engicalc.core.mohr import ROSETTES, strains_from_rosette
+
+        for name, angles in ROSETTES.items():
+            with self.subTest(rosette=name):
+                got = strains_from_rosette(
+                    [self._reading(a) for a in angles], angles)
+                for mine, theirs in zip(got, self.TRUE):
+                    self.assertAlmostEqual(mine, theirs, places=12)
+
+    def test_a_rosette_at_any_angles_works_the_same_way(self):
+        from engicalc.core.mohr import strains_from_rosette
+
+        # Solved as a system rather than by the two special formulae, so
+        # an odd rosette is no harder than a standard one.
+        angles = (0.0, 30.0, 75.0)
+        got = strains_from_rosette([self._reading(a) for a in angles],
+                                   angles)
+        for mine, theirs in zip(got, self.TRUE):
+            self.assertAlmostEqual(mine, theirs, places=12)
+
+    def test_two_gauges_the_same_way_cannot_be_solved(self):
+        from engicalc.core.mohr import strains_from_rosette
+
+        with self.assertRaises(ValueError):
+            strains_from_rosette([1e-6, 2e-6, 3e-6], (0.0, 0.0, 90.0))
+
+    def test_pulling_a_bar_gives_stress_along_it_and_none_across(self):
+        from engicalc.core.mohr import from_rosette
+
+        # And the stress is E times the strain, which only comes out if
+        # the sideways strain has been handled - using E on its own gives
+        # an answer about ten per cent light.
+        modulus, poisson = 210e3, 0.3
+        along = 500e-6
+        across = -poisson * along
+        angles = (0.0, 45.0, 90.0)
+        readings = [along * math.cos(math.radians(a)) ** 2
+                    + across * math.sin(math.radians(a)) ** 2
+                    for a in angles]
+        state = from_rosette(readings, angles, modulus, poisson)
+        self.assertAlmostEqual(state.sigma_x, modulus * along, places=6)
+        self.assertAlmostEqual(state.sigma_y, 0.0, places=9)
+        self.assertAlmostEqual(state.tau_xy, 0.0, places=12)
+
+    def test_the_principal_directions_agree_for_strain_and_stress(self):
+        from engicalc.core.mohr import (from_rosette, principal_strains,
+                                        strains_from_rosette)
+
+        # They have to for an isotropic material, and they come out of two
+        # separate calculations - so agreeing is a check on both.
+        angles = (0.0, 45.0, 90.0)
+        readings = [self._reading(a) for a in angles]
+        across, up, shear = strains_from_rosette(readings, angles)
+        _first, _second, strain_angle = principal_strains(across, up, shear)
+        state = from_rosette(readings, angles, 210e3, 0.3)
+        self.assertAlmostEqual(strain_angle, state.theta_p, places=9)
+
+    def test_an_impossible_poisson_ratio_is_refused(self):
+        from engicalc.core.mohr import stress_from_strain
+
+        for ratio in (0.5, 0.7, -1.5):
+            with self.subTest(poisson=ratio):
+                with self.assertRaises(ValueError):
+                    stress_from_strain(1e-3, 0.0, 0.0, 210e3, ratio)
+
+
+class TestPressureVessels(unittest.TestCase):
+    """Thin walls and Lame, and the gap between them."""
+
+    def test_the_thin_walled_lines(self):
+        from engicalc.core.vessels import Vessel
+
+        # hoop = pr/t and along = pr/2t, and a sphere is half a cylinder.
+        cylinder = Vessel(inner_radius=500.0, thickness=10.0, pressure=2.0)
+        self.assertAlmostEqual(cylinder.thin_hoop,
+                               2.0 * 505.0 / 10.0, places=9)
+        self.assertAlmostEqual(cylinder.thin_along,
+                               cylinder.thin_hoop / 2.0, places=9)
+        sphere = Vessel(inner_radius=500.0, thickness=10.0, pressure=2.0,
+                        shape="sphere")
+        self.assertAlmostEqual(sphere.thin_hoop, cylinder.thin_hoop / 2.0,
+                               places=9)
+
+    def test_lame_at_the_two_surfaces(self):
+        from engicalc.core.vessels import Vessel
+
+        inner, wall, pressure = 100.0, 50.0, 30.0
+        outer = inner + wall
+        vessel = Vessel(inner_radius=inner, thickness=wall,
+                        pressure=pressure)
+        self.assertAlmostEqual(
+            vessel.hoop_at(inner),
+            pressure * (outer ** 2 + inner ** 2)
+            / (outer ** 2 - inner ** 2), places=9)
+        self.assertAlmostEqual(
+            vessel.hoop_at(outer),
+            2 * pressure * inner ** 2 / (outer ** 2 - inner ** 2), places=9)
+        # The radial stress is the pressure at the bore and nothing outside,
+        # which is the boundary condition Lame is solved from.
+        self.assertAlmostEqual(vessel.radial_at(inner), -pressure, places=9)
+        self.assertAlmostEqual(vessel.radial_at(outer), 0.0, places=9)
+        self.assertAlmostEqual(
+            vessel.along, pressure * inner ** 2
+            / (outer ** 2 - inner ** 2), places=9)
+
+    def test_a_sphere_follows_its_own_lame(self):
+        from engicalc.core.vessels import Vessel
+
+        inner, wall, pressure = 100.0, 50.0, 30.0
+        outer = inner + wall
+        vessel = Vessel(inner_radius=inner, thickness=wall,
+                        pressure=pressure, shape="sphere")
+        self.assertAlmostEqual(
+            vessel.hoop_at(inner),
+            pressure * (outer ** 3 + 2 * inner ** 3)
+            / (2 * (outer ** 3 - inner ** 3)), places=9)
+        self.assertAlmostEqual(vessel.radial_at(inner), -pressure, places=9)
+
+    def test_thin_walled_is_good_when_thin_and_not_when_thick(self):
+        from engicalc.core.vessels import Vessel
+
+        thin = Vessel(inner_radius=500.0, thickness=10.0, pressure=2.0)
+        thick = Vessel(inner_radius=100.0, thickness=50.0, pressure=30.0)
+        self.assertLess(
+            abs(thin.hoop_at(500.0) / thin.thin_hoop - 1.0), 0.001)
+        self.assertGreater(
+            abs(thick.hoop_at(100.0) / thick.thin_hoop - 1.0), 0.02)
+        self.assertTrue([n for n in thick.notes() if "past the tenth" in n])
+
+    def test_an_open_ended_cylinder_carries_nothing_along_it(self):
+        from engicalc.core.vessels import Vessel
+
+        pipe = Vessel(inner_radius=100.0, thickness=10.0, pressure=5.0,
+                      closed=False)
+        self.assertAlmostEqual(pipe.thin_along, 0.0, places=12)
+        self.assertAlmostEqual(pipe.along, 0.0, places=12)
+
+    def test_sizing_a_wall_gives_back_the_allowable_stress(self):
+        from engicalc.core.vessels import Vessel, thickness_for
+
+        wall = thickness_for(3.0, 400.0, 250.0)
+        back = Vessel(inner_radius=400.0, thickness=wall, pressure=3.0)
+        self.assertAlmostEqual(back.thin_hoop, 250.0, places=6)
+
+    def test_the_vessels_that_are_not_vessels_are_refused(self):
+        from engicalc.core.vessels import Vessel, VesselError
+
+        for bad in (dict(inner_radius=0.0, thickness=1.0, pressure=1.0),
+                    dict(inner_radius=1.0, thickness=0.0, pressure=1.0),
+                    dict(inner_radius=1.0, thickness=1.0, pressure=1.0,
+                         shape="cube")):
+            with self.subTest(**bad):
+                with self.assertRaises(VesselError):
+                    Vessel(**bad).rows()
+
+
+class TestTrusses(unittest.TestCase):
+    """Pin-jointed frames, solved at every joint at once."""
+
+    def _simple(self):
+        from engicalc.core.trusses import Load, Member, Node, Truss
+
+        # Two sloping bars and a tie, with a load hung from the apex.
+        return Truss(nodes=[Node(0, 0, "pin"), Node(4, 0, "roller"),
+                            Node(2, 3)],
+                     members=[Member(0, 2), Member(1, 2), Member(0, 1)],
+                     loads=[Load(2, up=-10000.0)])
+
+    def test_the_frame_anybody_can_check_by_hand(self):
+        frame = self._simple()
+        found = frame.solve()
+        angle = math.atan2(3, 2)
+        # The sloping bars push and the tie pulls.
+        self.assertAlmostEqual(found.forces[0],
+                               -5000.0 / math.sin(angle), places=6)
+        self.assertAlmostEqual(found.forces[1],
+                               -5000.0 / math.sin(angle), places=6)
+        self.assertAlmostEqual(found.forces[2],
+                               5000.0 / math.tan(angle), places=6)
+
+    def test_every_joint_balances(self):
+        from engicalc.core.trusses import warren
+
+        # The check the method is made of. If a joint does not balance the
+        # answer is not a solution of anything.
+        frame = warren(4, 2000.0, 1500.0, 20000.0)
+        found = frame.solve()
+        for index, _node in enumerate(frame.nodes):
+            across = up = 0.0
+            for position, member in enumerate(frame.members):
+                if index not in (member.start, member.end):
+                    continue
+                unit_x, unit_y = frame.direction_of(member)
+                way = 1.0 if member.start == index else -1.0
+                across += way * unit_x * found.forces[position]
+                up += way * unit_y * found.forces[position]
+            for node, direction, value in found.reactions:
+                if node == index:
+                    across += value if direction == "across" else 0.0
+                    up += value if direction == "up" else 0.0
+            for load in frame.loads:
+                if load.node == index:
+                    across += load.across
+                    up += load.up
+            with self.subTest(joint=index + 1):
+                self.assertAlmostEqual(across, 0.0, places=6)
+                self.assertAlmostEqual(up, 0.0, places=6)
+
+    def test_the_reactions_carry_the_whole_load(self):
+        from engicalc.core.trusses import warren
+
+        frame = warren(4, 2000.0, 1500.0, 20000.0)
+        found = frame.solve()
+        lifted = sum(value for _n, way, value in found.reactions
+                     if way == "up")
+        self.assertAlmostEqual(lifted, -sum(load.up for load in frame.loads),
+                               places=6)
+
+    def test_a_warren_girder_is_symmetric(self):
+        from engicalc.core.trusses import warren
+
+        # Symmetric frame, symmetric loading, so the two reactions match
+        # and the outer diagonals are mirror images. Nothing in the solver
+        # knows that, so it is a check rather than a restatement.
+        found = warren(4, 2000.0, 1500.0, 20000.0).solve()
+        lifted = [value for _n, way, value in found.reactions
+                  if way == "up"]
+        self.assertAlmostEqual(lifted[0], lifted[1], places=6)
+
+    def test_a_frame_with_too_few_members_is_a_mechanism(self):
+        from engicalc.core.trusses import (Load, Member, Node, Truss,
+                                           TrussError)
+
+        with self.assertRaises(TrussError) as caught:
+            Truss(nodes=[Node(0, 0, "pin"), Node(4, 0), Node(2, 3)],
+                  members=[Member(0, 2), Member(1, 2)],
+                  loads=[Load(2, up=-1000.0)]).solve()
+        self.assertIn("mechanism", str(caught.exception))
+
+    def test_a_frame_with_too_many_cannot_be_settled_by_statics(self):
+        from engicalc.core.trusses import (Load, Member, Node, Truss,
+                                           TrussError)
+
+        with self.assertRaises(TrussError) as caught:
+            Truss(nodes=[Node(0, 0, "pin"), Node(4, 0, "pin"), Node(2, 3)],
+                  members=[Member(0, 2), Member(1, 2), Member(0, 1)],
+                  loads=[Load(2, up=-1000.0)]).solve()
+        self.assertIn("statics", str(caught.exception))
+
+    def test_a_frame_written_down_reads_back_the_same(self):
+        from engicalc.core.trusses import as_text, parse, warren
+
+        frame = warren(3, 2000.0, 1500.0, 15000.0)
+        again = parse(as_text(frame))
+        self.assertEqual([round(f, 9) for f in frame.solve().forces],
+                         [round(f, 9) for f in again.solve().forces])
+
+    def test_a_frame_that_will_not_read_says_which_line(self):
+        from engicalc.core.trusses import TrussError, parse
+
+        for text in ("node 0 0 welded", "strut 1 2", "node 0"):
+            with self.subTest(text=text):
+                with self.assertRaises(TrussError) as caught:
+                    parse(text)
+                self.assertIn("1", str(caught.exception))
+
+    def test_zero_force_members_are_found_rather_than_spotted(self):
+        from engicalc.core.trusses import Load, Member, Node, Truss
+
+        # A joint with three bars, two of them in line and no load on it:
+        # the third carries nothing. It is the classic case and the one
+        # people are asked to spot by eye.
+        frame = Truss(
+            nodes=[Node(0, 0, "pin"), Node(2, 0), Node(4, 0, "roller"),
+                   Node(2, 2)],
+            members=[Member(0, 1), Member(1, 2), Member(0, 3),
+                     Member(2, 3), Member(1, 3)],
+            loads=[Load(3, up=-10000.0)])
+        found = frame.solve()
+        self.assertIn(4, found.zero_members())
+        self.assertTrue([n for n in found.notes() if "nothing" in n])
+
+
 class TestMoody(unittest.TestCase):
     """Colebrook solved rather than approximated."""
 

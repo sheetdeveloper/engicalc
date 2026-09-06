@@ -22,8 +22,9 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Arc, Rectangle
 
 from ..core import (beams, buckling, motion, moody, section_table,
-                    sections, tensile, torsion)
+                    sections, tensile, torsion, trusses, vessels)
 from ..core.display import fmt_number
+from ..core import mohr
 from ..core.mohr import Mohr
 from ..core.parsing import ParseError, parse_number
 from ..export.excel import export_table
@@ -871,27 +872,71 @@ class BeamTab(ChartTab):
 
 # --------------------------------------------------------------------------
 class MohrTab(ChartTab):
-    """Mohr's circle for a plane stress state."""
+    """A plane stress state: where it came from, and whether it matters."""
 
-    title = "Mohr's circle"
-    hint = "the same stress state seen from every angle"
+    title = "Stress state"
+    hint = "Mohr's circle, and whether the material can take it"
+
+    BY_STRESS, BY_ROSETTE = "the stresses", "a strain gauge rosette"
 
     def build_form(self, parent) -> None:
-        row = ttk.Frame(parent)
-        row.pack(fill="x")
-        self.sx = self.field(row, "sigma x", "80", "MPa")
-        self.sy = self.field(row, "sigma y", "-40", "MPa")
-        self.txy = self.field(row, "tau xy", "25", "MPa")
-        self.angle = self.field(row, "axes turned", "0", "degrees")
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        ttk.Label(first, text="Given").pack(side="left")
+        self.given = tk.StringVar(value=self.BY_STRESS)
+        box = ttk.Combobox(first, state="readonly", width=22,
+                           textvariable=self.given,
+                           values=[self.BY_STRESS, self.BY_ROSETTE])
+        box.pack(side="left", padx=(4, 14))
+        box.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        self.sx = self.field(first, "sigma x", "80", "N/mm2")
+        self.sy = self.field(first, "sigma y", "-40", "N/mm2")
+        self.txy = self.field(first, "tau xy", "25", "N/mm2")
+
+        second = ttk.Frame(parent)
+        second.pack(fill="x", pady=(6, 0))
+        ttk.Label(second, text="Rosette").pack(side="left")
+        self.rosette = tk.StringVar(value=list(mohr.ROSETTES)[0])
+        kinds = ttk.Combobox(second, state="readonly", width=20,
+                             textvariable=self.rosette,
+                             values=list(mohr.ROSETTES))
+        kinds.pack(side="left", padx=(4, 10))
+        kinds.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        self.gauge_a = self.field(second, "a", "450", "microstrain", width=8)
+        self.gauge_b = self.field(second, "b", "315", "", width=8)
+        self.gauge_c = self.field(second, "c", "-120", "", width=8)
+        self.modulus = self.field(second, "E", "210", "GPa", width=6)
+        self.poisson = self.field(second, "nu", "0.3", "", width=6)
+
+        third = ttk.Frame(parent)
+        third.pack(fill="x", pady=(6, 0))
+        self.angle = self.field(third, "Axes turned", "0", "degrees")
+        self.yield_stress = self.field(third, "Yield", "275", "N/mm2")
+
+    def state(self):
+        if self.given.get() == self.BY_ROSETTE:
+            readings = [self.number(box, f"gauge {name}") * 1e-6
+                        for box, name in ((self.gauge_a, "a"),
+                                          (self.gauge_b, "b"),
+                                          (self.gauge_c, "c"))]
+            angles = mohr.ROSETTES[self.rosette.get()]
+            return mohr.from_rosette(
+                readings, angles,
+                self.number(self.modulus, "the modulus") * 1000.0,
+                self.number(self.poisson, "Poisson's ratio"))
+        return Mohr(self.number(self.sx, "sigma x"),
+                    self.number(self.sy, "sigma y"),
+                    self.number(self.txy, "tau xy"))
 
     def draw(self) -> tuple:
-        state = Mohr(self.number(self.sx, "sigma x"),
-                     self.number(self.sy, "sigma y"),
-                     self.number(self.txy, "tau xy"))
+        state = self.state()
         turned = self.number(self.angle, "the angle")
+        strength = self.number(self.yield_stress, "the yield stress")
 
         self.figure.clear()
-        axes = self.figure.add_subplot(111)
+        grid = self.figure.add_gridspec(1, 2, wspace=0.28)
+        axes = self.figure.add_subplot(grid[0])
+        self._draw_locus(self.figure.add_subplot(grid[1]), state, strength)
         x, y = state.circle()
         axes.plot(x, y, color="#1f4e79", linewidth=1.5)
         axes.axhline(0, color="#888888", linewidth=0.8)
@@ -918,11 +963,65 @@ class MohrTab(ChartTab):
         axes.tick_params(labelsize=7)
         axes.set_aspect("equal", adjustable="datalim")
 
+        axes.set_title("Mohr's circle", fontsize=8, color="#1f4e79")
+
         rows = [(label, value, unit) for label, value, unit in state.rows()]
         rows.append((f"on axes turned {turned:g} deg",
                      first[0], "direct stress"))
-        rows.append((f"and the shear there", first[1], "shear stress"))
-        return rows, []
+        rows.append(("and the shear there", first[1], "shear stress"))
+        if self.given.get() == self.BY_ROSETTE:
+            rows = self._strain_rows() + rows
+        rows += state.failure_rows(strength)
+        return rows, state.failure_notes(strength)
+
+    def _strain_rows(self) -> list:
+        """What the gauges said, before it became a stress."""
+        readings = [self.number(box, f"gauge {name}") * 1e-6
+                    for box, name in ((self.gauge_a, "a"),
+                                      (self.gauge_b, "b"),
+                                      (self.gauge_c, "c"))]
+        across, up, shear = mohr.strains_from_rosette(
+            readings, mohr.ROSETTES[self.rosette.get()])
+        first, second, turn = mohr.principal_strains(across, up, shear)
+        return [("strain ex", across * 1e6, "microstrain"),
+                ("strain ey", up * 1e6, "microstrain"),
+                ("shear strain gxy", shear * 1e6, "microstrain"),
+                ("principal strain 1", first * 1e6, "microstrain"),
+                ("principal strain 2", second * 1e6, "microstrain"),
+                ("at", turn, "degrees")]
+
+    def _draw_locus(self, axes, state, strength) -> None:
+        """The two criteria, and this state among them.
+
+        Tresca is a hexagon and von Mises the ellipse through its corners,
+        so the hexagon is inside - which is what makes Tresca the safe one
+        and is not obvious from either formula.
+        """
+        if strength > 0:
+            first, second = state.tresca_locus(strength)
+            axes.plot(first, second, color="#c0392b", linewidth=1.3,
+                      label="Tresca")
+            first, second = state.mises_locus(strength)
+            axes.plot(first, second, color="#1f4e79", linewidth=1.3,
+                      label="von Mises")
+            axes.legend(loc="upper left", fontsize=6.5, framealpha=0.85)
+        axes.plot([state.sigma_2], [state.sigma_1], "o", color="#0b7a3b",
+                  markersize=7, zorder=5)
+        axes.annotate("this state", (state.sigma_2, state.sigma_1),
+                      textcoords="offset points", xytext=(7, 6),
+                      fontsize=7, color="#0b7a3b")
+        axes.axhline(0, color="#bbbbbb", linewidth=0.7)
+        axes.axvline(0, color="#bbbbbb", linewidth=0.7)
+        axes.set_xlabel("sigma 2  N/mm2", fontsize=8)
+        axes.set_ylabel("sigma 1  N/mm2", fontsize=8)
+        axes.grid(True, alpha=0.25, linestyle=":")
+        axes.tick_params(labelsize=7)
+        axes.set_aspect("equal", adjustable="datalim")
+        axes.set_title("does it yield?", fontsize=8, color="#c0392b")
+
+    def layout(self) -> None:
+        self.figure.subplots_adjust(left=0.1, right=0.97, top=0.92,
+                                    bottom=0.13)
 
 
 # --------------------------------------------------------------------------
@@ -1806,6 +1905,170 @@ class ColumnTab(ChartTab):
         return rows, column.notes()
 
 
+# --------------------------------------------------------------------------
+class VesselTab(ChartTab):
+    """A cylinder or a sphere under pressure."""
+
+    title = "Pressure vessel"
+    hint = "hoop and radial stress, thin walled and thick"
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        self.shape = tk.StringVar(value="cylinder")
+        ttk.Label(first, text="Shape").pack(side="left")
+        box = ttk.Combobox(first, state="readonly", width=10,
+                           textvariable=self.shape,
+                           values=["cylinder", "sphere"])
+        box.pack(side="left", padx=(4, 14))
+        box.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        self.bore = self.field(first, "Bore radius", "500", "mm")
+        self.wall = self.field(first, "wall", "10", "mm")
+        self.pressure = self.field(first, "Pressure", "2", "N/mm2")
+        self.outside = self.field(first, "outside", "0", "N/mm2")
+
+        second = ttk.Frame(parent)
+        second.pack(fill="x", pady=(6, 0))
+        self.yield_stress = self.field(second, "Yield", "275", "N/mm2")
+        self.closed = tk.BooleanVar(value=True)
+        ttk.Checkbutton(second, text="closed ends carry the pressure",
+                        variable=self.closed,
+                        command=self.refresh).pack(side="left", padx=(6, 0))
+
+    def vessel(self):
+        return vessels.Vessel(
+            inner_radius=self.number(self.bore, "the bore"),
+            thickness=self.number(self.wall, "the wall"),
+            pressure=self.number(self.pressure, "the pressure"),
+            outside_pressure=self.number(self.outside,
+                                         "the outside pressure"),
+            shape=self.shape.get(), closed=self.closed.get(),
+            yield_stress=self.number(self.yield_stress, "the yield stress"))
+
+    def draw(self) -> tuple:
+        vessel = self.vessel()
+        rows = list(vessel.rows())
+
+        self.figure.clear()
+        axes = self.figure.add_subplot(111)
+        radii, hoop, radial = vessel.profile()
+        axes.plot(radii, hoop, color="#1f4e79", linewidth=1.6,
+                  label="hoop, Lame")
+        axes.plot(radii, radial, color="#0b7a3b", linewidth=1.4,
+                  label="radial, Lame")
+        axes.axhline(vessel.thin_hoop, color="#c0392b", linestyle="--",
+                     linewidth=1.1, label="hoop, thin walled")
+        if vessel.shape == "cylinder" and vessel.closed:
+            axes.axhline(vessel.along, color="#8a4fbf", linestyle=":",
+                         linewidth=1.1, label="along the axis")
+        axes.axhline(0, color="#bbbbbb", linewidth=0.7)
+        axes.set_xlabel("radius  mm", fontsize=8)
+        axes.set_ylabel("stress  N/mm2", fontsize=8)
+        axes.grid(True, alpha=0.3, linestyle=":")
+        axes.tick_params(labelsize=7)
+        axes.legend(loc="best", fontsize=7, framealpha=0.85)
+        return rows, vessel.notes()
+
+
+# --------------------------------------------------------------------------
+class TrussTab(ChartTab):
+    """A pin-jointed frame, solved at every joint at once."""
+
+    title = "Truss"
+    hint = "member forces in a pin-jointed frame, written down as text"
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        ttk.Label(first, text="Warren girder:").pack(side="left")
+        self.bays = self.field(first, "bays", "4", "", width=4)
+        self.span = self.field(first, "bay", "2", "m", width=5)
+        self.height = self.field(first, "deep", "1.5", "m", width=5)
+        self.point = self.field(first, "load at each bottom joint", "20",
+                                "kN", width=5)
+        ttk.Button(first, text="Put one in the box",
+                   command=self.make_warren).pack(side="left", padx=(10, 0))
+
+        ttk.Label(parent, style="Hint.TLabel", justify="left",
+                  text="One thing per line: `node x y [pin|roller]`, "
+                       "`member first second`, `load joint across up`. "
+                       "Joints are numbered from one, in the order they "
+                       "are written.").pack(fill="x", pady=(6, 2))
+
+        self.text = tk.Text(parent, height=8, font=MONO, wrap="none")
+        self.text.pack(fill="x")
+        self.text.bind("<KeyRelease>", lambda e: self.refresh())
+        self.make_warren(draw=False)
+
+    def make_warren(self, draw: bool = True) -> None:
+        """Put a girder in the box, since a blank one is hard to start."""
+        try:
+            frame = trusses.warren(
+                int(self.number(self.bays, "the bays")),
+                self.number(self.span, "the bay width") * 1000.0,
+                self.number(self.height, "the depth") * 1000.0,
+                self.number(self.point, "the load") * 1000.0)
+        except Exception:                                  # noqa: BLE001
+            return
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", trusses.as_text(frame))
+        if draw:
+            self.refresh()
+
+    def draw(self) -> tuple:
+        frame = trusses.parse(self.text.get("1.0", "end"))
+        found = frame.solve()
+
+        self.figure.clear()
+        axes = self.figure.add_subplot(111)
+        biggest = max(found.biggest, 1.0)
+        for index, member in enumerate(frame.members):
+            start, end = frame.nodes[member.start], frame.nodes[member.end]
+            force = found.forces[index]
+            # Red pulls, blue pushes, and the thickness says how hard - so
+            # the way the frame carries its load is visible before any of
+            # the numbers are read.
+            colour = ("#bbbbbb" if abs(force) <= 1e-9 * biggest
+                      else "#c0392b" if force > 0 else "#1f4e79")
+            axes.plot([start.x, end.x], [start.y, end.y], color=colour,
+                      linewidth=0.8 + 3.2 * abs(force) / biggest, zorder=2)
+            axes.annotate(f"{force / 1000.0:.0f}",
+                          ((start.x + end.x) / 2, (start.y + end.y) / 2),
+                          fontsize=6, ha="center", va="center",
+                          color=colour, zorder=4,
+                          bbox=dict(boxstyle="round,pad=0.1", fc="white",
+                                    ec="none", alpha=0.75))
+
+        for index, node in enumerate(frame.nodes):
+            axes.plot([node.x], [node.y], "o", color="#333333",
+                      markersize=4, zorder=5)
+            axes.annotate(str(index + 1), (node.x, node.y),
+                          textcoords="offset points", xytext=(4, 4),
+                          fontsize=6, color="#666666")
+            if node.support != "free":
+                axes.plot([node.x], [node.y], marker="^", markersize=10,
+                          color="#0b7a3b", zorder=4)
+        for load in frame.loads:
+            node = frame.nodes[load.node]
+            size = math.hypot(load.across, load.up)
+            if size:
+                axes.annotate(
+                    "", xy=(node.x, node.y),
+                    xytext=(-load.across / size * 26.0,
+                            -load.up / size * 26.0),
+                    textcoords="offset points",
+                    arrowprops=dict(arrowstyle="-|>", color="#8a4fbf",
+                                    linewidth=1.4, shrinkA=0, shrinkB=0))
+
+        axes.set_aspect("equal", adjustable="datalim")
+        axes.set_xlabel("mm", fontsize=8)
+        axes.grid(True, alpha=0.2, linestyle=":")
+        axes.tick_params(labelsize=7)
+        axes.set_title("red pulls, blue pushes, thickness is how hard",
+                       fontsize=7.5, color="#666666")
+        return found.rows(), found.notes()
+
+
 CHARTS = [
     ("  Stress and strain  ", TensileTab),
     ("  Beam  ", BeamTab),
@@ -1813,6 +2076,8 @@ CHARTS = [
     ("  Torsion  ", TorsionTab),
     ("  Columns  ", ColumnTab),
     ("  Motion  ", MotionTab),
-    ("  Mohr's circle  ", MohrTab),
+    ("  Stress state  ", MohrTab),
+    ("  Pressure vessel  ", VesselTab),
+    ("  Truss  ", TrussTab),
     ("  Moody  ", MoodyTab),
 ]
