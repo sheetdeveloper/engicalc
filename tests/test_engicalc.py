@@ -4076,6 +4076,147 @@ class TestSectionProperties(unittest.TestCase):
             Section().properties()
 
 
+class TestBuckling(unittest.TestCase):
+    """Columns, against Euler and against the two limits that bound it."""
+
+    MODULUS, YIELD = 210e3, 275.0
+
+    def _bar(self, length=3000.0, **rest):
+        from engicalc.core.buckling import Column
+        from engicalc.core.sections import solid_round
+
+        found = solid_round(50.0).properties()
+        return Column(area=found.area, second_moment=found.ixx,
+                      length=length, modulus=self.MODULUS,
+                      yield_stress=self.YIELD, **rest)
+
+    def test_euler_is_pi_squared_ei_over_l_squared(self):
+        column = self._bar()
+        self.assertAlmostEqual(
+            column.euler_load,
+            math.pi ** 2 * self.MODULUS * math.pi * 50.0 ** 4 / 64.0
+            / 3000.0 ** 2, places=6)
+
+    def test_the_radius_of_gyration_of_a_round_bar_is_a_quarter_of_it(self):
+        self.assertAlmostEqual(self._bar().radius_of_gyration, 50.0 / 4.0,
+                               places=9)
+
+    def test_holding_the_ends_changes_it_by_the_square_of_the_factor(self):
+        from engicalc.core.buckling import END_CONDITIONS
+
+        pinned = self._bar()
+        for how, factor in END_CONDITIONS.items():
+            with self.subTest(ends=how):
+                held = self._bar(ends=how)
+                self.assertAlmostEqual(held.effective_length,
+                                       factor * 3000.0, places=9)
+                self.assertAlmostEqual(
+                    held.euler_load, pinned.euler_load / factor ** 2,
+                    places=3)
+
+    def test_euler_reaches_yield_at_pi_root_e_over_sigma(self):
+        column = self._bar()
+        self.assertAlmostEqual(
+            column.transition,
+            math.pi * math.sqrt(self.MODULUS / self.YIELD), places=9)
+        self.assertAlmostEqual(column.euler_stress(column.transition),
+                               self.YIELD, places=6)
+
+    def test_perry_robertson_lies_between_the_two_curves_everywhere(self):
+        # The whole reason it exists. Above it, a curve for a column that
+        # cannot squash; below it, one for a column that cannot bend.
+        column = self._bar()
+        for ratio in [1.0 + index * 2.0 for index in range(300)]:
+            with self.subTest(slenderness=ratio):
+                perry = column.perry_stress(ratio)
+                self.assertLessEqual(perry, self.YIELD + 1e-9)
+                self.assertLessEqual(perry, column.euler_stress(ratio) + 1e-9)
+                self.assertGreater(perry, 0.0)
+
+    def test_it_meets_yield_at_one_end_and_euler_at_the_other(self):
+        column = self._bar()
+        # A stocky column squashes. This used to come out at 256 where it
+        # has to be 275: the formula as it is always quoted subtracts two
+        # very large nearly equal numbers, and a double has nothing left
+        # after it.
+        self.assertAlmostEqual(column.perry_stress(1e-9), self.YIELD,
+                               places=6)
+        self.assertAlmostEqual(column.perry_stress(1e-3), self.YIELD,
+                               places=2)
+        # A very slender one buckles elastically.
+        self.assertAlmostEqual(
+            column.perry_stress(2000.0) / column.euler_stress(2000.0), 1.0,
+            places=1)
+
+    def test_rankine_is_the_two_failures_in_series(self):
+        from engicalc.core.buckling import Column
+
+        column = self._bar()
+        for ratio in (30.0, 90.0, 200.0):
+            with self.subTest(slenderness=ratio):
+                # 1/P = 1/P_squash + 1/P_Euler, which is what the formula
+                # means and is worth checking rather than restating.
+                expected = 1.0 / (1.0 / self.YIELD
+                                  + 1.0 / column.euler_stress(ratio))
+                self.assertAlmostEqual(column.rankine_stress(ratio),
+                                       expected, places=9)
+        del Column
+
+    def test_a_longer_column_carries_less(self):
+        loads = [self._bar(length=length).perry_load
+                 for length in (1000.0, 2000.0, 4000.0, 8000.0)]
+        self.assertEqual(loads, sorted(loads, reverse=True))
+
+    def test_a_column_buckles_about_its_weak_principal_axis(self):
+        from engicalc.core.buckling import Column
+        from engicalc.core.sections import angle
+
+        # On an angle the weak axis is neither leg - it runs diagonally -
+        # so taking the smaller of Ixx and Iyy would overstate what it
+        # carries. The smaller principal second moment is the right one.
+        found = angle(100.0, 100.0, 10.0, 12.0).properties()
+        _stiff, weak, turn = found.principal()
+        self.assertLess(weak, min(found.ixx, found.iyy))
+        self.assertGreater(abs(turn), 30.0)
+        column = Column(area=found.area, second_moment=weak, length=2000.0,
+                        modulus=self.MODULUS, yield_stress=self.YIELD)
+        wrong = Column(area=found.area,
+                       second_moment=min(found.ixx, found.iyy),
+                       length=2000.0, modulus=self.MODULUS,
+                       yield_stress=self.YIELD)
+        self.assertLess(column.perry_load, wrong.perry_load)
+
+    def test_sizing_a_column_gives_back_the_load(self):
+        from engicalc.core.buckling import Column, slenderness_for
+
+        ratio = slenderness_for(500e3, 5000.0, self.MODULUS, self.YIELD)
+        column = Column(area=5000.0, second_moment=1.0, length=1.0,
+                        modulus=self.MODULUS, yield_stress=self.YIELD)
+        self.assertAlmostEqual(column.perry_stress(ratio) * 5000.0, 500e3,
+                               delta=10.0)
+
+    def test_it_says_when_euler_is_meaningless_rather_than_merely_wrong(self):
+        stocky = self._bar(length=1000.0)
+        self.assertGreater(stocky.euler_stress(), self.YIELD)
+        self.assertTrue([n for n in stocky.notes() if "meaningless" in n])
+        slender = self._bar(length=6000.0)
+        self.assertFalse([n for n in slender.notes() if "meaningless" in n])
+
+    def test_the_columns_that_are_not_columns_are_refused(self):
+        from engicalc.core.buckling import BucklingError, Column
+
+        for bad in (dict(area=0.0, second_moment=1.0, length=1.0),
+                    dict(area=1.0, second_moment=0.0, length=1.0),
+                    dict(area=1.0, second_moment=1.0, length=0.0),
+                    dict(area=1.0, second_moment=1.0, length=1.0,
+                         modulus=0.0),
+                    dict(area=1.0, second_moment=1.0, length=1.0,
+                         ends="welded")):
+            with self.subTest(**bad):
+                with self.assertRaises(BucklingError):
+                    Column(**bad).slenderness
+
+
 class TestShearInASection(unittest.TestCase):
     """tau = V Q / (I t), against the two answers everybody knows.
 

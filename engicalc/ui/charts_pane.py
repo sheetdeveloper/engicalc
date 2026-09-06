@@ -21,8 +21,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Arc, Rectangle
 
-from ..core import (beams, motion, moody, section_table, sections,
-                    tensile, torsion)
+from ..core import (beams, buckling, motion, moody, section_table,
+                    sections, tensile, torsion)
 from ..core.display import fmt_number
 from ..core.mohr import Mohr
 from ..core.parsing import ParseError, parse_number
@@ -1699,11 +1699,119 @@ class TorsionTab(ChartTab):
                                     bottom=0.14)
 
 
+# --------------------------------------------------------------------------
+class ColumnTab(ChartTab):
+    """What a strut will carry before it bends sideways."""
+
+    title = "Columns"
+    hint = "buckling: Euler, yield, and the curve real columns follow"
+
+    def build_form(self, parent) -> None:
+        first = ttk.Frame(parent)
+        first.pack(fill="x")
+        ttk.Label(first, text="Section").pack(side="left")
+        self.section_name = tk.StringVar(value="203x203x46 UC")
+        chooser = ttk.Combobox(first, state="readonly", width=17,
+                               textvariable=self.section_name,
+                               values=([FROM_SECTION_TAB]
+                                       + section_table.names()))
+        chooser.pack(side="left", padx=(4, 14))
+        chooser.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        self.length = self.field(first, "Length", "4", "m")
+        ttk.Label(first, text="Held").pack(side="left")
+        self.ends = tk.StringVar(value="pinned both ends")
+        box = ttk.Combobox(first, state="readonly", width=28,
+                           textvariable=self.ends,
+                           values=list(buckling.END_CONDITIONS))
+        box.pack(side="left", padx=(4, 0))
+        box.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+
+        second = ttk.Frame(parent)
+        second.pack(fill="x", pady=(6, 0))
+        self.modulus = self.field(second, "E", "210", "GPa")
+        self.yield_stress = self.field(second, "Yield", "275", "N/mm2")
+        self.load = self.field(second, "Carrying", "900", "kN")
+        self.about = ttk.Label(second, text="", style="Hint.TLabel")
+        self.about.pack(side="left", padx=(10, 0))
+
+    def linked(self, charts: dict) -> None:
+        self.section_tab = charts.get("Section")
+
+    def section(self):
+        chosen = self.section_name.get()
+        if chosen == FROM_SECTION_TAB:
+            beside = getattr(self, "section_tab", None)
+            if beside is None:
+                raise ParseError("There is no Section tab to take one from.")
+            return beside.section()
+        return section_table.build(chosen)
+
+    def column(self):
+        section = self.section()
+        found = section.properties()
+        # A column bends about whichever axis is easiest, and that is the
+        # smaller *principal* second moment - not the smaller of Ixx and
+        # Iyy. On an angle those are not the same thing and the weak axis
+        # is nowhere near either leg.
+        _stiff, weak, turn = found.principal()
+        self.about.configure(
+            text=f"buckles about the weak axis, I = {weak / 1e4:.0f} cm4"
+                 + (f", {turn:.0f} deg round" if abs(turn) > 0.5 else ""))
+        return buckling.Column(
+            area=found.area, second_moment=weak,
+            length=self.number(self.length, "the length") * 1000.0,
+            modulus=self.number(self.modulus, "the modulus") * 1000.0,
+            yield_stress=self.number(self.yield_stress, "the yield stress"),
+            ends=self.ends.get(),
+            load=self.number(self.load, "the load") * 1000.0)
+
+    def draw(self) -> tuple:
+        column = self.column()
+        rows = list(column.rows())
+
+        self.figure.clear()
+        axes = self.figure.add_subplot(111)
+        ratios, euler, yielding, perry = column.curve()
+        top = column.yield_stress * 1.35
+        axes.plot(ratios, [min(v, top * 4) for v in euler], "--",
+                  color="#888888", linewidth=1.2, label="Euler")
+        axes.plot(ratios, yielding, ":", color="#c0392b", linewidth=1.2,
+                  label="yield")
+        axes.plot(ratios, perry, color="#1f4e79", linewidth=1.8,
+                  label="Perry-Robertson")
+        axes.axvline(column.transition, color="#0b7a3b", linewidth=0.9,
+                     linestyle="-.")
+        # Low down, where neither curve is: the point being marked is on
+        # the x axis and the top of the chart is where the labels for the
+        # column itself go.
+        axes.annotate("Euler reaches yield here",
+                      (column.transition, top * 0.04), fontsize=6.5,
+                      rotation=90, ha="right", va="bottom", color="#0b7a3b")
+
+        here = column.perry_stress()
+        axes.plot([column.slenderness], [here], "o", color="#c0392b",
+                  markersize=8, zorder=5)
+        axes.annotate(f"this column\n{here:.0f} N/mm2",
+                      (column.slenderness, here),
+                      textcoords="offset points", xytext=(8, 8),
+                      fontsize=7, color="#c0392b")
+
+        axes.set_xlim(0, max(ratios))
+        axes.set_ylim(0, top)
+        axes.set_xlabel("slenderness  Le / r", fontsize=8)
+        axes.set_ylabel("stress it fails at  N/mm2", fontsize=8)
+        axes.grid(True, alpha=0.3, linestyle=":")
+        axes.tick_params(labelsize=7)
+        axes.legend(loc="upper right", fontsize=7, framealpha=0.9)
+        return rows, column.notes()
+
+
 CHARTS = [
     ("  Stress and strain  ", TensileTab),
     ("  Beam  ", BeamTab),
     ("  Section  ", SectionTab),
     ("  Torsion  ", TorsionTab),
+    ("  Columns  ", ColumnTab),
     ("  Motion  ", MotionTab),
     ("  Mohr's circle  ", MohrTab),
     ("  Moody  ", MoodyTab),

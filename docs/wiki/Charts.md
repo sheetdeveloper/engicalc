@@ -306,6 +306,72 @@ both halves twist by the same amount where they meet, so the torque divides
 inversely with the lengths. A torque a third of the way along a shaft sends
 two thirds of itself to the near end.
 
+## Columns
+
+What a strut carries before it bends sideways, and the diagram the whole
+subject is taught on: failure stress against slenderness, with this column
+marked on it.
+
+A short column fails by squashing. A long one bends sideways long before it
+squashes, at a load the material could carry twice over, and it does it
+suddenly. Euler settles the long case exactly:
+
+    P = pi^2 E I / Le^2
+
+and the whole subject is knowing where that stops applying.
+
+### Three curves, not one
+
+Euler is derived for a perfectly straight column of perfectly uniform
+material loaded perfectly down its axis. Below a slenderness of about
+`pi root(E/sigma_y)` it predicts a stress the material cannot reach at all -
+which is not a conservative error but a meaningless one, describing a
+failure that could not happen because the column would have squashed first.
+The tab draws the line where that crossover is and says so when a column is
+below it.
+
+So it gives three:
+
+- **Euler**, right at the slender end and nonsense at the stocky end
+- **the material's yield**, right at the stocky end and nonsense at the
+  slender end
+- **Perry-Robertson**, which is the shape every steel code uses. It comes
+  from assuming the column starts slightly bent, so bending and squashing
+  happen together from the first newton rather than the column staying
+  straight until it suddenly does not. Real columns follow this one.
+
+**Rankine-Gordon** is given too - the two failures added as though they were
+resistances in series, `1/P = 1/P_squash + 1/P_Euler`. Older and cruder, and
+still what a lot of courses teach first.
+
+None of these is a code check. A real design goes to the code, which uses
+the same shape of curve with an imperfection factor chosen for the section
+and the axis.
+
+### The axis it buckles about
+
+Whichever is easiest, which is the **smaller principal** second moment - not
+the smaller of Ixx and Iyy. On an angle those are not the same thing: the
+weak axis runs diagonally across it and using Iyy would overstate what the
+column carries. The tab says which axis it used and how far round it is.
+
+### Holding the ends
+
+| held | K |
+| --- | --- |
+| pinned both ends | 1.0 |
+| fixed both ends | 0.5 |
+| fixed one end, pinned the other | 0.699 |
+| fixed one end, free at the other | 2.0 |
+
+These are the theoretical values. Codes use higher ones for real
+construction, because a joint drawn as fixed is never quite fixed - a
+fixed-fixed column is usually designed at 0.65 rather than 0.5.
+
+A column free at one end is twice as slender as its length suggests, which
+makes a free-standing post the worst of the four by a factor of sixteen on
+the Euler load.
+
 ## Motion
 
 Distance, velocity and acceleration against time, stacked on one time axis.
