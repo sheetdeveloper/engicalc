@@ -119,7 +119,7 @@ def main() -> None:
     app.show_working.set(False)
 
     # -- steam, with the chart --------------------------------------------
-    top_tab(app, "Properties")
+    top_tab(app, "Fluid properties")
     app.properties_pane.show_steam()
     grab(app, "steam.png")
 
@@ -139,6 +139,20 @@ def main() -> None:
     top_tab(app, "Interpolate")
     app.interpolate_tab.compute()
     grab(app, "interpolate.png")
+
+    # -- the standard charts ----------------------------------------------
+    top_tab(app, "Graph")
+    for label, name in (("Stress and strain", "tensile.png"),
+                        ("Beam", "beam.png"),
+                        ("Mohr's circle", "mohr.png"),
+                        ("Moody", "moody.png")):
+        app.graph_pane.tabs.select(app.graph_pane.charts[label])
+        grab(app, name)
+
+    # -- complex numbers ---------------------------------------------------
+    top_tab(app, "Calculator")
+    app.calculator_pane.tabs.select(app.calculator_pane.complex)
+    grab(app, "complex.png")
 
     app.update_idletasks()
     app.destroy()

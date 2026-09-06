@@ -42,6 +42,10 @@ the area it measures shaded underneath and the working beside it.*
 | **Steam tables** computed from IAPWS-IF97, with the chart beside them | **Moist air** - the psychrometric chart, read off exactly |
 | ![A study](docs/screenshots/study.png) | ![Interpolation](docs/screenshots/interpolate.png) |
 | **Parametric studies** - the same set solved down a column of values | **Interpolation** - between the rows of a table, working shown |
+| ![Stress and strain](docs/screenshots/tensile.png) | ![Beam](docs/screenshots/beam.png) |
+| **Stress and strain** - modulus, proof stress and UTS read off a test | **Beam diagrams** - shear and moment, worked from the loads |
+| ![Mohr](docs/screenshots/mohr.png) | ![Moody](docs/screenshots/moody.png) |
+| **Mohr's circle** - exact, with the construction drawn | **Moody chart** - Colebrook solved, not approximated |
 
 ---
 
@@ -461,7 +465,7 @@ Three exports:
         simultaneous_tab.py  units_tab.py
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 307 tests
+    tests/test_engicalc.py 332 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
