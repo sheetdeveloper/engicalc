@@ -33,7 +33,7 @@ the area it measures shaded underneath and the working beside it.*
 | ![Matrices](docs/screenshots/matrices.png) | ![Interpolation](docs/screenshots/interpolate.png) |
 | **Matrices** - several equations solved at once | **Interpolation** - reading between the rows of a table |
 | ![Formula library](docs/screenshots/formula_library.png) | ![Graphing](docs/screenshots/graph.png) |
-| **229 formulas**, each rearranging for any variable | **Graphing** - explicit, implicit, parametric and polar |
+| **229 formulas**, each rearranging for any variable | **Graphing** - four kinds of curve, and every root, turning point and crossing listed beside them |
 | ![Solved together](docs/screenshots/simultaneous.png) | ![Units](docs/screenshots/units.png) |
 | **Equations solved together** - in any order, with the count before the answer | **Units** - and the same value in everything else that measures it |
 | ![All working](docs/screenshots/working.png) | ![Trendlines](docs/screenshots/statistics.png) |
@@ -55,13 +55,15 @@ the area it measures shaded underneath and the working beside it.*
 | ![Truss](docs/screenshots/truss.png) | ![Pressure vessel](docs/screenshots/vessel.png) |
 | **Trusses** - every joint solved at once, ties red and struts blue | **Pressure vessels** - thin walled and thick, and where the two part |
 | ![Geometry](docs/screenshots/geometry.png) | ![Material chart](docs/screenshots/materials.png) |
-| **Geometry** - triangles, arcs and crossings, with both answers where there are two | **Material charts** - 52 of them, with family envelopes and a selection line |
+| **Geometry** - triangles, arcs and crossings, with both answers where there are two | **Material charts** - 52 of them, and the selection index derived rather than looked up |
 | ![Curved beam](docs/screenshots/curved.png) | ![Axial](docs/screenshots/axial.png) |
 | **Curved beams** - a hook or a clamp, where M y / I is not conservative | **Axial members** - stepped and composite bars, held at both ends and heated |
 | ![Worksheet](docs/screenshots/sheet.png) | ![Formula cards](docs/screenshots/formula_cards.png) |
 | **Worksheets** - units and tolerances carried down the page, each measurement counted once | **Formula cards** - the library to browse rather than to solve |
 | ![Differential equations](docs/screenshots/ode.png) | ![Inequalities](docs/screenshots/inequality.png) |
 | **Differential equations** - solved symbolically, with the initial conditions applied | **Inequalities** - solved, and the range shaded on the number line |
+| ![Dark](docs/screenshots/dark.png) | ![A derived index](docs/screenshots/index.png) |
+| **Light or dark**, with an accent colour of your own that stays readable whatever you pick | **Selection indices derived** from a statement of the job, not looked up in a table |
 
 ---
 
@@ -180,6 +182,18 @@ Up to six curves at once, in four flavours:
 
 Roots are marked and labelled. Full matplotlib pan/zoom toolbar underneath, and
 Save PNG (or PDF/SVG) for reports.
+
+Beside the form, **what the graph does**: every root, every turning point with
+its value and whether it is a maximum or a minimum, and every place two curves
+cross. Computed rather than read off the picture - exactly where SymPy can
+solve it, so `x^2 - 4` says 2 and not 1.9999999, and by scanning for a sign
+change where it cannot, so `x*cos(x)` still reports the eight turning points
+that have no closed form.
+
+Only what is on screen. A sine has infinitely many roots; the seven in the
+window are the useful ones, and moving the window changes which seven are
+listed. It runs off the drawing thread, so the picture appears first and the
+numbers arrive underneath it.
 
 ### Formula cards
 
@@ -481,6 +495,32 @@ everything above it better. The method is Ashby's; the data is assembled
 here from standards and manufacturers' figures, and each row says where it
 came from.
 
+**The index is derived, not looked up.** Each of the thirteen is worked out
+from a statement of the job - what is to be made small, what has to still be
+true, and the one thing the designer may change:
+
+    minimise      m = rho * A * L
+    subject to    S = C * E * I / L^3
+    by choosing   A,  with  I = A^2/12   for a square section
+
+Eliminate `A` between the two and the mass falls into a part fixed by the job
+and a group of material properties, and only the second can decide what to
+make it of. That group - here `E^(1/2)/rho` - is the index. It matters because
+the exponent is the whole content of an index and it is the easy thing to get
+wrong: `E^(1/2)/rho` for a beam and `E^(1/3)/rho` for a panel look alike
+written down and put different materials at the top of the list.
+
+Eleven of the thirteen come out exactly as published, and the published values
+are the test rather than the source. The other two were short. The energy a
+spring stores per unit weight is `sigma_y^2/(E*rho)` and not `sigma_y^2/rho`,
+and thermal shock resistance is `sigma_y/(E*alpha)` and not `sigma_y/E` with a
+note about expansion - in both, a property that belongs in the algebra had been
+demoted to a parenthesis. Three properties will not go on two axes, so those
+two are drawn against a chosen pair and the chart says which property it is
+holding constant along the line, and that it is therefore only ranking
+materials that are alike in that. It also says what the index was derived
+from, because an index is only as good as the statement of the job behind it.
+
 Fifty-two is more than one screen can name at once, so the chart has the
 controls that make a crowded one usable: a tick per family, so you can
 narrow it to the two you are actually choosing between; a material picked
@@ -692,6 +732,26 @@ Three exports:
 
 ---
 
+## Appearance
+
+*Options → Appearance* has light and dark, eight named accent colours, and
+**Another colour...** for anything else out of the system picker. Both are
+remembered between runs.
+
+The accent is used in exactly two places - the button that does the work, and
+the heading that says what a panel is - which is what makes it safe to let it
+be anything. Everything else about it is worked out: the hover tint is the
+accent mixed into the page, and the accent used as **text** is moved until it
+actually contrasts with what it sits on, four and a half to one. Navy stays
+navy on a light page and lifts to a paler navy on a dark one; a pale yellow on
+white is darkened rather than refused. There is no colour you can pick that
+produces a heading you cannot read.
+
+**The charts stay light on purpose.** A chart is a document - it gets exported
+into a report, pasted into an email and printed - and the colours that mean
+tension and compression were chosen against white. The window goes dark around
+them and the drawing does not.
+
 ## Keyboard
 
     Ctrl+Enter    work out whatever is on screen
@@ -732,6 +792,16 @@ nobody can find is not one.
       formulas/data/hvac.py  ductwork, fans and sheet metal
       core/updates.py      is there a newer release - telling, never installing
       core/units.py        mm and m cannot be quietly mixed
+      core/quantity.py     a number that knows what it measures
+      core/dimensional.py  pulling the units out of an expression
+      core/uncertainty.py  GUM propagation, by partial derivatives
+      core/geometry.py     triangles, arcs and where two lines meet
+      core/indices.py      material indices, derived from the job
+      core/curved.py       Winkler theory, where M y / I is not safe
+      core/axial.py        stepped and composite bars, held and heated
+      core/helmholtz.py    the equation of state the refrigerants share
+      core/ammonia.py      core/propane.py  core/refrigerants.py
+      plotting/readoff.py  roots, turning points and crossings
       core/system.py       equations solved together, in any order
       core/fitting.py      six trendline shapes, scored so they compare
       core/steam.py        water and steam, from IAPWS-IF97
@@ -741,6 +811,7 @@ nobody can find is not one.
       export/excel.py      the workbook builders
       ui/
         app.py             window shell and cross-tab plumbing
+        theme.py           light, dark, and an accent that stays readable
         mathrender.py      LaTeX -> PNG -> Tk, with a plain-text fallback
         pad.py             the symbol list: buttons, help and syntax in one place
         mathfield.py       the editable typeset equation bar
@@ -754,7 +825,7 @@ nobody can find is not one.
         simultaneous_tab.py  units_tab.py
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 332 tests
+    tests/test_engicalc.py 679 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -812,7 +883,7 @@ them.
 
 ## Tests
 
-198 tests covering the parser (including that it refuses `__import__`), the
+679 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator

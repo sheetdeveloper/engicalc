@@ -187,6 +187,15 @@ def main() -> None:
     curves.xmin.set("0")
     curves.xmax.set("20")
     curves.replot()
+    # The read-off runs off the Tk thread, so the picture is ready before
+    # the numbers are. Wait for them, or the shot is of a panel that says
+    # "working it out...".
+    end = time.time() + 20.0
+    while time.time() < end:
+        app.update()
+        if "working it out" not in curves.features.get("1.0", "end"):
+            break
+        time.sleep(0.05)
     grab(app, "graph.png")
 
     # -- the formula library, with one solved ------------------------------
@@ -335,6 +344,13 @@ def main() -> None:
     ashby.refresh()
     grab(app, "materials.png")
 
+    # The index the chart is drawing, and where it came from. Thermal
+    # shock, because it is one of the two whose honest form has three
+    # properties in it and the caveat is the point of the panel.
+    ashby.index.set("Thermal shock resistance")
+    ashby._index_changed()
+    grab(app, "index.png")
+
     for label, name in (("Stress and strain", "tensile.png"),
                         ("Section", "section.png"),
                         ("Motion", "motion.png"),
@@ -351,6 +367,17 @@ def main() -> None:
     top_tab(app, "Calculator")
     app.calculator_pane.tabs.select(app.calculator_pane.complex)
     grab(app, "complex.png")
+
+    # -- the dark one, last ------------------------------------------------
+    # Last, because it changes the colours under everything and every shot
+    # above it is of the light app. On the formula cards, which is where a
+    # change of theme shows most: a page of typeset equations that have to
+    # be redrawn in the new ink rather than merely restyled.
+    top_tab(app, "Formula cards")
+    theme.use("dark", theme.ACCENTS["Teal"])
+    app.update_idletasks()
+    grab(app, "dark.png")
+    theme.use("light", theme.ACCENTS["Navy"])
 
     app.update_idletasks()
     app.destroy()

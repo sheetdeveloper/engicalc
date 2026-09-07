@@ -4,7 +4,8 @@ State of EngiCalc as handed over, what was verified and how, what was not, and
 what to do next. `CLAUDE.md` covers *how to work on the code*; this covers
 *where the project stands*.
 
-Written at the end of the initial build. Version 1.0.0.
+Written at the end of the initial build and kept current since.
+Version 2.0.0.
 
 ---
 
@@ -22,8 +23,13 @@ Everything runs locally. No account, no network calls, no telemetry. Four pip
 dependencies: sympy, matplotlib, numpy, openpyxl. Tkinter and sqlite3 ship with
 Python.
 
-**Scale:** ~7,700 lines of Python across 44 modules. 212 formulas, 804 variable
-slots, 114 tests.
+**Scale:** ~32,200 lines of Python across 104 modules. 229 formulas, 868
+variable slots, 679 tests.
+
+Still four pip dependencies. Everything added since 1.0 - the steam tables, the
+refrigerants, the material charts, the uncertainty propagation - is built on
+sympy, matplotlib, numpy and openpyxl, and adding a fifth has not yet been the
+right answer to anything.
 
 ---
 
@@ -34,7 +40,7 @@ slots, 114 tests.
 | Area | How it was checked |
 |---|---|
 | Solver, calculus, systems | 114 automated tests, all passing |
-| All 212 formulas | Every one parses; declared variables match the equation exactly (enforced by test) |
+| All 229 formulas | Every one parses; declared variables match the equation exactly, and so do its declared *units* (both enforced by test) |
 | Rearrangement | 800 of 804 possible rearrangements resolve symbolically; the other 4 fall through to a numeric solver |
 | Excel export | Generated workbooks recalculated in LibreOffice: **0 formula errors**. Values checked by hand |
 | Excel printer fidelity | Round-trip tests evaluate the printed Excel string in Python against SymPy with random values, to 8 decimal places |
@@ -146,11 +152,19 @@ likely to grow, so it was made the easiest part to extend.
 
 **Nothing here is a blocker; all of it is worth knowing.**
 
-1. **Units are labels, not enforced.** The app will happily let you enter mm in a
-   field expecting m. This is the largest real gap. `sympy.physics.units` is the
-   obvious fix and would need work in `model.py`, `library.py` and the input grid.
-2. **Periodic roots are principal only.** `sin(x) = 0` returns 0 and pi, not the
-   whole family. The graph marks only those.
+1. **Units are enforced on a worksheet and are still labels in the formula
+   grid.** A worksheet row computes its own unit from the arithmetic, refuses
+   an addition that does not go together, and contradicts a row that declares
+   the wrong one - see `core/quantity.py` and `core/dimensional.py`. The
+   library's declared units are audited against each equation by test, which
+   found two that were wrong. What is *not* done is the formula input grid:
+   type mm into a field declared in m and nothing objects. That is the gap
+   left of what used to be the largest one.
+2. **Periodic roots are principal in the solver and complete on the graph.**
+   `solve(sin(x) = 0)` still answers 0 and pi. The graph's read-off panel
+   walks solveset's ImageSet over the window instead, so it lists all seven
+   roots of a sine on [-10, 10] - see `plotting/readoff.py`. Doing the same
+   in the solver is the obvious next step and the machinery now exists.
 3. **Four formulas have no closed-form rearrangement** for some variables:
    `heat_transfer.fin_efficiency` (for `m_f` and `L`), `geometry_maths.heron`
    (for `s`) and `geometry_maths.annuity_payment` (for `i`). They solve
@@ -175,6 +189,14 @@ likely to grow, so it was made the easiest part to extend.
 8. **Inequalities give principal ranges, not periodic families.** `sin(x) > 0`
    answers `(0, pi)` rather than every interval where it holds. Same limitation
    as issue 2, and the same fix would serve both.
+9. **The test suite fails one test per full run, and a different one each
+   time.** Always a `TclError` reading `.../tcl/tk8.6/ttk/ttk.tcl` while
+   creating a Tk root, roughly a hundred and sixty tests in. The file exists;
+   running the failing test on its own passes; the test that fails changes
+   between runs. It reproduces on a clean checkout of an earlier commit, so it
+   is the environment - most likely a scanner briefly holding the file - and
+   not the code. Worth knowing before somebody spends a day bisecting for it.
+   If it ever becomes deterministic, that is news.
 
 ---
 
@@ -194,28 +216,34 @@ Roughly by value per unit of effort.
 4. **Confirm `run_engicalc.bat` works from a cold machine** — no Python, then
    Python without Tkinter, then a normal install. Less urgent now the exe
    exists, but it is still the path a developer hits first.
-5. **Units.** The biggest correctness win available. Even a soft version — warn
-   when a value looks orders of magnitude off the typical value already stored
-   against each variable — would catch most real mistakes.
-6. **Chained calculations.** Let one formula's result feed the next, and export
-   the chain as a single linked workbook. This is what turns the app from a
-   calculator into a calculation sheet, and the Excel exporter already has the
-   machinery.
+5. ~~**Units.**~~ Done for worksheets, and the library's declared units are
+   now audited by test. The formula input grid is what is left - see issue 1.
+6. ~~**Chained calculations.**~~ Done. The Worksheet tab carries names, units
+   and tolerances down the page, and each measurement is counted once however
+   many routes it reached the answer through.
 7. **Import/export the user formula library** so it can be shared between
    machines or with colleagues.
-8. **Periodic root families** on the graph.
+8. ~~**Periodic root families** on the graph.~~ Done in the read-off panel.
+   Doing the same in the solver and in the inequality ranges is issue 2.
+9. **CO2 (R744).** The third refrigerant everybody asks for, and the one the
+   shared Helmholtz machinery does not yet cover: Span-Wagner needs
+   non-analytic terms near the critical point, and a CO2 cycle is usually
+   transcritical, which the cycle tab assumes away.
+10. **Indexed variables and lookup tables.** `T[1]`, and a table callable from
+    an equation, which together are what a worksheet needs to describe a
+    multi-stage process rather than a single line of one.
 
 ---
 
 ## 6. How to verify a change
 
 ```
-run_engicalc.bat test          # 114 tests, about 25 seconds
+run_engicalc.bat test          # 679 tests, about seven minutes
 run_engicalc.bat               # then actually look at the window
 ```
 
 Run the tests after every change, not at the end. They are fast and they cover
-the things that break silently: the parser, all 212 formulas, the Excel
+the things that break silently: the parser, all 229 formulas, the Excel
 printer's numerical fidelity, and whether the notation still renders.
 
 If you add formulas, the two invariants are enforced automatically — the symbols
