@@ -257,9 +257,10 @@ class TestFormulaLibrary(unittest.TestCase):
                     # question here is only whether a closed form exists,
                     # and tying that to six seconds made this test fail
                     # whenever the machine was busy with something else.
-                    if _timed(rearrange, formula.eq,
-                              sp.Symbol(variable.symbol),
-                              timeout=60.0) is None:
+                    got, _ran_out = _timed(
+                        rearrange, formula.eq,
+                        sp.Symbol(variable.symbol), timeout=60.0)
+                    if got is None:
                         failures.append(pair)
                 except Exception:  # noqa: BLE001
                     failures.append(pair)
@@ -276,9 +277,11 @@ class TestFormulaLibrary(unittest.TestCase):
         for key, symbol in sorted(self.NO_CLOSED_FORM):
             with self.subTest(f"{key} for {symbol}"):
                 formula = self.library.get(key)
+                got, _ran_out = _timed(
+                    rearrange, formula.eq, sp.Symbol(symbol),
+                    timeout=60.0)
                 self.assertIsNone(
-                    _timed(rearrange, formula.eq, sp.Symbol(symbol),
-                           timeout=60.0),
+                    got,
                     f"{key} now rearranges for {symbol} - take it off "
                     f"NO_CLOSED_FORM.")
 
@@ -8669,11 +8672,23 @@ class TestHvacAndSheetMetal(unittest.TestCase):
     def test_every_new_formula_rearranges_for_every_variable(self):
         """The library-wide invariant, checked again for this branch so a
         failure names the branch rather than a key."""
+        import sympy as sp
+
+        from engicalc.formulas.library import _timed, rearrange
+
         for formula in self.library.by_branch("HVAC & Sheet Metal"):
             for variable in formula.variables:
-                with self.subTest(formula=formula.key, solve_for=variable.symbol):
-                    solution = solve_formula(formula, variable.symbol, {})
-                    self.assertIsNotNone(solution.expression)
+                with self.subTest(formula=formula.key,
+                                  solve_for=variable.symbol):
+                    # Asked of `rearrange` rather than of `solve_formula`,
+                    # and on a generous clock. Going through the app meant
+                    # going through the six seconds it waits before falling
+                    # back to iteration, so a busy machine failed this on a
+                    # rearrangement that takes a twenty-fifth of a second.
+                    got, _ran_out = _timed(rearrange, formula.eq,
+                                           sp.Symbol(variable.symbol),
+                                           timeout=60.0)
+                    self.assertIsNotNone(got)
 
 
 class TestUpdateCheck(unittest.TestCase):
@@ -9837,7 +9852,11 @@ class TestARunawayRearrangementCannotOutliveTheAnswer(unittest.TestCase):
 
         before = {t.ident for t in threading.enumerate()}
         started = clock.time()
-        self.assertIsNone(_timed(clock.sleep, 30, timeout=0.3))
+        got, ran_out = _timed(clock.sleep, 30, timeout=0.3)
+        self.assertIsNone(got)
+        # And it says which of the two things happened: we stopped
+        # waiting, rather than the work finishing with nothing to show.
+        self.assertTrue(ran_out)
         # It really gave up rather than waiting for the work.
         self.assertLess(clock.time() - started, 5.0)
 
@@ -10267,3 +10286,63 @@ class TestARowWrittenInTermsOfItself(unittest.TestCase):
         value = float(got.value)
         self.assertAlmostEqual(value, 20.0 + 5000.0 / (2.0 * value),
                                places=6)
+
+
+class TestGivingUpIsNotTheSameAsThereBeingNothing(unittest.TestCase):
+    """"No closed-form rearrangement" is a claim about the algebra.
+
+    "We stopped waiting" is a claim about this machine on this afternoon.
+    The app made the first when the second had happened, which on a loaded
+    machine told somebody a formula has no rearrangement when it has one
+    that takes a twenty-fifth of a second.
+    """
+
+    def test_the_clock_says_which_of_the_two_it_was(self):
+        import time as clock
+
+        from engicalc.formulas.library import _timed
+
+        stopped_waiting = _timed(clock.sleep, 30, timeout=0.2)
+        self.assertEqual((None, True), stopped_waiting)
+
+        # A call that finishes and finds nothing is the other answer.
+        finished_empty = _timed(lambda: None, timeout=5.0)
+        self.assertEqual((None, False), finished_empty)
+
+        got, ran_out = _timed(lambda: 42, timeout=5.0)
+        self.assertEqual(42, got)
+        self.assertFalse(ran_out)
+
+    def test_running_out_of_time_says_so_rather_than_claiming_more(self):
+        from unittest import mock
+
+        from engicalc.formulas import library
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = get_library().get("hvac_sheet_metal.bend_setback")
+        with mock.patch.object(library, "_timed",
+                               return_value=(None, True)):
+            with self.assertRaises(ValueError) as caught:
+                solve_formula(formula, "R", {})
+        said = str(caught.exception)
+        self.assertIn("did not arrive in time", said)
+        self.assertNotIn("has no closed-form rearrangement", said)
+
+    def test_and_a_formula_that_really_has_none_still_says_that(self):
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = get_library().get("heat_transfer.fin_efficiency")
+        with self.assertRaises(ValueError) as caught:
+            solve_formula(formula, "m_f", {})
+        said = str(caught.exception)
+        self.assertIn("no closed-form rearrangement", said)
+        self.assertNotIn("did not arrive in time", said)
+
+    def test_the_one_that_used_to_fail_this_way_still_rearranges(self):
+        """bend_setback for R takes about a twenty-fifth of a second."""
+        import sympy as sp
+
+        from engicalc.formulas.library import get_library, rearrange
+
+        formula = get_library().get("hvac_sheet_metal.bend_setback")
+        self.assertIsNotNone(rearrange(formula.eq, sp.Symbol("R")))

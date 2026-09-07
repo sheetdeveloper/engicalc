@@ -264,12 +264,20 @@ def solve_formula(formula: Formula, target: str,
     # Asked before trying, not after. The attempt can be abandoned but
     # it cannot be stopped, and what it leaves running is what kept the
     # window from closing.
-    expr = (None if target in formula.numeric_only
-            else _timed(rearrange, formula.eq, tgt, timeout=6.0))
+    ran_out = False
+    if target in formula.numeric_only:
+        expr = None
+    else:
+        expr, ran_out = _timed(rearrange, formula.eq, tgt, timeout=6.0)
     if expr is None:
         # A few formulas (implicit or transcendental in the target) have no
         # closed-form rearrangement - solve them numerically instead.
-        return _numeric_solve(formula, target, values, warnings)
+        return _numeric_solve(
+            formula, target, values, warnings,
+            because=("Rearranging this took longer than the app waits for, "
+                     "so it fell back to iteration. That is not the same as "
+                     "there being no closed form - only that one did not "
+                     "arrive in time." if ran_out else ""))
     if isinstance(expr, list):
         warnings.append(
             f"{len(expr)} solutions exist; showing the first. "
@@ -454,7 +462,14 @@ def _read_value(formula: Formula, name: str, raw: str, warnings: list):
 
 
 def _timed(func, *args, timeout: float = 6.0):
-    """Run *func*, giving up after *timeout* seconds (returns None on failure).
+    """Run *func*, giving up after *timeout* seconds.
+
+    Returns ``(value, ran_out_of_time)``. The second half matters:
+    "SymPy looked and there is no closed form" and "we stopped waiting"
+    are different facts, and the app used to report the first when the
+    second had happened - which on a loaded machine told somebody a
+    formula has no rearrangement when it has one that takes a
+    twenty-fifth of a second.
 
     SymPy occasionally disappears down a rabbit hole on an awkward
     rearrangement; the UI must not freeze while that happens.
@@ -488,9 +503,11 @@ def _timed(func, *args, timeout: float = 6.0):
                               name="engicalc-rearrange")
     runner.start()
     runner.join(timeout)
-    if runner.is_alive() or "failed" in box:
-        return None
-    return box.get("value")
+    if runner.is_alive():
+        return None, True          # still going; we stopped waiting
+    if "failed" in box:
+        return None, False         # it finished, and found nothing
+    return box.get("value"), False
 
 
 def _numeric_solve(formula: Formula, target: str, values: dict,
@@ -511,9 +528,11 @@ def _numeric_solve(formula: Formula, target: str, values: dict,
     residual = residual.subs(subs)
     missing = sorted(s.name for s in residual.free_symbols if s.name != target)
     if missing:
+        why = because or (f"{formula.name} has no closed-form rearrangement "
+                          f"for {target}.")
         raise ValueError(
-            f"{formula.name} has no closed-form rearrangement for {target}, so "
-            "every other variable needs a value. Missing: " + ", ".join(missing))
+            f"{why} Solving it by iteration needs a value for every other "
+            f"variable, and these have none: " + ", ".join(missing))
 
     warnings.append(
         because or "Solved numerically - no closed-form rearrangement exists.")
