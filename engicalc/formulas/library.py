@@ -268,7 +268,7 @@ def solve_formula(formula: Formula, target: str,
     if target in formula.numeric_only:
         expr = None
     else:
-        expr, ran_out = _timed(rearrange, formula.eq, tgt, timeout=6.0)
+        expr, ran_out = _timed(rearrange, formula.eq, tgt)
     if expr is None:
         # A few formulas (implicit or transcendental in the target) have no
         # closed-form rearrangement - solve them numerically instead.
@@ -461,7 +461,24 @@ def _read_value(formula: Formula, name: str, raw: str, warnings: list):
     return value
 
 
-def _timed(func, *args, timeout: float = 6.0):
+#: How long to wait for a rearrangement before iterating instead.
+#:
+#: It was six seconds, chosen when this ran on the Tk thread and a slow
+#: solve froze the window. It does not any more - the library tab hands
+#: the whole call to an AsyncRunner and shows "Working..." - so the only
+#: thing the number decides is how long somebody waits before getting a
+#: numerically solved answer instead of an exact one.
+#:
+#: Six was too tight for that job. The slowest honest rearrangement in
+#: the library takes about a second, which is a margin of six, and on a
+#: loaded machine three separate tests have now watched it vanish - the
+#: app reporting "no closed form" for formulas that have one. Twenty is
+#: a twentyfold margin and still bounded, which is what stops a runaway
+#: from hanging anything.
+REARRANGE_PATIENCE = 20.0
+
+
+def _timed(func, *args, timeout: float = REARRANGE_PATIENCE):
     """Run *func*, giving up after *timeout* seconds.
 
     Returns ``(value, ran_out_of_time)``. The second half matters:
@@ -472,7 +489,7 @@ def _timed(func, *args, timeout: float = 6.0):
     twenty-fifth of a second.
 
     SymPy occasionally disappears down a rabbit hole on an awkward
-    rearrangement; the UI must not freeze while that happens.
+    rearrangement, and something has to stop waiting.
 
     A Python thread cannot be killed from outside, so a call that runs away
     is abandoned rather than stopped. That is the price of the timeout being
