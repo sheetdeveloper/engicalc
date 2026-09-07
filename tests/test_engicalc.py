@@ -9226,3 +9226,163 @@ class TestTranscriticalCycle(unittest.TestCase):
         _first, _second, third, _fourth = run.states()
         self.assertAlmostEqual(third.T, 273.15 + 10.0, places=6)
 
+class TestSubscriptsOnASheet(unittest.TestCase):
+    """T[1], because a calculation with stages in it needs subscripts.
+
+    T1 will not do - the parser reads it as T times 1 and quietly works
+    out something else - and T_1 works but reads like a filename.
+    """
+
+    def _sheet(self):
+        from engicalc.core.sheet import Sheet
+        return Sheet()
+
+    def _values(self, sheet):
+        found = {}
+        for result in sheet.evaluate():
+            self.assertFalse(result.error, f"{result.step.name}: "
+                                           f"{result.error}")
+            found[result.step.name] = float(result.value)
+        return found
+
+    def test_a_subscript_is_a_name_like_any_other(self):
+        sheet = self._sheet()
+        sheet.add("T[1]", "20", "degC")
+        sheet.add("T[2]", "80", "degC")
+        sheet.add("m", "0.5", "kg/s")
+        sheet.add("c", "1005", "J/(kg*K)")
+        sheet.add("Q", "m*c*(T[2] - T[1])", "kW")
+        got = self._values(sheet)
+        self.assertAlmostEqual(20.0, got["T[1]"], places=9)
+        self.assertAlmostEqual(80.0, got["T[2]"], places=9)
+        self.assertAlmostEqual(30.15, got["Q"], places=9)
+
+    def test_it_is_the_same_name_as_the_underscore_spelling(self):
+        """Two spellings of one quantity, the way rho and its letter are.
+
+        So a row can be defined as T[1] and used as T_1, and defining
+        both is defining a row twice - which the sheet already refuses.
+        """
+        sheet = self._sheet()
+        sheet.add("T[1]", "300", "K")
+        sheet.add("twice", "2*T_1", "K")
+        self.assertAlmostEqual(600.0, self._values(sheet)["twice"], places=9)
+
+        clash = self._sheet()
+        clash.add("T[1]", "300", "K")
+        clash.add("T_1", "400", "K")
+        errors = [r.error for r in clash.evaluate()]
+        self.assertFalse(errors[0])
+        self.assertIn("defined twice", errors[1])
+
+    def test_only_a_whole_number_in_the_brackets(self):
+        """Anything else is left alone, so it fails as an expression
+        rather than being silently turned into a name."""
+        from engicalc.core.sheet import subscripted
+
+        self.assertEqual("T_1", subscripted("T[1]"))
+        self.assertEqual("h_12", subscripted("h[ 12 ]"))
+        self.assertEqual("a[1.5]", subscripted("a[1.5]"))
+        self.assertEqual("x[i]", subscripted("x[i]"))
+        self.assertEqual("T_1 + h_2", subscripted("T[1] + h[2]"))
+
+    def test_the_tolerance_of_a_subscript_is_counted_once(self):
+        """It is one name, so nothing special happens - which is the
+        point of making it a name rather than a new kind of thing."""
+        sheet = self._sheet()
+        sheet.add("d[1]", "50 +/- 0.5", "mm")
+        sheet.add("A", "pi*d[1]^2/4", "mm^2")
+        sheet.add("P", "4*d[1]", "mm")
+        sheet.add("ratio", "A/P", "mm")
+        results = sheet.evaluate()
+        for result in results:
+            self.assertFalse(result.error, result.error)
+        # A/P is d/16, so a one per cent diameter is a one per cent
+        # answer - not the root of two per cent it would be if the two
+        # rows above were treated as separate measurements.
+        spread = results[-1].spread
+        self.assertIsNotNone(spread)
+        self.assertAlmostEqual(0.5 / 50.0,
+                               spread.error / float(results[-1].value),
+                               places=9)
+
+
+class TestWhatANumberInARowMeans(unittest.TestCase):
+    """A number typed into a row that declares a unit is in that unit.
+
+    There used to be two rules for that and they disagreed, and the
+    disagreements were all in the direction of a wrong answer rather than
+    an error message.
+    """
+
+    def _one(self, expression, unit):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("x", expression, unit)
+        return sheet.evaluate()[0]
+
+    def test_a_tolerance_does_not_change_what_the_row_says(self):
+        """0.5 and 0.5 +/- 0.01 in a row saying kg/s are both kg/s.
+
+        The second was refused for being a plain number, which is the
+        headline of the release failing on the ordinary way of writing
+        the thing it is about.
+        """
+        bare = self._one("0.5", "kg/s")
+        with_tolerance = self._one("0.5 +/- 0.01", "kg/s")
+        self.assertFalse(bare.error, bare.error)
+        self.assertFalse(with_tolerance.error, with_tolerance.error)
+        self.assertEqual(bare.quantity.unit, with_tolerance.quantity.unit)
+        self.assertAlmostEqual(bare.quantity.value,
+                               with_tolerance.quantity.value, places=12)
+        self.assertAlmostEqual(0.01, with_tolerance.quantity.error, places=12)
+
+    def test_a_bare_celsius_number_is_converted_not_labelled(self):
+        """degC is an offset, so labelling 20 as degC is not converting it.
+
+        Left as a label the row held 20 kelvin, showed it back as -253 C,
+        and handed 20 kelvin to every row below it.
+        """
+        got = self._one("20", "degC")
+        self.assertFalse(got.error, got.error)
+        self.assertEqual("K", got.quantity.unit)
+        self.assertAlmostEqual(293.15, got.quantity.value, places=9)
+        self.assertAlmostEqual(20.0, float(got.value), places=9)
+        self.assertEqual("degC", got.unit)
+
+    def test_the_three_ways_of_writing_a_temperature_agree(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("a", "20", "degC")
+        sheet.add("b", "20 degC", "degC")
+        sheet.add("c", "293.15", "K")
+        sheet.add("ab", "a - b", "K")
+        sheet.add("ac", "a - c", "K")
+        found = sheet.evaluate()
+        for result in found:
+            self.assertFalse(result.error, result.error)
+        self.assertAlmostEqual(0.0, float(found[3].value), places=9)
+        self.assertAlmostEqual(0.0, float(found[4].value), places=9)
+
+    def test_a_celsius_tolerance_survives_the_conversion(self):
+        """A tolerance is a difference, and a difference does not care
+        where the scale starts: 20 +/- 0.5 degC is 293.15 +/- 0.5 K.
+
+        It was being dropped, which turned a measurement into an exact
+        number and quietly took it out of the uncertainty sum.
+        """
+        got = self._one("20 +/- 0.5", "degC")
+        self.assertFalse(got.error, got.error)
+        self.assertAlmostEqual(293.15, got.quantity.value, places=9)
+        self.assertAlmostEqual(0.5, got.quantity.error, places=12)
+        self.assertIsNotNone(got.spread)
+        self.assertAlmostEqual(0.5, got.spread.error, places=12)
+
+    def test_a_row_that_declares_the_wrong_thing_is_still_refused(self):
+        """The fixes must not have turned the checking off."""
+        got = self._one("50 mm", "kg")
+        self.assertTrue(got.error)
+        self.assertIn("kg", got.error)
+

@@ -45,6 +45,32 @@ from .quantity import Quantity, QuantityError, parse_powers
 #: ASCII however the name was typed.
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+#: A subscript, written the way an engineer writes one.
+INDEX = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*)"
+                   r"\[\s*([0-9]+)\s*\]")
+
+
+def subscripted(text: str) -> str:
+    """``T[1]`` as ``T_1`` - the same quantity, written two ways.
+
+    A calculation with stages in it is written with subscripts: the
+    temperature at state 1, the pressure at state 2. ``T1`` will not do,
+    because the parser reads it as T times 1 and quietly works out
+    something else. ``T_1`` works and reads like a filename.
+
+    So ``T[1]`` is accepted, and it is the *same name* as ``T_1`` rather
+    than a new kind of thing - exactly the way ``rho`` and its Greek
+    letter are the same name. Two spellings of one quantity, so a sheet
+    defining both is defining a row twice and is already told so.
+
+    Nothing downstream knows about it. The expression that reaches SymPy
+    has ordinary names in it, the units carry through as they always did,
+    and the tolerance of ``T[1]`` is counted once because it is one name.
+    And the typeset display draws ``T_1`` as T with a subscript, which is
+    what it was written as in the first place.
+    """
+    return INDEX.sub(r"\1_\2", str(text or ""))
+
 #: How big a row's expression may get, written back out in terms of the
 #: measurements, before the tolerances stop being worked out.
 #:
@@ -160,7 +186,7 @@ class Sheet:
             # anything is keyed off it - or checked, which is why the check
             # comes after: the canonical spelling is always plain ASCII, so
             # every symbol the app can draw passes without widening this.
-            name = canonical_name(step.name)
+            name = canonical_name(subscripted(step.name))
             if not NAME.match(name):
                 result.error = (f"{step.name!r} is not a usable name - letters, "
                                 "digits and underscores, not starting with a "
@@ -221,7 +247,7 @@ class Sheet:
         unit rather than a bare number, and how far it moves for the
         tolerances on what went into it.
         """
-        text = step.expression
+        text = subscripted(step.expression)
         note = ""
 
         # A plain value may carry its own unit: "50 mm" in a step declared
@@ -232,23 +258,19 @@ class Sheet:
         # the parser, which is not Python and says so unhelpfully.
         formulas = {} if formulas is None else formulas
         givens = {} if givens is None else givens
-        name = canonical_name(step.name)
+        name = canonical_name(subscripted(step.name))
 
         value_text, given_unit = unit_tools.split_quantity(text)
         if Quantity.TOLERANCE.match(text):
             typed = Quantity.parse(text)
             if step.unit:
-                typed = self._in_declared(step, typed, absolute=True)
+                typed = self._as_declared(step, typed)
             self._is_a_given(name, typed, formulas, givens)
             return typed, note, None
         if not _looks_like_expression(value_text):
             typed = Quantity.parse(text)
             if not given_unit and step.unit:
-                # A number typed into a row that declares a unit is in
-                # that unit. That is what declaring one is for, and it is
-                # how nearly every given on a sheet is written.
-                given = Quantity(typed.value, parse_powers(step.unit),
-                                 typed.error)
+                given = self._as_declared(step, typed)
                 self._is_a_given(name, given, formulas, givens)
                 return given, note, None
             if given_unit and step.unit and given_unit != step.unit:
@@ -276,8 +298,8 @@ class Sheet:
 
         declared = {name: sp.Symbol(name) for name in known}
         for other in self.steps:
-            declared.setdefault(canonical_name(other.name),
-                                sp.Symbol(canonical_name(other.name)))
+            other_name = canonical_name(subscripted(other.name))
+            declared.setdefault(other_name, sp.Symbol(other_name))
         declared.pop("", None)
         parsed = parse_input(text, extra_symbols=declared)
         expression = parsed.expr
@@ -288,7 +310,8 @@ class Sheet:
                          if s.name not in known)
         if unknown:
             later = [n for n in unknown
-                     if any(canonical_name(s.name) == n for s in self.steps)]
+                     if any(canonical_name(subscripted(s.name)) == n
+                            for s in self.steps)]
             hint = (" They are defined further down; a sheet reads downwards."
                     if later else "")
             raise ParseError(
@@ -334,6 +357,29 @@ class Sheet:
         formulas[name] = sp.Symbol(name)
         givens[name] = value
 
+    def _as_declared(self, step: SheetStep, typed: "Quantity"):
+        """A number typed into a row that declares a unit, in that unit.
+
+        That is what declaring a unit is for, and it is how nearly every
+        given on a sheet is written. The rule has to be the same whether
+        or not a tolerance was written on it - a bare 0.5 in a row saying
+        kg/s and 0.5 +/- 0.01 in the same row are the same statement, and
+        they used to go down different paths that disagreed: the first was
+        taken as kg/s and the second was refused for being a plain number.
+
+        Celsius is the exception, and it is the exception everywhere: an
+        offset rather than a scale, so labelling 20 as degC is not the
+        same as converting it. Left as a label the row held 20 kelvin,
+        showed it back as -253 C, and handed 20 kelvin to every row below.
+        """
+        if not typed.plain:
+            # It came with a unit of its own, so the row's job is to check
+            # it rather than to supply one.
+            return self._in_declared(step, typed, absolute=True)
+        if step.unit in unit_tools.CELSIUS:
+            return self._in_declared(step, typed, absolute=True)
+        return Quantity(typed.value, parse_powers(step.unit), typed.error)
+
     @staticmethod
     def _in_declared(step: SheetStep, answer: "Quantity",
                      absolute: bool | None = None) -> "Quantity":
@@ -349,8 +395,16 @@ class Sheet:
         if step.unit in unit_tools.CELSIUS and answer.plain:
             # A number typed into a row that says degC is a temperature in
             # degC, and is held as one.
-            return Quantity.of(answer.value + float(unit_tools.ABSOLUTE_ZERO),
-                               "K")
+            #
+            # The tolerance comes with it unchanged. A tolerance is a
+            # difference between two temperatures and a difference does
+            # not care where the scale starts, so 20 +/- 0.5 degC is
+            # 293.15 +/- 0.5 K - the same half kelvin. It was being
+            # dropped here, which silently turned a measurement into an
+            # exact number and took it out of the uncertainty sum.
+            moved = Quantity.of(answer.value
+                                + float(unit_tools.ABSOLUTE_ZERO), "K")
+            return Quantity(moved.value, moved.powers, answer.error)
         if step.unit in unit_tools.CELSIUS:
             # Held in kelvin; the row's own display turns it back. Asking
             # to_declared for it here would raise the ambiguity, and the
