@@ -932,7 +932,7 @@ nobody can find is not one.
         simultaneous_tab.py  units_tab.py
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 743 tests
+    tests/test_engicalc.py 767 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -990,7 +990,7 @@ them.
 
 ## Tests
 
-743 tests covering the parser (including that it refuses `__import__`), the
+767 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator

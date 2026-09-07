@@ -251,6 +251,13 @@ def main() -> None:
                  ("Re", "rho*v*d/mu", "", "Reynolds number")):
         sheet._add_widgets(*spec)
     sheet.calculate()
+    # The goal-seek bar with something in it. An empty one shows the
+    # controls; a filled one shows what they are for, and this is the
+    # picture that goes on the release page.
+    sheet.vary.set("d")
+    sheet.target.set("Re")
+    sheet.wanted.set("4000")
+    app.update_idletasks()
     grab(app, "sheet.png")
 
     # -- steam, with the chart --------------------------------------------
