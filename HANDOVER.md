@@ -23,8 +23,8 @@ Everything runs locally. No account, no network calls, no telemetry. Four pip
 dependencies: sympy, matplotlib, numpy, openpyxl. Tkinter and sqlite3 ship with
 Python.
 
-**Scale:** ~32,200 lines of Python across 104 modules. 229 formulas, 868
-variable slots, 679 tests.
+**Scale:** ~33,200 lines of Python across 106 modules. 229 formulas, 868
+variable slots, 717 tests.
 
 Still four pip dependencies. Everything added since 1.0 - the steam tables, the
 refrigerants, the material charts, the uncertainty propagation - is built on
@@ -160,11 +160,12 @@ likely to grow, so it was made the easiest part to extend.
    found two that were wrong. What is *not* done is the formula input grid:
    type mm into a field declared in m and nothing objects. That is the gap
    left of what used to be the largest one.
-2. **Periodic roots are principal in the solver and complete on the graph.**
-   `solve(sin(x) = 0)` still answers 0 and pi. The graph's read-off panel
-   walks solveset's ImageSet over the window instead, so it lists all seven
-   roots of a sine on [-10, 10] - see `plotting/readoff.py`. Doing the same
-   in the solver is the obvious next step and the machinery now exists.
+2. **Periodic roots are principal in the solver and complete everywhere
+   else.** `solve(sin(x) = 0)` still answers 0 and pi. The graph's read-off
+   panel and the optimiser both walk solveset's ImageSet over the range
+   instead, so a sine on [-10, 10] gives all seven roots - see
+   `core/roots.py`. Doing the same in `solve` is the obvious next step and
+   the machinery is now sitting in core waiting for it.
 3. **Four formulas have no closed-form rearrangement** for some variables:
    `heat_transfer.fin_efficiency` (for `m_f` and `L`), `geometry_maths.heron`
    (for `s`) and `geometry_maths.annuity_payment` (for `i`). They solve
@@ -225,13 +226,19 @@ Roughly by value per unit of effort.
    machines or with colleagues.
 8. ~~**Periodic root families** on the graph.~~ Done in the read-off panel.
    Doing the same in the solver and in the inequality ranges is issue 2.
-9. **CO2 (R744).** The third refrigerant everybody asks for, and the one the
-   shared Helmholtz machinery does not yet cover: Span-Wagner needs
-   non-analytic terms near the critical point, and a CO2 cycle is usually
-   transcritical, which the cycle tab assumes away.
-10. **Indexed variables and lookup tables.** `T[1]`, and a table callable from
-    an equation, which together are what a worksheet needs to describe a
-    multi-stage process rather than a single line of one.
+9. ~~**CO2 (R744).**~~ Done. Span-Wagner, with the three non-analytic
+   terms the shared Helmholtz machinery needed, and a transcritical cycle
+   with the gas cooler pressure optimised.
+10. ~~**Indexed variables and lookup tables.**~~ Done. `T[1]` is the same
+    name as `T_1`, and a worksheet row can be a table that later rows call.
+11. **The formula input grid does not check units** - see issue 1. It is
+    what is left of the units work, and the machinery it needs is all
+    written.
+12. **A worksheet cannot iterate.** A row cannot refer to itself or to one
+    below it, which is right for a sheet that reads downwards and is what
+    stops it doing a heat exchanger with an unknown outlet temperature.
+    Solving a small implicit set inside one row is the shape of the fix,
+    and `core.system` already does the solving.
 
 ---
 

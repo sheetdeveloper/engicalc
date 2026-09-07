@@ -860,6 +860,8 @@ nobody can find is not one.
       core/uncertainty.py  GUM propagation, by partial derivatives
       core/geometry.py     triangles, arcs and where two lines meet
       core/indices.py      material indices, derived from the job
+      core/roots.py        where something crosses zero, inside a range
+      core/co2.py          Span-Wagner, with the non-analytic terms
       core/curved.py       Winkler theory, where M y / I is not safe
       core/axial.py        stepped and composite bars, held and heated
       core/helmholtz.py    the equation of state the refrigerants share
@@ -888,7 +890,7 @@ nobody can find is not one.
         simultaneous_tab.py  units_tab.py
         calculator_tab.py  graph_tab.py  library_tab.py  cards_tab.py
         history_tab.py     widgets.py
-    tests/test_engicalc.py 679 tests
+    tests/test_engicalc.py 717 tests
     main.py                entry point
     run_engicalc.bat       Windows launcher
 
@@ -946,7 +948,7 @@ them.
 
 ## Tests
 
-679 tests covering the parser (including that it refuses `__import__`), the
+717 tests covering the parser (including that it refuses `__import__`), the
 engine, the formula library (every formula parses, declares its variables, and
 rearranges), the history store, the Excel export, plotting, the typeset
 rendering layer (every library formula, every pad symbol and every calculator
