@@ -406,6 +406,16 @@ class CalculatorTab(ttk.Frame):
                     blocks.append((f"Solution {index}", None, None))
                 for symbol, value in mapping.items():
                     blocks.append((None, sp.Eq(symbol, value), None))
+        elif result.operation in ("minimise", "maximise") and result.results:
+            # The answer is a pair. Drawing the value alone leaves out the
+            # half anybody asking this question wants: not how small it
+            # gets, but where.
+            blocks.append((
+                "Least value" if result.operation == "minimise"
+                else "Greatest value", result.results[0], None))
+            where = result.result_text.split(" at ", 1)
+            if len(where) == 2 and variable is not None:
+                blocks.append(("Where", None, "at " + where[1]))
         elif result.results:
             blocks.append(("Result", result.results[0], None))
             if result.numeric and isinstance(result.numeric[0], float):
