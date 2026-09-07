@@ -51,6 +51,33 @@ def material_picker(tab, parent, label: str = "Material"):
     return chosen
 
 
+def _hull(points: list) -> list:
+    """The convex hull of some points, anticlockwise.
+
+    Andrew's monotone chain: sort, then sweep once along the bottom and
+    once back along the top, dropping any point that turns the wrong way.
+    Twenty lines and no dependency, which is worth more here than the
+    generality of a library that would have to be installed.
+    """
+    ordered = sorted(set(points))
+    if len(ordered) < 3:
+        return ordered
+
+    def turn(one, two, three) -> float:
+        return ((two[0] - one[0]) * (three[1] - one[1])
+                - (two[1] - one[1]) * (three[0] - one[0]))
+
+    halves = []
+    for run in (ordered, list(reversed(ordered))):
+        side = []
+        for point in run:
+            while len(side) >= 2 and turn(side[-2], side[-1], point) <= 0:
+                side.pop()
+            side.append(point)
+        halves.append(side[:-1])
+    return halves[0] + halves[1]
+
+
 def _sideways_label(axes, label: str) -> None:
     """Name an axis across the margin rather than up the side of it.
 
@@ -73,6 +100,12 @@ class ChartTab(ttk.Frame):
 
     title = ""
     hint = ""
+
+    #: How the width is shared between the drawing and the numbers. Most
+    #: charts want a little more drawing than table; one that puts fifty
+    #: boxes on log axes wants a lot more.
+    CHART_WEIGHT = 5
+    RESULTS_WEIGHT = 3
 
     def __init__(self, master, app):
         super().__init__(master, padding=10)
@@ -122,12 +155,12 @@ class ChartTab(ttk.Frame):
         self.figure.patch.set_facecolor("white")
         self.canvas = FigureCanvasTkAgg(self.figure, master=chart)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
-        panes.add(chart, weight=5)
+        panes.add(chart, weight=self.CHART_WEIGHT)
 
         results = ttk.Labelframe(panes, text="Results", padding=6)
         self.table = ScrollFrame(results, height=260)
         self.table.pack(fill="both", expand=True)
-        panes.add(results, weight=3)
+        panes.add(results, weight=self.RESULTS_WEIGHT)
 
     def field(self, parent, label: str, value: str, unit: str = "",
               width: int = 10) -> tk.StringVar:
@@ -2116,6 +2149,19 @@ class MaterialsTab(ChartTab):
     hint = "properties on log axes, with a performance index laid across"
 
     NO_INDEX = "none - just the chart"
+    NOTHING = "nothing in particular"
+    AUTOMATIC = "as many as fit"
+    LABELS = (AUTOMATIC, "every one", "only the winners", "none")
+
+    #: How many boxes can carry a name before the names are worth less
+    #: than the chart under them. Past this, the automatic setting labels
+    #: only the ones that beat the line - which is the question being
+    #: asked anyway - and says that it has.
+    TOO_MANY_TO_LABEL = 34
+
+    #: The chart is what this tab is; the table beside it is a footnote.
+    CHART_WEIGHT = 7
+    RESULTS_WEIGHT = 2
 
     def build_form(self, parent) -> None:
         first = ttk.Frame(parent)
@@ -2166,6 +2212,58 @@ class MaterialsTab(ChartTab):
         self.written = ttk.Label(second, text="", style="Hint.TLabel")
         self.written.pack(side="left", padx=(12, 0))
 
+        third = ttk.Frame(parent)
+        third.pack(fill="x", pady=(6, 0))
+        ttk.Label(third, text="Show").pack(side="left")
+        # A tick per family. With fifty-two materials on log axes that
+        # span five decades, narrowing to the two families a job is
+        # actually choosing between is the difference between a chart and
+        # a cloud.
+        self.families = {}
+        for family in materials.FAMILIES:
+            wanted = tk.BooleanVar(value=True)
+            self.families[family] = wanted
+            ttk.Checkbutton(third, text=family, variable=wanted,
+                            command=self.refresh).pack(side="left", padx=2)
+        ttk.Button(third, text="all", width=4,
+                   command=lambda: self._families(True)).pack(side="left",
+                                                              padx=(8, 2))
+        ttk.Button(third, text="none", width=5,
+                   command=lambda: self._families(False)).pack(side="left")
+
+        fourth = ttk.Frame(parent)
+        fourth.pack(fill="x", pady=(6, 0))
+        ttk.Label(fourth, text="Label").pack(side="left")
+        self.labelling = tk.StringVar(value=self.LABELS[0])
+        box = ttk.Combobox(fourth, state="readonly", width=20,
+                           textvariable=self.labelling, values=self.LABELS)
+        box.pack(side="left", padx=(4, 14))
+        box.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+
+        ttk.Label(fourth, text="pick out").pack(side="left")
+        self.highlight = tk.StringVar(value=self.NOTHING)
+        self.highlight_box = ttk.Combobox(
+            fourth, state="readonly", width=26,
+            textvariable=self.highlight,
+            values=[self.NOTHING] + materials.names())
+        self.highlight_box.pack(side="left", padx=(4, 14))
+        self.highlight_box.bind("<<ComboboxSelected>>",
+                                lambda e: self.refresh())
+
+        self.only_better = tk.BooleanVar(value=False)
+        ttk.Checkbutton(fourth, text="only what beats the line",
+                        variable=self.only_better,
+                        command=self.refresh).pack(side="left", padx=2)
+        self.envelopes = tk.BooleanVar(value=True)
+        ttk.Checkbutton(fourth, text="family outlines",
+                        variable=self.envelopes,
+                        command=self.refresh).pack(side="left", padx=8)
+
+    def _families(self, wanted: bool) -> None:
+        for variable in self.families.values():
+            variable.set(wanted)
+        self.refresh()
+
     def _index_changed(self) -> None:
         """Picking an index sets the two axes it is about."""
         found = self._index()
@@ -2189,9 +2287,20 @@ class MaterialsTab(ChartTab):
     def _wanted(self) -> list:
         across, up = self._keys()
         grades = {"classes": False, "grades": True}.get(self.level.get())
-        return [material for material in materials.all_materials()
-                if material.has(across) and material.has(up)
-                and (grades is None or material.grade == grades)]
+        shown = [material for material in materials.all_materials()
+                 if material.has(across) and material.has(up)
+                 and (grades is None or material.grade == grades)
+                 and self.families.get(material.family,
+                                       tk.BooleanVar(value=True)).get()]
+        if self.only_better.get():
+            index = self._index()
+            through = materials.find(self.through.get())
+            if index and through is not None and index[1] == across \
+                    and index[2] == up:
+                wanted = materials.index_value(through, index)
+                shown = [m for m in shown
+                         if materials.index_value(m, index) >= wanted]
+        return shown
 
     def draw(self) -> tuple:
         across, up = self._keys()
@@ -2204,10 +2313,25 @@ class MaterialsTab(ChartTab):
         self.figure.clear()
         axes = self.figure.add_subplot(111)
         self._labels = []
-        for material in shown:
-            self._bubble(axes, material, across, up)
-
+        picked = materials.find(self.highlight.get())
         index = self._index()
+        beating = set()
+        if index and index[1] == across and index[2] == up:
+            through = materials.find(self.through.get())
+            if through is not None:
+                wanted = materials.index_value(through, index)
+                beating = {m.name for m in shown
+                           if materials.index_value(m, index) >= wanted}
+
+        self._labelling = self._how_to_label(len(shown), bool(beating))
+        if self.envelopes.get():
+            self._draw_families(axes, shown, across, up)
+        for material in shown:
+            self._bubble(axes, material, across, up,
+                         picked=picked is not None
+                         and material.name == picked.name,
+                         winner=material.name in beating)
+
         self.written.configure(text=index[5] if index else "")
         rows = []
         if index and index[1] == across and index[2] == up:
@@ -2233,7 +2357,8 @@ class MaterialsTab(ChartTab):
                     framealpha=0.85)
         return rows, self._notes(shown, across, up)
 
-    def _bubble(self, axes, material, across, up) -> None:
+    def _bubble(self, axes, material, across, up, picked: bool = False,
+                winner: bool = False) -> None:
         """One material, as the range it actually covers.
 
         A box rather than a point, because the range is the information. A
@@ -2250,12 +2375,94 @@ class MaterialsTab(ChartTab):
         colour = materials.FAMILIES.get(material.family, "#666666")
         axes.add_patch(Rectangle(
             (low_x, low_y), high_x - low_x, high_y - low_y,
-            facecolor=colour, edgecolor=colour, alpha=0.30, linewidth=1.0))
-        self._labels.append((material.name, (low_x * high_x) ** 0.5,
-                             (low_y * high_y) ** 0.5, colour))
+            facecolor=colour, edgecolor="#222222" if picked else colour,
+            alpha=0.55 if picked else 0.30,
+            linewidth=2.0 if picked else 1.0, zorder=4 if picked else 2))
+        if self._should_label(picked, winner):
+            self._labels.append((material.name, (low_x * high_x) ** 0.5,
+                                 (low_y * high_y) ** 0.5,
+                                 "#111111" if picked else colour))
 
-    #: How big a label is allowed to look, in points.
+    def _should_label(self, picked: bool, winner: bool) -> bool:
+        if picked:
+            return True                  # the one asked for, always
+        wanted = self._labelling
+        if wanted == "none":
+            return False
+        if wanted == "only the winners":
+            return winner
+        return True
+
+    def _how_to_label(self, showing: int, any_winners: bool) -> str:
+        """What the labelling setting comes to, for this many materials.
+
+        Left to itself, "every one" on fifty-two boxes is a page of names
+        with a chart somewhere underneath. The automatic setting draws
+        them all while they can be read and falls back to the ones that
+        beat the line when they cannot.
+        """
+        wanted = self.labelling.get()
+        if wanted != self.AUTOMATIC:
+            return wanted
+        if showing <= self.TOO_MANY_TO_LABEL:
+            return "every one"
+        return "only the winners" if any_winners else "none"
+
+    def _draw_families(self, axes, shown, across, up) -> None:
+        """An envelope round each family, behind everything else.
+
+        The thing an Ashby chart is actually read for is where the
+        families sit relative to each other - metals up here, polymers
+        down there, ceramics off to the right. On fifty boxes that shape
+        is easy to lose among the individual ones.
+
+        A hull round the corners rather than a bounding box. A box round
+        the polymers reaches from silicone to phenolic and from a
+        thousandth of a gigapascal to five, which is a rectangle covering
+        half the chart and saying nothing; the hull follows the family and
+        leaves the corners it does not occupy alone.
+
+        Taken in log space, because the axes are logarithmic - a hull of
+        the raw numbers would bulge in the wrong places on a chart that
+        spans seven decades.
+        """
+        for family, colour in materials.FAMILIES.items():
+            inside = [m for m in shown if m.family == family]
+            if len(inside) < 3:
+                continue
+            corners = []
+            for material in inside:
+                low_x, high_x = material.span(across)
+                low_y, high_y = material.span(up)
+                for x in (low_x, high_x):
+                    for y in (low_y, high_y):
+                        if x > 0 and y > 0:
+                            corners.append((math.log10(x), math.log10(y)))
+            hull = _hull(corners)
+            if len(hull) < 3:
+                continue
+            # Pushed out a little so the envelope sits outside the boxes
+            # it is drawn round rather than through them.
+            middle_x = sum(x for x, _y in hull) / len(hull)
+            middle_y = sum(y for _x, y in hull) / len(hull)
+            spread = 1.04
+            xs = [10 ** (middle_x + (x - middle_x) * spread)
+                  for x, _y in hull]
+            ys = [10 ** (middle_y + (y - middle_y) * spread)
+                  for _x, y in hull]
+            axes.fill(xs, ys, facecolor=colour, alpha=0.10, zorder=1)
+            axes.plot(xs + xs[:1], ys + ys[:1], color=colour, alpha=0.5,
+                      linewidth=1.0, zorder=1)
+
+    #: How big a label is allowed to look, in points - small when the
+    #: chart is crowded, and readable when it is not.
     LABEL_POINTS = 5.5
+    ROOMY_LABEL_POINTS = 7.5
+
+    @property
+    def label_points(self) -> float:
+        return (self.ROOMY_LABEL_POINTS if len(self._labels) <= 18
+                else self.LABEL_POINTS)
 
     def _spread_labels(self, axes) -> None:
         """Move the names apart until they can all be read.
@@ -2272,7 +2479,8 @@ class MaterialsTab(ChartTab):
             return
         to_screen = axes.transData.transform
         to_data = axes.transData.inverted().transform
-        wide = self.LABEL_POINTS * self.figure.dpi / 72.0
+        points = self.label_points
+        wide = points * self.figure.dpi / 72.0
         placed = [list(to_screen((x, y))) for _n, x, y, _c in self._labels]
         anchors = [tuple(spot) for spot in placed]
         sizes = [(0.56 * wide * len(name) + 2.0, wide + 2.0)
@@ -2315,7 +2523,7 @@ class MaterialsTab(ChartTab):
                 axes.plot([start[0], at[0]], [start[1], at[1]],
                           color=colour, linewidth=0.4, alpha=0.55,
                           zorder=2)
-            axes.annotate(name, at, fontsize=self.LABEL_POINTS, ha="center",
+            axes.annotate(name, at, fontsize=points, ha="center",
                           va="center", color=colour, zorder=3)
 
     def _draw_index(self, axes, index, shown) -> list:
@@ -2349,9 +2557,15 @@ class MaterialsTab(ChartTab):
         return rows
 
     def _notes(self, shown, across, up) -> list:
+        crowded = (getattr(self, "_labelling", "") == "only the winners"
+                   and self.labelling.get() == self.AUTOMATIC)
         said = [f"{len(shown)} materials, each drawn as the range it "
-                f"covers. A long box is a material whose grade has to be "
-                f"pinned down before the number is used."]
+                f"covers"
+                + (", and too many to name at once - only the ones above "
+                   "the line are named. Narrow it with the family ticks, "
+                   "or ask for every one." if crowded
+                   else ". A long box is a material whose grade has to be "
+                        "pinned down before the number is used.")]
         widest = max(shown, key=lambda m: m.spread(up))
         if widest.spread(up) > 3:
             said.append(
