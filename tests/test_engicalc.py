@@ -6261,6 +6261,17 @@ class TestCrossings(unittest.TestCase):
                         math.dist(point, centre) / radius, 1.0, places=9)
 
 
+def _inside(hull, point) -> bool:
+    """Is a point inside a convex polygon, or on its edge?"""
+    def turn(one, two, three):
+        return ((two[0] - one[0]) * (three[1] - one[1])
+                - (two[1] - one[1]) * (three[0] - one[0]))
+
+    signs = [turn(hull[i], hull[(i + 1) % len(hull)], point)
+             for i in range(len(hull))]
+    return all(s >= -1e-12 for s in signs) or all(s <= 1e-12 for s in signs)
+
+
 class TestMaterials(unittest.TestCase):
     """A table of numbers in a program has to justify itself.
 
@@ -6342,6 +6353,72 @@ class TestMaterials(unittest.TestCase):
                 self.assertIn(material.family, materials.FAMILIES)
                 self.assertTrue(material.source)
 
+    def test_the_chart_covers_the_ground_a_chart_has_to_cover(self):
+        from engicalc.core import materials
+
+        # A selection chart is only worth drawing if the answer might be
+        # somewhere unexpected, which means the unexpected has to be on
+        # it. Density runs a foam to tungsten, three decades; modulus a
+        # silicone to a carbide, nearly seven.
+        #
+        # The numbers below are what the data actually spans, less a
+        # little. Set to what it ought to span they would be a wish
+        # rather than a guard.
+        for prop, decades in (("density", 3.0), ("youngs", 6.5),
+                              ("yield", 3.0), ("conductivity", 4.0),
+                              ("uts", 5.0), ("toughness", 4.5)):
+            having = [m for m in materials.CLASSES if m.has(prop)]
+            with self.subTest(prop=prop):
+                low = min(m.span(prop)[0] for m in having)
+                high = max(m.span(prop)[1] for m in having)
+                self.assertGreater(math.log10(high / low), decades)
+
+    def test_every_family_has_enough_in_it_to_be_a_family(self):
+        from engicalc.core import materials
+
+        # An envelope is drawn round each one, and a family of two is a
+        # line rather than a shape.
+        for family in materials.FAMILIES:
+            inside = [m for m in materials.CLASSES if m.family == family]
+            with self.subTest(family=family):
+                self.assertGreaterEqual(len(inside), 3)
+
+    def test_wood_is_on_the_chart_both_ways_round(self):
+        from engicalc.core import materials
+
+        # Along the grain wood looks extraordinary and across it looks
+        # like a soft polymer. Putting only the first on the chart is
+        # putting the half that flatters it.
+        along = materials.find("Softwood, along the grain")
+        across = materials.find("Softwood, across the grain")
+        self.assertIsNotNone(across)
+        self.assertGreater(along.typical("youngs") / across.typical("youngs"),
+                           10.0)
+        # Same stuff, so the density is the same.
+        self.assertAlmostEqual(
+            along.typical("density") / across.typical("density"), 1.0,
+            delta=0.05)
+
+    def test_the_family_envelope_is_a_hull(self):
+        from engicalc.ui.charts_pane import _hull
+
+        # A square with a point inside it: the hull is the square.
+        square = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0),
+                  (0.5, 0.5)]
+        found = _hull(square)
+        self.assertEqual(4, len(found))
+        self.assertNotIn((0.5, 0.5), found)
+        # And every one of the original points is inside or on it.
+        for point in square:
+            with self.subTest(point=point):
+                self.assertTrue(_inside(found, point))
+
+    def test_a_hull_of_three_points_is_the_triangle(self):
+        from engicalc.ui.charts_pane import _hull
+
+        self.assertEqual(3, len(_hull([(0.0, 0.0), (2.0, 0.0), (1.0, 1.0),
+                                       (1.0, 0.5)])))
+
     def test_a_property_nobody_recorded_is_refused_rather_than_guessed(self):
         from engicalc.core import materials
 
@@ -6392,12 +6469,24 @@ class TestMaterials(unittest.TestCase):
         for better in ("Softwood, along the grain", "CFRP, quasi-isotropic"):
             self.assertLess(order.index(better), steel)
 
-        # And magnesium tops a light strong beam.
+        # And for a light strong beam the light metals and the fibre
+        # composites beat the heavy metals, which is the other result
+        # these charts are known for.
+        #
+        # Not "magnesium wins", which it did when there were half as many
+        # materials and stopped doing when an aluminium-silicon carbide
+        # composite was added. Whichever single material happens to be
+        # top is a fact about the list; that magnesium and titanium beat
+        # steel is a fact about the mechanics.
         strong = [i for i in materials.INDICES
                   if i[0] == "Light, strong beam"][0]
-        self.assertEqual(
-            materials.ranked(strong, grades=False)[0][1].name,
-            "Magnesium alloy")
+        order = [material.name for _v, material
+                 in materials.ranked(strong, grades=False)]
+        for lighter in ("Magnesium alloy", "Titanium alloy"):
+            for heavier in ("Carbon steel", "Cast iron", "Copper alloy"):
+                with self.subTest(lighter=lighter, heavier=heavier):
+                    self.assertLess(order.index(lighter),
+                                    order.index(heavier))
 
     def test_a_material_missing_a_property_scores_nothing(self):
         from engicalc.core import materials

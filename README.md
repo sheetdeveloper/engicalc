@@ -55,7 +55,7 @@ the area it measures shaded underneath and the working beside it.*
 | ![Truss](docs/screenshots/truss.png) | ![Pressure vessel](docs/screenshots/vessel.png) |
 | **Trusses** - every joint solved at once, ties red and struts blue | **Pressure vessels** - thin walled and thick, and where the two part |
 | ![Geometry](docs/screenshots/geometry.png) | ![Material chart](docs/screenshots/materials.png) |
-| **Geometry** - triangles, arcs and crossings, with both answers where there are two | **Material charts** - properties as ranges, with a selection line laid across |
+| **Geometry** - triangles, arcs and crossings, with both answers where there are two | **Material charts** - 52 of them, with family envelopes and a selection line |
 | ![Curved beam](docs/screenshots/curved.png) | ![Axial](docs/screenshots/axial.png) |
 | **Curved beams** - a hook or a clamp, where M y / I is not conservative | **Axial members** - stepped and composite bars, held at both ends and heated |
 | ![Worksheet](docs/screenshots/sheet.png) | ![Formula cards](docs/screenshots/formula_cards.png) |
@@ -469,11 +469,25 @@ to find. Ties red, struts blue, thickness by force. It states whether the
 frame is determinate before it solves it, and every joint balances to within
 a hundred-billionth of a newton.
 
-**Material charts.** Two properties on logarithmic axes, every material drawn
-as the range it actually covers rather than as a point, coloured by family,
-with a performance index laid across as a straight edge and everything above
-the edge better. The method is Ashby's; the data is assembled here from
-standards and manufacturers' figures, and each row says where it came from.
+**Material charts.** **52 materials** on logarithmic axes, each drawn as
+the range it actually covers rather than as a point, with an envelope round
+each family and a performance index laid across as a straight edge with
+everything above it better. The method is Ashby's; the data is assembled
+here from standards and manufacturers' figures, and each row says where it
+came from.
+
+Fifty-two is more than one screen can name at once, so the chart has the
+controls that make a crowded one usable: a tick per family, so you can
+narrow it to the two you are actually choosing between; a material picked
+out with a heavy edge; naming that falls back to only the ones above the
+line when there are too many, and says that it has; and an option to draw
+only what beats the line at all.
+
+They span what a selection chart has to span - three decades of density
+from a flexible foam to tungsten, nearly seven of modulus from a silicone
+to a carbide - and wood is on it **both ways round**, because along the
+grain it looks extraordinary and across it looks like a soft polymer, and
+putting only the first on is putting the half that flatters it.
 
 It is held at two levels because two different questions get asked. A class -
 "carbon steel" - carries wide ranges, because the class is that wide, and

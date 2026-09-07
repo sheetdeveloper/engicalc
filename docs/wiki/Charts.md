@@ -804,6 +804,46 @@ The method is Ashby's. The data is not: it is assembled here from material
 standards and manufacturers' figures, nothing is taken from a commercial
 materials database, and every row says where it came from.
 
+### Fifty-two of them, and how to read that many
+
+A selection chart is only worth drawing if the answer might be somewhere
+you did not expect, which means the unexpected has to be on it. So the
+materials here run from a flexible foam at 16 kg/m3 to tungsten at 19300,
+and from a silicone at a thousandth of a gigapascal to tungsten carbide at
+650 - three decades of density and nearly seven of stiffness.
+
+Each one is chosen because it sits somewhere the others do not. Splitting
+"copper alloy" into brass and bronze would put two more boxes on top of one
+that is already there; adding lead and tungsten puts one at each end of the
+density axis.
+
+Wood is on it **both ways round**. Along the grain it is one of the best
+things on a light stiff beam chart; across the grain it is a soft polymer.
+Both are the same material and the difference is a factor of fifteen in
+stiffness, so putting only the first on the chart is putting the half that
+flatters it.
+
+That many boxes is more than one screen can name, so the chart has the
+controls a crowded one needs:
+
+    family ticks         narrow it to the two families the job is
+                         actually choosing between
+    label                every one, only the ones above the line, none -
+                         or left to decide, which names them all while
+                         they can be read and falls back when they cannot
+    pick out             one material drawn with a heavy edge, wherever
+                         it is
+    only what beats      throw away everything below the line and redraw
+    the line             on what is left
+    family outlines      an envelope round each family
+
+The envelope is a hull round the corners of the boxes rather than a box
+round the family. A box round the polymers reaches from silicone to
+phenolic and from a thousandth of a gigapascal to five, which covers half
+the chart and says nothing; the hull follows the family and leaves the
+corners it does not occupy alone. Taken in log space, because the axes are
+logarithmic and a hull of the raw numbers would bulge in the wrong places.
+
 ### Two levels, because two questions get asked
 
 A **class** - "carbon steel", "aluminium alloy" - carries wide ranges,
@@ -854,7 +894,10 @@ third cellulose and two thirds air and lands at 0.82 - a third of the way
 into the band rather than outside it. Widening the band would have removed
 the check.
 
-Thirty-six materials, zero failures.
+Sixty-three materials, zero failures - and the check earns its keep. It
+caught two of these on the way in: zinc and lead both went down with a
+shear modulus that did not agree with the E and the Poisson's ratio beside
+it, by nine per cent and fifteen.
 
 ### Performance indices
 

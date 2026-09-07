@@ -299,6 +299,17 @@ def main() -> None:
                  rise="0", load="0")
     grab(app, "axial.png")
 
+    # The material chart narrowed to the two families a light structure is
+    # actually chosen between, which is how it is meant to be used - all
+    # six at once is a picture of the whole world and answers nothing.
+    ashby = app.graph_pane.charts["Material chart"]
+    app.graph_pane.tabs.select(ashby)
+    for family in ("ceramic", "composite", "natural", "foam"):
+        ashby.families[family].set(False)
+    ashby.highlight.set("Magnesium alloy")
+    ashby.refresh()
+    grab(app, "materials.png")
+
     for label, name in (("Stress and strain", "tensile.png"),
                         ("Section", "section.png"),
                         ("Motion", "motion.png"),
@@ -306,7 +317,7 @@ def main() -> None:
                         ("Columns", "columns.png"),
                         ("Stress state", "mohr.png"),
                         ("Truss", "truss.png"),
-                        ("Material chart", "materials.png"),
+
                         ("Moody", "moody.png")):
         app.graph_pane.tabs.select(app.graph_pane.charts[label])
         grab(app, name)
