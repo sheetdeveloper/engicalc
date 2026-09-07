@@ -82,8 +82,10 @@ class SheetTab(ttk.Frame):
         ttk.Button(title_row, text="New", command=self.new).pack(side="left")
         ttk.Button(title_row, text="Open...", command=self.open).pack(
             side="left", padx=4)
-        ttk.Button(title_row, text="Save as...", command=self.save_as).pack(
+        ttk.Button(title_row, text="Save", command=self.save_file).pack(
             side="left")
+        ttk.Button(title_row, text="Save as...", command=self.save_as).pack(
+            side="left", padx=4)
 
         # Packed before the scrolling table, so it keeps its height.
         # See TestActionRows.
@@ -290,6 +292,23 @@ class SheetTab(ttk.Frame):
         self.path = None
         self.calculate()
         self.status.configure(text="Reopened from history")
+
+    def save_file(self) -> None:
+        """Save the sheet where it came from, or ask where to put it.
+
+        What Ctrl+S means everywhere else. Going straight to Save as would
+        put a file dialog in front of somebody who has already told the
+        app where the file is.
+        """
+        if not self.path:
+            self.save_as()
+            return
+        try:
+            self._collect().save(self.path)
+        except Exception as exc:                       # noqa: BLE001
+            messagebox.showerror("Could not save", str(exc))
+            return
+        self.status.configure(text=f"Saved to {os.path.basename(self.path)}")
 
     def save_as(self) -> None:
         path = filedialog.asksaveasfilename(

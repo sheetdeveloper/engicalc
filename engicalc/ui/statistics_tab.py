@@ -108,12 +108,16 @@ class StatisticsTab(ttk.Frame):
         ttk.Button(buttons, text="Clear", command=self.clear).pack(side="left")
         panes.add(left, weight=2)
 
-        right = ttk.Frame(panes)
+        # A split the reader can drag rather than three blocks stacked with
+        # the chart getting the crumbs. Stacked, the summary and the
+        # trendline took their asked-for heights and the chart was left
+        # with ninety pixels and its axis labels cut off.
+        right = ttk.PanedWindow(panes, orient="vertical")
 
         self.summary = ttk.Labelframe(right, text="Summary", padding=6)
-        self.summary.pack(fill="x")
-        self.summary_body = ScrollFrame(self.summary, height=210)
+        self.summary_body = ScrollFrame(self.summary, height=120)
         self.summary_body.pack(fill="both", expand=True)
+        right.add(self.summary, weight=3)
 
         self.fit_frame = ttk.Labelframe(right, text="Trendline", padding=6)
         picker = ttk.Frame(self.fit_frame)
@@ -128,17 +132,18 @@ class StatisticsTab(ttk.Frame):
         self.fit_math = mathrender.MathLabel(self.fit_frame, fontsize=18,
                                              height=48)
         self.fit_math.pack(fill="x", pady=(4, 0))
-        self.fit_body = ScrollFrame(self.fit_frame, height=150)
+        self.fit_body = ScrollFrame(self.fit_frame, height=90)
         self.fit_body.pack(fill="both", expand=True)
 
         plot_frame = ttk.Labelframe(right, text="The data", padding=4)
-        plot_frame.pack(fill="both", expand=True, pady=(6, 0))
         self.figure = Figure(figsize=(4.8, 2.8), dpi=100)
         self.figure.patch.set_facecolor("white")
         self.axes = self.figure.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(self.figure, master=plot_frame)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
-        panes.add(right, weight=3)
+        self.plot_frame = plot_frame
+        right.add(plot_frame, weight=4)
+        panes.add(right, weight=4)
 
     # -- data -------------------------------------------------------------
     def paste(self) -> None:
@@ -234,7 +239,9 @@ class StatisticsTab(ttk.Frame):
 
         self.curve = self._chosen_curve()
         if self.curves:
-            self.fit_frame.pack(fill="x", pady=(6, 0), after=self.summary)
+            if str(self.fit_frame) not in self.fit_frame.master.panes():
+                self.fit_frame.master.insert(self.plot_frame, self.fit_frame,
+                                             weight=3)
             self._rows_into(self.fit_body, self._trend_rows())
             self._show_equation()
         else:

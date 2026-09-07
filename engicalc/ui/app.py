@@ -153,13 +153,92 @@ class EngiCalcApp(tk.Tk):
 
         help_menu = tk.Menu(menu, tearoff=0)
         help_menu.add_command(label="Symbols and syntax reference...",
-                              command=self.show_reference)
+                              command=self.show_reference, accelerator="F1")
+        help_menu.add_command(label="Keyboard shortcuts",
+                              command=self.show_shortcuts)
         help_menu.add_command(label="Quick syntax card", command=self.show_syntax)
         help_menu.add_command(label="Check for updates...",
                               command=self.check_for_updates)
         help_menu.add_command(label="About", command=self.show_about)
         menu.add_cascade(label="Help", menu=help_menu)
         self.configure(menu=menu)
+
+    # -- keys ---------------------------------------------------------
+    #: What a tab might call the thing its main button does. Tried in
+    #: order, first one found wins - the same list the number-format
+    #: refresh already walks, for the same reason.
+    DOES_THE_WORK = ("calculate", "compute", "convert", "replot", "solve",
+                     "refresh")
+
+    def _bind_keys(self) -> None:
+        """The shortcuts, on the window rather than on any one widget.
+
+        bind_all so they work wherever the caret is - the point of a
+        shortcut is not having to think about which box is focused.
+        """
+        for sequence, what in (
+                ("<Control-Return>", self.run_current),
+                ("<F5>", self.run_current),
+                ("<Control-s>", self.save_current),
+                ("<F1>", lambda e=None: self.show_reference()),
+                ("<Control-Next>", lambda e=None: self._step_tab(1)),
+                ("<Control-Prior>", lambda e=None: self._step_tab(-1))):
+            self.bind_all(sequence, what)
+        for number in range(1, 10):
+            self.bind_all(f"<Control-Key-{number}>",
+                          lambda e, n=number: self._go_to_tab(n - 1))
+
+    def current_tab(self):
+        """The tab actually on screen, following any sub-notebooks down.
+
+        The calculator, the graphs and the fluid properties are panes with
+        notebooks of their own, so the selected top tab is not the thing
+        with the Calculate button on it.
+        """
+        found = self.nametowidget(self.notebook.select())
+        while True:
+            inner = getattr(found, "tabs", None)
+            if not isinstance(inner, ttk.Notebook):
+                return found
+            try:
+                found = self.nametowidget(inner.select())
+            except Exception:                          # noqa: BLE001
+                return found
+
+    def run_current(self, _event=None) -> str:
+        """Do whatever the tab on screen calls its Calculate."""
+        tab = self.current_tab()
+        for name in self.DOES_THE_WORK:
+            doing = getattr(tab, name, None)
+            if callable(doing):
+                doing()
+                return "break"
+        return "break"
+
+    def save_current(self, _event=None) -> str:
+        """Save to history, or save the file where the tab has one."""
+        tab = self.current_tab()
+        # save_file where a tab has a file of its own and knows where it
+        # is; save_as where it has one and does not; save - to history -
+        # everywhere else.
+        for name in ("save_file", "save_as", "save"):
+            doing = getattr(tab, name, None)
+            if callable(doing):
+                doing()
+                return "break"
+        return "break"
+
+    def _go_to_tab(self, index: int) -> str:
+        pages = self.notebook.tabs()
+        if 0 <= index < len(pages):
+            self.notebook.select(pages[index])
+        return "break"
+
+    def _step_tab(self, by: int) -> str:
+        pages = list(self.notebook.tabs())
+        at = pages.index(self.notebook.select())
+        self.notebook.select(pages[(at + by) % len(pages)])
+        return "break"
 
     def _number_format_changed(self) -> None:
         """Apply the setting, then redraw whatever is already on screen."""
@@ -288,6 +367,7 @@ class EngiCalcApp(tk.Tk):
                           text="  Fluid properties  ")
         self.notebook.add(self.statistics_tab, text="  Data  ")
         self.notebook.add(self.history_tab, text="  History  ")
+        self._bind_keys()
 
         footer = ttk.Frame(self)
         footer.pack(fill="x", side="bottom")
@@ -399,11 +479,34 @@ class EngiCalcApp(tk.Tk):
     def show_syntax(self) -> None:
         messagebox.showinfo("Syntax", SYNTAX_HELP)
 
+    def show_shortcuts(self) -> None:
+        messagebox.showinfo("Keyboard shortcuts", SHORTCUTS)
+
     def on_close(self) -> None:
         try:
             self.history.close()
         finally:
             self.destroy()
+
+
+SHORTCUTS = """Keyboard shortcuts
+
+  Ctrl+Enter    work out whatever is on screen
+  F5            the same
+
+  Ctrl+S        save - to history, or to a file where the tab has one
+
+  Ctrl+1 .. 9   go to that tab along the top
+  Ctrl+PgDn     the next tab
+  Ctrl+PgUp     the one before
+
+  F1            symbols and syntax
+  Enter         in most boxes, works the answer out
+
+Ctrl+Enter finds the tab actually on screen and does whatever that tab's
+own button does, so it means Calculate on one, Go on another, and Plot on
+the graph - which is what it should mean.
+"""
 
 
 SYNTAX_HELP = """Input syntax

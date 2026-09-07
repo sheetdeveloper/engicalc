@@ -219,7 +219,12 @@ class MatrixTab(ttk.Frame):
         else:
             self.view.clear()
 
-        lines = [result.result_text, ""]
+        # The answer, then the same answer, then the working ending in the
+        # answer - three times over. The drawn one is the answer; the box
+        # below it is the working. It only carries the answer as text when
+        # the drawing could not hold it, which is the scalar results -
+        # a determinant or a rank is not a matrix to draw.
+        lines = [] if parts else [result.result_text, ""]
         if result.warnings:
             lines += ["! " + w for w in result.warnings] + [""]
         lines.append(result.steps_text())

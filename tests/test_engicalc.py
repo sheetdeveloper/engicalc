@@ -5418,6 +5418,145 @@ class TestTheLibraryBalances(unittest.TestCase):
         self.assertEqual(pid.variable("Ki").unit, "1/s")
 
 
+class TestTheWindow(unittest.TestCase):
+    """The window, rather than what it works out."""
+
+    def setUp(self):
+        import tempfile
+
+        from engicalc.ui.app import EngiCalcApp
+        self.app = EngiCalcApp(
+            db_path=os.path.join(tempfile.mkdtemp(), "keys.db"))
+        self.app.geometry("1280x820")
+        self.app.update_idletasks()
+
+    def tearDown(self):
+        self.app.destroy()
+
+    def test_the_tab_on_screen_is_found_through_the_panes(self):
+        # Three of the top tabs are panes with notebooks of their own, so
+        # the selected top tab is not the thing with the button on it.
+        from engicalc.ui.charts_pane import BeamTab
+        from engicalc.ui.graph_tab import GraphTab
+        from engicalc.ui.statistics_tab import StatisticsTab
+
+        self.app.notebook.select(self.app.graph_pane)
+        self.app.update_idletasks()
+        self.assertIsInstance(self.app.current_tab(), GraphTab)
+
+        self.app.graph_pane.tabs.select(self.app.graph_pane.charts["Beam"])
+        self.app.update_idletasks()
+        self.assertIsInstance(self.app.current_tab(), BeamTab)
+
+        self.app.notebook.select(self.app.statistics_tab)
+        self.app.update_idletasks()
+        self.assertIsInstance(self.app.current_tab(), StatisticsTab)
+
+    def test_every_tab_has_something_for_the_run_key_to_call(self):
+        # Ctrl+Enter is only worth having if it does something wherever
+        # you press it.
+        for page in self.app.notebook.tabs():
+            self.app.notebook.select(page)
+            self.app.update_idletasks()
+            tab = self.app.current_tab()
+            with self.subTest(tab=type(tab).__name__):
+                self.assertTrue(
+                    any(callable(getattr(tab, name, None))
+                        for name in self.app.DOES_THE_WORK),
+                    f"{type(tab).__name__} has no calculate to bind to")
+
+    def test_the_run_key_actually_runs_it(self):
+        self.app.notebook.select(self.app.statistics_tab)
+        self.app.update_idletasks()
+        self.app.statistics_tab.status.configure(text="")
+        self.app.run_current()
+        self.assertTrue(self.app.statistics_tab.status.cget("text"))
+
+    def test_the_tab_keys_move_between_tabs(self):
+        self.app._go_to_tab(0)
+        first = self.app.notebook.select()
+        self.app._step_tab(1)
+        self.assertNotEqual(self.app.notebook.select(), first)
+        self.app._step_tab(-1)
+        self.assertEqual(self.app.notebook.select(), first)
+        # And it wraps rather than stopping at the end.
+        self.app._step_tab(-1)
+        self.assertEqual(self.app.notebook.select(),
+                         self.app.notebook.tabs()[-1])
+
+    def test_the_shortcuts_are_bound_and_written_down(self):
+        from engicalc.ui.app import SHORTCUTS
+
+        for sequence in ("<Control-Return>", "<F5>", "<Control-s>", "<F1>",
+                         "<Control-Key-1>"):
+            with self.subTest(sequence=sequence):
+                self.assertTrue(self.app.bind_all(sequence),
+                                f"{sequence} is not bound")
+        for said in ("Ctrl+Enter", "Ctrl+S", "F1", "Ctrl+1"):
+            self.assertIn(said, SHORTCUTS)
+
+    def test_a_long_expression_shrinks_rather_than_being_cut_off(self):
+        from engicalc.ui import mathrender
+
+        # A cubic trendline is wide. Rendered at its asked-for size it ran
+        # off the right and the last term was simply not on screen, with
+        # nothing to say a term was missing.
+        label = mathrender.MathLabel(self.app, fontsize=18, height=48)
+        label.pack()
+        self.app.update_idletasks()
+        label._latex = ("y = -2.77778 \\cdot 10^{-7} x^{3} + 1.42857 "
+                        "\\cdot 10^{-5} x^{2} + 0.0198373 x + 0.00238095")
+        roomy = label._fitted(2000, 200)
+        squeezed = label._fitted(700, 60)
+        floored = label._fitted(120, 60)
+        # Given room it draws at the size it was asked for.
+        self.assertGreater(roomy.width(), 700)
+        # Given less it comes down to fit, in one step rather than
+        # stepping down a point at a time.
+        self.assertLessEqual(squeezed.width(), 700)
+        # And it stops at a size somebody could still read. Past that it
+        # clips and the window has to be widened - which is a decision,
+        # not an accident, and is why there is a floor at all.
+        self.assertGreaterEqual(floored.width(), squeezed.width() * 0.3)
+        label.destroy()
+
+
+class TestTheWorking(unittest.TestCase):
+    """How a step reads once it is more than one line."""
+
+    def test_every_line_of_a_step_is_indented_not_only_the_first(self):
+        from engicalc.core.steps import Step
+
+        step = Step("Solution", detail="x1 = 2\nx2 = 3\nx3 = -1")
+        lines = step.text().split("\n")
+        self.assertEqual(lines[0], "Solution")
+        for line in lines[1:]:
+            with self.subTest(line=line):
+                self.assertTrue(line.startswith(Step.INDENT), line)
+
+    def test_a_blank_line_is_left_blank(self):
+        from engicalc.core.steps import Step
+
+        step = Step("Two parts", detail="first\n\nsecond")
+        self.assertIn("\n\n", step.text())
+
+    def test_the_matrix_answer_is_given_once(self):
+        # It was drawn, then written out again above the working, then
+        # written a third time as the working's last step.
+        import tempfile
+
+        from engicalc.ui.app import EngiCalcApp
+        app = EngiCalcApp(db_path=os.path.join(tempfile.mkdtemp(), "m.db"))
+        try:
+            app.update_idletasks()
+            app.matrix_tab.compute()
+            app.update_idletasks()
+            working = app.matrix_tab.working.get("1.0", "end")
+            self.assertEqual(working.count("x1 = 2"), 1)
+        finally:
+            app.destroy()
+
+
 class TestQuantities(unittest.TestCase):
     """A number that knows what it measures.
 

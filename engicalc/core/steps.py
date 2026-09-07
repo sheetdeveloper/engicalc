@@ -34,13 +34,28 @@ class Step:
         """What to typeset for this step."""
         return self.latex or self.expr
 
+    #: What a step's body is set in from its title.
+    INDENT = "    "
+
     def text(self) -> str:
         parts = [self.title]
         if self.expr is not None:
-            parts.append(f"    {fmt(self.expr)}")
+            parts.append(_set_in(fmt(self.expr)))
         if self.detail:
-            parts.append(f"    {self.detail}")
+            parts.append(_set_in(self.detail))
         return "\n".join(parts)
+
+
+def _set_in(text: str) -> str:
+    """Indent every line, not only the first.
+
+    A matrix and a set of solved values are several lines, and prefixing
+    the string put four spaces on the first of them and none on the rest -
+    so a solution read as one line indented and two flush left, which
+    looks like two different things rather than one.
+    """
+    return "\n".join(Step.INDENT + line if line.strip() else line
+                     for line in str(text).split("\n"))
 
 
 def _pretty(expr) -> str:

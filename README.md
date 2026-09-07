@@ -692,6 +692,24 @@ Three exports:
 
 ---
 
+## Keyboard
+
+    Ctrl+Enter    work out whatever is on screen
+    F5            the same
+    Ctrl+S        save - to history, or to a file where the tab has one
+    Ctrl+1 .. 9   go to that tab along the top
+    Ctrl+PgDn     the next tab, Ctrl+PgUp the one before
+    F1            symbols and syntax
+    Enter         in most boxes, works the answer out
+
+Ctrl+Enter finds the tab actually on screen - following into the sub-tabs
+of the calculator, the graphs and the fluid properties - and does whatever
+that tab's own button does. So it means Calculate on one, Go on another and
+Plot on the graph, which is what it should mean.
+
+They are on **Help -> Keyboard shortcuts** as well, because a shortcut
+nobody can find is not one.
+
 ## Layout
 
     engicalc/

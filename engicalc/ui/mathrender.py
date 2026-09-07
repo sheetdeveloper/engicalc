@@ -196,6 +196,31 @@ class MathLabel(ttk.Frame):
         self._fallback = ""
         self.canvas.delete("all")
 
+    def _fitted(self, room: int, tall: int):
+        """The expression drawn at a size that fits the box it is in.
+
+        Rendered once at the size asked for, and again smaller if it did
+        not fit - scaled by how much it overran, so one retry lands rather
+        than stepping down a point at a time. A cubic trendline is what
+        turned this up: rendered at its asked-for size it ran off the
+        right and the last term was simply not on screen.
+        """
+        drawn = photo(self._latex, self.fontsize, self.colour)
+        if room < 40 or tall < 12:
+            return drawn                       # not laid out yet
+        over = max(drawn.width() / room, drawn.height() / tall)
+        if over <= 1.0:
+            return drawn
+        smaller = max(self.SMALLEST, int(self.fontsize / over))
+        if smaller >= self.fontsize:
+            return drawn
+        return photo(self._latex, smaller, self.colour)
+
+    #: How small the type may get to fit an expression in. Past this the
+    #: reader would need a magnifier, so it is better to clip and let them
+    #: widen the window.
+    SMALLEST = 8
+
     def _place(self) -> None:
         self.canvas.delete("all")
         if not self._latex:
@@ -204,7 +229,7 @@ class MathLabel(ttk.Frame):
         height = max(self.canvas.winfo_height(), 1)
         x = 8 if self.anchor == "w" else width / 2
         try:
-            self._image = photo(self._latex, self.fontsize, self.colour)
+            self._image = self._fitted(width - 16, height - 4)
             self.canvas.create_image(x, height / 2, image=self._image,
                                      anchor="w" if self.anchor == "w" else "center")
         except Exception:  # noqa: BLE001 - never let a display issue break a result

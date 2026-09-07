@@ -121,8 +121,13 @@ class InterpolateTab(ttk.Frame):
         ttk.Button(direction, text="Go", style="Accent.TButton",
                    command=self.compute).pack(side="left", padx=(8, 0))
 
-        answer = ttk.Labelframe(right, text="Answer", padding=6)
-        answer.pack(fill="both", expand=True, pady=(6, 0))
+        # A split the reader can drag. Stacked, the answer and the working
+        # took their asked-for heights and the chart was left with a
+        # hundred and twenty pixels under four hundred and fifty of blank.
+        below = ttk.PanedWindow(right, orient="vertical")
+        below.pack(fill="both", expand=True, pady=(6, 0))
+
+        answer = ttk.Labelframe(below, text="Answer", padding=6)
         self.answer_math = mathrender.MathLabel(answer, fontsize=20, height=54)
         self.answer_math.pack(fill="x")
 
@@ -147,14 +152,16 @@ class InterpolateTab(ttk.Frame):
         self.working = ReadOnlyText(self.steps_holder, height=9)
         self.steps_math.pack(fill="both", expand=True)
 
-        plot_frame = ttk.Labelframe(right, text="The data", padding=4)
-        plot_frame.pack(fill="both", expand=True, pady=(6, 0))
+        below.add(answer, weight=3)
+
+        plot_frame = ttk.Labelframe(below, text="The data", padding=4)
         self.figure = Figure(figsize=(4.6, 2.6), dpi=100)
         self.figure.patch.set_facecolor("white")
         self.axes = self.figure.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(self.figure, master=plot_frame)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
-        panes.add(right, weight=3)
+        below.add(plot_frame, weight=4)
+        panes.add(right, weight=4)
 
         self._sync()
 
