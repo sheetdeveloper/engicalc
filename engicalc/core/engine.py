@@ -285,6 +285,12 @@ def _roots(text, expr, variable) -> CalcResult:
     return res
 
 
+#: What to call the second step of a rewrite. Spelt out, because
+#: "simplify" + "d" is "Simplifyd".
+REWRITTEN = {"simplify": "Simplified", "expand": "Expanded",
+             "factor": "Factorised"}
+
+
 def _rewrite(text, expr, operation) -> CalcResult:
     func = {"simplify": sp.simplify, "expand": sp.expand, "factor": sp.factor}[operation]
     if isinstance(expr, sp.Eq):
@@ -295,7 +301,7 @@ def _rewrite(text, expr, operation) -> CalcResult:
                      results=[out], result_text=_fmt(out), plottable=True)
     res.latex = sp.latex(out)
     res.steps = [steps_mod.Step("Input", expr=expr),
-                 steps_mod.Step(operation.capitalize() + "d", expr=out)]
+                 steps_mod.Step(REWRITTEN[operation], expr=out)]
     res.numeric = [_to_float(out)] if not out.free_symbols else []
     return res
 
