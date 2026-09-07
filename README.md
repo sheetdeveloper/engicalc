@@ -671,6 +671,28 @@ go together.
 and underneath, the thing actually worth knowing: **Q accounts for 86% of
 that, so measuring anything else better would buy almost nothing.**
 
+**Stages get subscripts.** `T[1]`, `T[2]`, `h[3]` - because `T1` reads to
+the parser as T times 1 and quietly works out something else, and `T_1`
+works but reads like a filename. `T[1]` and `T_1` are the *same name*, the
+way `rho` and its Greek letter are, and the typeset display draws it as T
+with a subscript.
+
+**A row can be a table.** Engineering runs on tabulated data, and the
+alternative to putting it on the sheet is fitting a polynomial to it and
+then pretending that is the data:
+
+    k       table in deg: 15, 0.35; 30, 0.60; 45, 0.95; 60, 1.40
+    theta   38                     deg
+    dp      k(theta)*rho*v^2/2     Pa       1247.29 +/- 61.31
+
+The argument is an ordinary expression, so `k(theta)` and `k(2*d + 5 mm)`
+both mean what they look like, and `table in mm` lets a table tabulated in
+millimetres be asked about a length in metres. Between the rows it
+interpolates linearly; past the ends it **refuses**, because a straight
+line between two measurements is a defensible guess and a reading taken off
+the end of a manufacturer's curve is how a number nobody can defend gets
+into a calculation.
+
 Each measurement is counted **once**, however many rows it reached the
 answer through. In that sheet the bore is in the Reynolds number twice -
 directly, and through the area - and giving each row an uncertainty and

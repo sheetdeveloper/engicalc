@@ -71,6 +71,77 @@ def subscripted(text: str) -> str:
     """
     return INDEX.sub(r"\1_\2", str(text or ""))
 
+#: A row that is a table of numbers rather than a value:
+#:
+#:     table: 15, 0.35; 30, 0.60; 45, 0.95
+#:     table in mm: 10, 1.2; 20, 1.5
+#:
+#: The second form says what the x column is in, so a later row can call
+#: it with a length in metres and be understood.
+TABLE = re.compile(r"^\s*table\s*(?:\bin\s+(?P<unit>[^:]+?)\s*)?:"
+                   r"\s*(?P<body>.+)$", re.IGNORECASE | re.DOTALL)
+
+#: A call to one: ``k(30)``, ``k(theta/2)``.
+CALL = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+@dataclass
+class Lookup:
+    """A table of numbers that a row can be asked a question of.
+
+    Engineering runs on tabulated data - a k-factor against a bend angle,
+    a correction against a diameter, a curve off a manufacturer's sheet -
+    and the alternative to putting one on the sheet is fitting a
+    polynomial to it and pretending that is the data.
+
+    Between the rows it interpolates linearly and past the ends it
+    refuses. A table is a set of measurements, and the straight line
+    between two of them is a defensible guess where the line beyond the
+    last one is not; a reading taken off the end of a manufacturer's
+    curve is how a number nobody can defend gets into a calculation.
+    """
+
+    table: object                # interpolate.Table
+    x_unit: str = ""
+    y_unit: str = ""
+
+    def at(self, x) -> float:
+        """What the table says at *x*, which may carry a unit."""
+        from . import interpolate
+
+        if hasattr(x, "value"):
+            wanted = self._plain(x)
+        else:
+            wanted = float(x)
+        low, high = self.table.span
+        if not low <= wanted <= high:
+            raise ParseError(
+                f"The table runs from {low:g} to {high:g}"
+                + (f" {self.x_unit}" if self.x_unit else "")
+                + f", and {wanted:g} is outside it. A straight line between "
+                  f"two measurements is a defensible guess; past the last "
+                  f"one it is not.")
+        return float(interpolate.interpolate(self.table, wanted).numeric[0])
+
+    def _plain(self, quantity) -> float:
+        """The argument as a plain number in the table's own x unit."""
+        if self.x_unit:
+            return float(quantity.to(self.x_unit).value)
+        if not quantity.plain:
+            raise ParseError(
+                f"This table is a table of plain numbers, and it is being "
+                f"asked about {quantity.unit}. Say what the first column "
+                f"is in - 'table in {quantity.unit}: ...' - or take the "
+                f"unit off what it is being asked.")
+        return float(quantity.value)
+
+    def describe(self) -> str:
+        low, high = self.table.span
+        unit = f" {self.x_unit}" if self.x_unit else ""
+        return (f"a table of {len(self.table)} points, "
+                f"x from {low:g} to {high:g}{unit}")
+
+
 #: How big a row's expression may get, written back out in terms of the
 #: measurements, before the tolerances stop being worked out.
 #:
@@ -118,6 +189,9 @@ class StepResult:
     #: and which input put most of that in. None where no tolerance was
     #: given anywhere above.
     spread: object = None
+    #: Set when the row is a table rather than a value. It has no single
+    #: number, so it has no value and says what it holds instead.
+    table: object = None
 
     @property
     def ok(self) -> bool:
@@ -131,6 +205,8 @@ class StepResult:
     def text(self) -> str:
         if not self.ok:
             return f"{self.step.name}: {self.error}"
+        if self.table is not None:
+            return f"{self.step.name} - {self.table.describe()}"
         shown = fmt_number(self.value) if getattr(self.value, "is_number",
                                                   False) else fmt(self.value)
         if self.spread is not None and self.spread.known:
@@ -166,6 +242,7 @@ class Sheet:
     def evaluate(self) -> list:
         """Work down the sheet, carrying each answer into the next step."""
         known: dict = {}
+        tables: dict = {}
         results: list = []
         seen: set = set()
         # Each row's expression, written out in terms of the rows that
@@ -201,9 +278,23 @@ class Sheet:
                 result.error = "This line has no expression."
                 continue
 
+            # A table has no single value, so it goes no further down the
+            # ordinary path - it is something later rows can ask, rather
+            # than something with a number in it.
+            written = TABLE.match(step.expression)
+            if written:
+                try:
+                    tables[name] = self._read_table(written, step)
+                except ParseError as exc:
+                    result.error = str(exc)
+                    continue
+                result.table = tables[name]
+                result.note = tables[name].describe()
+                continue
+
             try:
                 value, note, spread = self._evaluate_step(
-                    step, known, formulas, givens, index)
+                    step, known, formulas, givens, index, tables)
             except ParseError as exc:
                 result.error = str(exc)
                 continue
@@ -237,9 +328,112 @@ class Sheet:
 
         return results
 
+    def _ask_the_tables(self, text: str, tables: dict, known: dict,
+                        tag: str = "") -> tuple:
+        """Replace every ``k(30)`` with a name holding what k says at 30.
+
+        Innermost first, so a table asked about another table's answer
+        works - by the time the outer call is looked at, the inner one is
+        already a number.
+
+        The argument is worked out with the same machinery the row itself
+        uses, so it can be any expression of the rows above: ``k(theta/2)``
+        and ``k(2*d + 5 mm)`` both mean what they look like.
+        """
+        if not tables:
+            return text, {}
+        found: dict = {}
+        while True:
+            spot = self._innermost_call(text, tables)
+            if spot is None:
+                return text, found
+            start, stop, name, argument = spot
+            answer = tables[name].at(self._value_of(argument, known, tables))
+            label = f"_table{tag}_{len(found)}"
+            found[label] = Quantity.of(answer, tables[name].y_unit or "")
+            text = text[:start] + label + text[stop:]
+
+    @staticmethod
+    def _innermost_call(text: str, tables: dict):
+        """The first table call with no table call inside it.
+
+        Returns (start, stop, name, argument) or None. Brackets are
+        counted rather than matched by a pattern, because an argument may
+        have brackets of its own and a regular expression cannot see that.
+        """
+        best = None
+        for match in CALL.finditer(text):
+            name = match.group(1)
+            if name not in tables:
+                continue
+            depth, at = 0, match.end() - 1
+            while at < len(text):
+                if text[at] == "(":
+                    depth += 1
+                elif text[at] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                at += 1
+            if depth != 0:
+                raise ParseError(f"{name}( is never closed.")
+            argument = text[match.end():at]
+            inside = any(other in argument for other in tables)
+            if not inside:
+                return (match.start(), at + 1, name, argument)
+            best = best or True
+        if best:
+            raise ParseError("A table call could not be worked out.")
+        return None
+
+    def _value_of(self, text: str, known: dict, tables: dict):
+        """One expression, worked out against the rows already defined.
+
+        The argument of a table call is an ordinary expression and gets
+        ordinary treatment - the units in it are lifted, the names above
+        it are substituted, and what comes back carries a unit so the
+        table can be told what it is being asked about.
+        """
+        text = text.strip()
+        if not text:
+            raise ParseError("A table was asked about nothing.")
+        lifted, literals = dimensional.lift_units(text, known, "_arg")
+        wider = dict(known)
+        wider.update(literals)
+        declared = {one: sp.Symbol(one) for one in wider}
+        parsed = parse_input(lifted, extra_symbols=declared)
+        expression = parsed.expr
+        if isinstance(expression, sp.Eq):
+            expression = expression.rhs
+        missing = sorted(one.name for one in expression.free_symbols
+                         if one.name not in wider)
+        if missing:
+            raise ParseError(
+                "Nothing here defines " + ", ".join(missing)
+                + " - and it is what a table is being asked about.")
+        return dimensional.walk(expression, wider).tidy()
+
+    @staticmethod
+    def _read_table(written, step: SheetStep) -> "Lookup":
+        """One table row, from ``table: 15, 0.35; 30, 0.6``.
+
+        Semicolons become line breaks first. The table reader takes two
+        numbers a line and ignores the rest of the line, which on a
+        worksheet - where the whole table is typed into one box - would
+        quietly keep the first pair and drop every other one.
+        """
+        from . import interpolate
+
+        body = written.group("body").replace(";", "\n")
+        found = interpolate.parse_table(body)
+        x_unit = (written.group("unit") or "").strip()
+        if x_unit:
+            Quantity.of(1.0, x_unit)          # raises if it is not a unit
+        return Lookup(found, x_unit, step.unit)
+
     def _evaluate_step(self, step: SheetStep, known: dict,
                        formulas: dict = None, givens: dict = None,
-                       index: int = 0):
+                       index: int = 0, tables: dict = None):
         """One step, against the names defined above it.
 
         Returns ``(answer, note, spread)``: the answer as a
@@ -291,10 +485,20 @@ class Sheet:
         # 2 m + 300 mm - is pulled out and given a name, so what is left
         # is ordinary algebra. A row name always wins over a unit of the
         # same spelling.
+        # A table call is answered before anything else looks at the
+        # line, and what it answered becomes a number with a unit on it -
+        # the same treatment a literal like "5 K" gets, and for the same
+        # reason: what is left is then ordinary algebra.
+        tables = tables or {}
+        text, looked_up = self._ask_the_tables(text, tables, known,
+                                               f"_{index}")
+
         text, literals = dimensional.lift_units(text, known, f"_{index}")
         known = dict(known)
         known.update(literals)
+        known.update(looked_up)
         givens.update({key: one for key, one in literals.items()})
+        givens.update(looked_up)
 
         declared = {name: sp.Symbol(name) for name in known}
         for other in self.steps:
@@ -309,6 +513,13 @@ class Sheet:
         unknown = sorted(s.name for s in expression.free_symbols
                          if s.name not in known)
         if unknown:
+            uncalled = [n for n in unknown if n in tables]
+            if uncalled:
+                raise ParseError(
+                    ", ".join(uncalled) + (" is a table" if len(uncalled) == 1
+                                           else " are tables")
+                    + ", which has no one value - ask it for one, as "
+                    + f"{uncalled[0]}(x).")
             later = [n for n in unknown
                      if any(canonical_name(subscripted(s.name)) == n
                             for s in self.steps)]
@@ -478,6 +689,15 @@ def blocks_for(sheet: Sheet, results: list) -> list:
         heading = step.name + (f"  [{unit}]" if unit else "")
         if not result.ok:
             rows.append((heading, None, "! " + result.error))
+            continue
+        if result.table is not None:
+            # A table has no equation to draw. What is worth putting in
+            # the report is the table itself, so the row shows what it
+            # holds and how far it reaches.
+            rows.append((heading, None,
+                         step.expression
+                         + (f"   -   {step.note}" if step.note else "")
+                         + f"   ({result.table.describe()})"))
             continue
         try:
             drawn = sp.Eq(sp.Symbol(step.name), sp.sympify(result.value),

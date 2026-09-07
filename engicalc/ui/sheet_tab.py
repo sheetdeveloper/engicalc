@@ -218,7 +218,10 @@ class SheetTab(ttk.Frame):
                 break
             result = self.results[index]
             index += 1
-            if result.ok:
+            if result.ok and result.table is not None:
+                answer.configure(text=result.table.describe(),
+                                 foreground=theme.colours()["muted"])
+            elif result.ok:
                 answer.configure(text=result.text().split(" = ", 1)[-1],
                                  foreground=theme.colours()["accent"])
             else:

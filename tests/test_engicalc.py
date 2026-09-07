@@ -9386,3 +9386,124 @@ class TestWhatANumberInARowMeans(unittest.TestCase):
         self.assertTrue(got.error)
         self.assertIn("kg", got.error)
 
+
+class TestTablesOnASheet(unittest.TestCase):
+    """Engineering runs on tabulated data.
+
+    A k-factor against a bend angle, a correction against a diameter, a
+    curve off a manufacturer's sheet. The alternative to putting one on
+    the sheet is fitting a polynomial to it and then pretending that is
+    the data.
+    """
+
+    K = "table: 15, 0.35; 30, 0.60; 45, 0.95; 60, 1.40"
+
+    def _run(self, *rows):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        for row in rows:
+            sheet.add(*row)
+        return sheet.evaluate()
+
+    def _values(self, results):
+        found = {}
+        for result in results:
+            self.assertFalse(result.error,
+                             f"{result.step.name}: {result.error}")
+            if result.table is None:
+                found[result.step.name] = float(result.value)
+        return found
+
+    def test_a_row_can_be_a_table_and_a_later_row_can_ask_it(self):
+        got = self._run(("k", self.K, "-"),
+                        ("theta", "38", "-"),
+                        ("f", "k(theta)", "-"))
+        values = self._values(got)
+        # Straight between (30, 0.60) and (45, 0.95).
+        self.assertAlmostEqual(0.60 + (8.0 / 15.0) * 0.35, values["f"],
+                               places=9)
+        self.assertIsNotNone(got[0].table)
+        self.assertIsNone(got[0].value)
+        self.assertIn("4 points", got[0].text())
+
+    def test_the_argument_is_an_expression_like_any_other(self):
+        values = self._values(self._run(
+            ("k", self.K, "-"),
+            ("theta", "38", "-"),
+            ("both", "k(theta) + k(2*theta - 46)", "-")))
+        self.assertAlmostEqual(0.60 + (8.0 / 15.0) * 0.35 + 0.60,
+                               values["both"], places=9)
+
+    def test_a_table_can_say_what_its_first_column_is_in(self):
+        """So it can be asked about a length in metres and understand."""
+        values = self._values(self._run(
+            ("corr", "table in mm: 10, 1.2; 20, 1.5; 40, 1.9", "-"),
+            ("d", "0.025", "m"),
+            ("f", "corr(d)", "-")))
+        # 25 mm, a quarter of the way from 20 to 40.
+        self.assertAlmostEqual(1.5 + 0.25 * 0.4, values["f"], places=9)
+
+    def test_the_answer_takes_the_tables_own_unit(self):
+        values = self._values(self._run(
+            ("loss", "table in mm: 10, 200; 20, 500", "Pa"),
+            ("d", "15", "mm"),
+            ("total", "2*loss(d)", "Pa")))
+        self.assertAlmostEqual(700.0, values["total"], places=9)
+
+    def test_past_the_end_of_the_table_it_refuses(self):
+        """A straight line between two measurements is a defensible
+        guess. Past the last one it is not, and a reading taken off the
+        end of a manufacturer's curve is how an indefensible number gets
+        into a calculation."""
+        got = self._run(("k", self.K, "-"), ("bad", "k(80)", "-"))
+        self.assertTrue(got[1].error)
+        self.assertIn("outside it", got[1].error)
+
+    def test_asking_a_plain_table_about_something_with_a_unit_is_refused(self):
+        got = self._run(("k", self.K, "-"),
+                        ("d", "30", "mm"),
+                        ("bad", "k(d)", "-"))
+        self.assertTrue(got[2].error)
+        self.assertIn("mm", got[2].error)
+
+    def test_a_table_used_without_being_asked_says_so(self):
+        got = self._run(("k", self.K, "-"), ("bad", "2*k", "-"))
+        self.assertTrue(got[1].error)
+        self.assertIn("is a table", got[1].error)
+
+    def test_semicolons_do_not_lose_every_point_but_the_first(self):
+        """The table reader takes two numbers a line and ignores the rest
+        of the line. A whole table typed into one box would have kept the
+        first pair and quietly dropped the others."""
+        got = self._run(("k", self.K, "-"))
+        self.assertEqual(4, len(got[0].table.table))
+        self.assertEqual((15.0, 60.0), got[0].table.table.span)
+
+    def test_a_table_with_one_point_is_not_a_table(self):
+        got = self._run(("k", "table: 15", "-"))
+        self.assertTrue(got[0].error)
+
+    def test_it_all_carries_through_a_real_sheet(self):
+        """Units, a tolerance and a table on one page."""
+        got = self._run(
+            ("k", "table in deg: 15, 0.35; 30, 0.60; 45, 0.95", "-"),
+            ("theta", "38", "deg"),
+            ("rho", "998", "kg/m^3"),
+            ("d", "50 +/- 0.5", "mm"),
+            ("Q", "3.5 +/- 0.05", "L/s"),
+            ("A", "pi*d^2/4", "mm^2"),
+            ("v", "Q/A", "m/s"),
+            ("dp", "k(theta)*rho*v^2/2", "Pa"))
+        values = self._values(got)
+        expected = ((0.60 + (8.0 / 15.0) * 0.35) * 998.0
+                    * (0.0035 / (math.pi * 0.05 ** 2 / 4)) ** 2 / 2.0)
+        self.assertAlmostEqual(expected, values["dp"], places=6)
+        # And the tolerance still reaches the bottom, with the bore
+        # dominating it - dp goes as 1/d^4 once the area is substituted.
+        spread = got[-1].spread
+        self.assertIsNotNone(spread)
+        worst = max(spread.contributions, key=lambda c: c.share)
+        self.assertEqual("d", worst.name)
+        self.assertGreater(worst.share, 0.5)
+
