@@ -32,6 +32,16 @@ trust that.
 bending moment, Mohr's circle, the Moody chart, and T-s / P-v / P-h /
 T-v with the saturation dome.
 
+**Carries units and tolerances down a page.** A worksheet row works out its
+own unit from the arithmetic rather than taking your word for it, and a
+measurement written `50 +/- 0.5 mm` reaches every row below - with the
+answer saying which measurement to take again if you want a better one.
+
+**Light or dark, in whatever colour you like.** *Options -> Appearance*.
+Any accent you pick is moved until it can actually be read on the page it
+sits on, so there is no choice that leaves you with a heading you cannot
+see. The charts stay on white paper, because they get printed.
+
 **229 engineering formulas**, each of which rearranges for any variable in
 it, across mechanics, thermodynamics, fluids, electrical, heat transfer,
 chemical, civil, control, geometry and HVAC.

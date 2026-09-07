@@ -901,12 +901,26 @@ it, by nine per cent and fifteen.
 
 ### Performance indices
 
-An index comes out of the mechanics, not out of the chart. The lightest beam
-of a given stiffness: stiffness goes as `Et³` and mass as `ρt`, so
-eliminating the thickness leaves mass proportional to `ρ/E^½` - and the
-material to pick is whichever maximises `E^½/ρ`. On log axes that is
-constant along a line of **slope 2**, so the whole selection is one straight
-edge on one chart.
+An index comes out of the mechanics, not out of the chart, and here it is
+worked out rather than looked up. State the job three ways:
+
+    minimise      the mass          m = ρ A L
+    subject to    a stiffness       S ∝ E I / L³
+    by choosing   the section       A,  with  I = A²/12 for a square
+
+Eliminate `A` between the second and the third and put it into the first.
+The mass falls into a part fixed by the job - the length, the stiffness
+asked for - and a group of material properties, `ρ/E^½`. Only the second
+part depends on what the thing is made of, so only the second part can
+decide it: pick whatever maximises **`E^½/ρ`**. On log axes that is
+constant along a line of **slope 2**, so the whole selection is one
+straight edge on one chart.
+
+Change the section rule and the exponent changes with it. A panel has its
+width set by the job and only its thickness free, so `I ∝ t³` rather than
+`A²`, and the same three lines give `E^⅓/ρ`. That is the whole reason to
+derive these rather than copy them: `E^½/ρ` and `E^⅓/ρ` look alike written
+down and put different materials at the top of the list.
 
 | for | maximise | slope |
 | --- | --- | --- |
@@ -914,15 +928,26 @@ edge on one chart.
 | light stiff beam | E^½/ρ | 2 |
 | light stiff panel | E^⅓/ρ | 3 |
 | light strong beam | σy^⅔/ρ | 3/2 |
-| springs | σy²/E | ½ |
+| springs, per volume | σy²/E | ½ |
 | damage tolerance | K_IC/σy | 1 |
 
-The slope is nothing more than the ratio of the two exponents, and there is
-a test that derives it that way rather than writing it down.
+Eleven of the thirteen indices in the app come out exactly as published,
+and the published values are the test rather than the source. Two did not,
+and both were short a property that had been demoted to a parenthesis: the
+energy a spring stores **per unit weight** is `σy²/(Eρ)` and not `σy²/ρ`,
+and thermal shock resistance is `σy/(Eα)` and not `σy/E` "with a low
+expansion". Three properties will not go on two axes, so those two are
+drawn against a chosen pair and the chart says which property it is holding
+constant along the line - and therefore that it is only ranking materials
+that are alike in that.
 
-It gives the answers these charts are famous for: **wood and carbon fibre
-beat steel for a light stiff beam** - which is why aircraft spars were made
-of spruce - and magnesium tops a light strong beam.
+It gives the answers these charts are famous for. **Wood and carbon fibre
+beat steel for a light stiff beam** - softwood along the grain comes first
+of sixty-three and structural steel thirtieth, which is why aircraft spars
+were made of spruce. On a light stiff *tie* the same three are within a
+fifth of each other, which is why a stiff tie is made of whatever is
+cheapest. And a light strong beam goes to the aerospace aluminiums and
+titanium - 7075-T6, then Ti-6Al-4V - with magnesium fourth.
 
 ### Into a calculation
 
