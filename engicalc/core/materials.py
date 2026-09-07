@@ -692,39 +692,51 @@ def reconcile() -> list:
 # --------------------------------------------------------------------------
 # Performance indices
 # --------------------------------------------------------------------------
-# (what it is for, x property, y property, exponent on y, exponent on x,
-#  how it is written).
-#
-# The index is y^ny / x^nx, and it is maximised. On logarithmic axes a
-# contour of it is a straight line of slope nx/ny, so choosing a material is
-# laying that edge on the chart and taking what is above it.
+def _indices() -> list:
+    """The indices, derived. Imported here rather than at the top of the
+    file because `indices` needs `materials` for nothing at all and this
+    keeps it that way round: properties know nothing about what anybody
+    wants to make out of them.
+    """
+    from .indices import entries
+    return entries()
 
-INDICES = [
-    ("Light, stiff tie", "density", "youngs", 1.0, 1.0, "E / rho"),
-    ("Light, stiff beam", "density", "youngs", 0.5, 1.0,
-     "E^(1/2) / rho"),
-    ("Light, stiff panel", "density", "youngs", 1.0 / 3.0, 1.0,
-     "E^(1/3) / rho"),
-    ("Light, strong tie", "density", "yield", 1.0, 1.0,
-     "sigma_y / rho"),
-    ("Light, strong beam", "density", "yield", 2.0 / 3.0, 1.0,
-     "sigma_y^(2/3) / rho"),
-    ("Light, strong panel", "density", "yield", 0.5, 1.0,
-     "sigma_y^(1/2) / rho"),
-    ("Springs: energy stored per volume", "youngs", "yield", 2.0, 1.0,
-     "sigma_y^2 / E"),
-    ("Springs: energy stored per weight", "density", "yield", 2.0, 1.0,
-     "sigma_y^2 / rho"),
-    ("Flywheels and rotors", "density", "yield", 1.0, 1.0,
-     "sigma_y / rho"),
-    ("Elastic hinges", "youngs", "yield", 1.0, 1.0, "sigma_y / E"),
-    ("Thermal shock resistance", "youngs", "yield", 1.0, 1.0,
-     "sigma_y / E (with a low expansion)"),
-    ("Damage tolerance", "yield", "toughness", 1.0, 1.0,
-     "K_IC / sigma_y"),
-    ("Insulation, thin as possible", "conductivity", "service", 1.0, 1.0,
-     "T_max / k"),
-]
+
+class _Indices(list):
+    """The derived indices, worked out the first time anybody looks.
+
+    A list, because every caller treats it as one and there is no reason
+    to make them stop. Filled late, because deriving thirteen indices is
+    a second of SymPy and the app should not spend it before the window
+    is up if nobody opens a chart.
+    """
+
+    def _fill(self):
+        if not list.__len__(self):
+            self.extend(_indices())
+        return self
+
+    def __iter__(self):
+        return list.__iter__(self._fill())
+
+    def __len__(self):
+        return list.__len__(self._fill())
+
+    def __getitem__(self, at):
+        return list.__getitem__(self._fill(), at)
+
+
+#: (what it is for, x property, y property, exponent on y, exponent on x,
+#: how it is written).
+#:
+#: The index is y^ny / x^nx, and it is maximised. On logarithmic axes a
+#: contour of it is a straight line of slope nx/ny, so choosing a material
+#: is laying that edge on the chart and taking what is above it.
+#:
+#: Derived in `core.indices` from a statement of the job rather than
+#: written out here - see that file for why the exponent is the part worth
+#: computing.
+INDICES = _Indices()
 
 
 def index_value(material: "Material", index) -> float:

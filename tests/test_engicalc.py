@@ -8678,6 +8678,139 @@ class TestUpdateCheck(unittest.TestCase):
         self.assertFalse(is_newer(Update("1.1.0").version, "1.1.0"))
 
 
+class TestDerivedIndices(unittest.TestCase):
+    """A material index is an exponent, and the exponent is the content.
+
+    E^(1/2)/rho and E^(1/3)/rho look alike written down and put different
+    materials at the top of the list. Deriving them from a statement of
+    the job means a wrong exponent has to come from a wrong statement of
+    the mechanics, which is a thing that can be argued about, rather than
+    from a mistyped fraction, which is not.
+    """
+
+    #: What the textbooks publish. Not the source of the numbers in the
+    #: program - the check on them.
+    PUBLISHED = {
+        "Light, stiff tie": ("youngs", 1.0, "density", 1.0),
+        "Light, stiff beam": ("youngs", 0.5, "density", 1.0),
+        "Light, stiff panel": ("youngs", 1.0 / 3.0, "density", 1.0),
+        "Light, strong tie": ("yield", 1.0, "density", 1.0),
+        "Light, strong beam": ("yield", 2.0 / 3.0, "density", 1.0),
+        "Light, strong panel": ("yield", 0.5, "density", 1.0),
+        "Flywheels and rotors": ("yield", 1.0, "density", 1.0),
+        "Elastic hinges": ("yield", 1.0, "youngs", 1.0),
+        "Damage tolerance": ("toughness", 1.0, "yield", 1.0),
+        "Insulation, thin as possible": ("service", 1.0, "conductivity", 1.0),
+        "Springs: energy stored per volume": ("yield", 2.0, "youngs", 1.0),
+    }
+
+    def test_every_index_comes_out_as_published(self):
+        from engicalc.core import indices
+
+        for name, (up, power_up, across, power_across) in \
+                self.PUBLISHED.items():
+            with self.subTest(name):
+                derived = indices.find(name)
+                self.assertIsNotNone(derived, f"no job called {name}")
+                self.assertEqual(up, derived.up)
+                self.assertEqual(across, derived.across)
+                self.assertAlmostEqual(power_up, derived.power_up, places=9)
+                self.assertAlmostEqual(power_across, derived.power_across,
+                                       places=9)
+
+    def test_the_exponent_follows_from_the_section_rule(self):
+        """Change how the section grows and the exponent changes with it.
+
+        This is the whole claim: the 1/2 in a beam index is not a number
+        anybody chose, it is what I = A^2/12 does to rho*A*L. Put a
+        panel's section rule in and 1/2 becomes 1/3.
+        """
+        from engicalc.core.indices import Job, derive
+
+        beam = derive(Job("beam", "rho*A*L", free="A",
+                          constraint="S = C*E*I/L**3",
+                          shape={"I": "A**2/12"}))
+        self.assertAlmostEqual(0.5, beam.power_up, places=9)
+
+        # A panel: the width is set by the job, only the thickness is free,
+        # and I goes as t^3 rather than as A^2.
+        panel = derive(Job("panel", "rho*b*t*L", free="t",
+                           constraint="S = C*E*b*t**3/(12*L**3)"))
+        self.assertAlmostEqual(1.0 / 3.0, panel.power_up, places=9)
+
+        # And a tie, where the area is set by the load directly.
+        tie = derive(Job("tie", "rho*A*L", free="A", constraint="S = E*A/L"))
+        self.assertAlmostEqual(1.0, tie.power_up, places=9)
+
+    def test_a_third_property_is_named_rather_than_dropped(self):
+        """The two the shipped table used to shorten.
+
+        The energy a spring stores per unit weight is sigma^2/(E rho) and
+        thermal shock resistance is sigma/(E alpha). Both were carried as
+        two-property indices with the third demoted to a note, which is
+        the kind of shortening that derivation exists to stop.
+        """
+        from engicalc.core import indices
+
+        springs = indices.find("Springs: energy stored per weight")
+        self.assertEqual({"yield": 2, "youngs": -1, "density": -1},
+                         {k: int(v) for k, v in springs.powers.items()})
+        self.assertFalse(springs.exact_on_a_chart)
+        self.assertEqual(["density"], springs.also)
+
+        shock = indices.find("Thermal shock resistance")
+        self.assertEqual({"yield": 1, "youngs": -1, "expansion": -1},
+                         {k: int(v) for k, v in shock.powers.items()})
+        self.assertEqual(["expansion"], shock.also)
+
+    def test_the_chart_table_is_the_derived_one(self):
+        from engicalc.core import indices, materials
+
+        self.assertEqual(indices.entries(), list(materials.INDICES))
+        self.assertTrue(all(len(entry) == 6 for entry in materials.INDICES))
+
+    def test_stiffness_per_weight_separates_the_materials_as_it_should(self):
+        """A fact about the mechanics, not about which materials are listed.
+
+        On a tie, steel, aluminium and wood are within a fifth of each
+        other - which is why a stiff tie is made of whatever is cheapest.
+        Move to a beam and then to a panel and the exponent on E falls
+        from 1 to 1/2 to 1/3, so density counts for more each time and
+        they separate. Steel must fall further behind wood at every step.
+        """
+        from engicalc.core import indices, materials
+
+        def score(job, name):
+            return materials.index_value(materials.find(name),
+                                         indices.find(job).as_entry())
+
+        spread = []
+        for job in ("Light, stiff tie", "Light, stiff beam",
+                    "Light, stiff panel"):
+            steel = score(job, "Carbon steel")
+            wood = score(job, "Softwood, along the grain")
+            self.assertGreater(steel, 0.0)
+            spread.append(steel / wood)
+
+        # On a tie they are within 20% of each other; by a panel steel is
+        # a sixth of the wood. Each step must be a real fall, not a wobble.
+        self.assertGreater(spread[0], 0.8)
+        self.assertLess(spread[0], 1.4)
+        self.assertLess(spread[1], spread[0] / 2.0)
+        self.assertLess(spread[2], spread[1] / 1.3)
+
+    def test_a_job_that_cannot_be_solved_says_so(self):
+        from engicalc.core.indices import Job, derive
+        from engicalc.core.parsing import ParseError
+
+        with self.assertRaises(ParseError):
+            derive(Job("no free variable named", "rho*A*L",
+                       constraint="S = E*A/L"))
+        with self.assertRaises(ParseError):
+            derive(Job("nonsense", "rho*A*(", free="A",
+                       constraint="S = E*A/L"))
+
+
 class TestTheme(unittest.TestCase):
     """The promise the accent picker makes is that nothing can be unreadable.
 

@@ -22,9 +22,9 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Arc, Rectangle
 
-from ..core import (axial, beams, buckling, curved, geometry, materials,
-                    motion, moody, section_table, sections, tensile,
-                    torsion, trusses, vessels)
+from ..core import (axial, beams, buckling, curved, geometry, indices,
+                    materials, motion, moody, section_table, sections,
+                    tensile, torsion, trusses, vessels)
 from ..core.display import fmt_number
 from ..core import mohr
 from ..core.mohr import Mohr
@@ -2212,6 +2212,13 @@ class MaterialsTab(ChartTab):
         self.written = ttk.Label(second, text="", style="Hint.TLabel")
         self.written.pack(side="left", padx=(12, 0))
 
+        # What the index was derived from. An index is only as good as
+        # the statement of the job behind it, and "square section, first
+        # yield at the outer fibre" is the difference between an answer
+        # and a number.
+        self.derivation = ttk.Label(parent, text="", style="Hint.TLabel")
+        self.derivation.pack(fill="x", pady=(2, 0))
+
         third = ttk.Frame(parent)
         third.pack(fill="x", pady=(6, 0))
         ttk.Label(third, text="Show").pack(side="left")
@@ -2274,6 +2281,34 @@ class MaterialsTab(ChartTab):
             self.up.set(labels[found[2]])
         self.refresh()
 
+    def _derivation(self, entry) -> str:
+        """Where the index came from, in one line.
+
+        Says what was minimised, what had to hold, and what was free to
+        change - and, when the index has a third property in it, that the
+        chart is only ranking materials whose third property is alike.
+        """
+        if not entry:
+            return ""
+        derived = indices.find(entry[0])
+        if derived is None:
+            return ""
+        job = derived.job
+        said = []
+        if job.constraint:
+            said.append(f"minimise {job.objective} subject to "
+                        f"{job.constraint}, free to change {job.free}")
+        else:
+            said.append(("maximise " if job.bigger_is_better else "minimise ")
+                        + job.objective)
+        if job.note:
+            said.append(job.note)
+        if derived.also:
+            said.append("the chart holds " + " and ".join(derived.also)
+                        + " constant along the line, so it only ranks "
+                          "materials that are alike in that")
+        return "  -  ".join(said)
+
     def _index(self):
         for entry in materials.INDICES:
             if entry[0] == self.index.get():
@@ -2333,6 +2368,7 @@ class MaterialsTab(ChartTab):
                          winner=material.name in beating)
 
         self.written.configure(text=index[5] if index else "")
+        self.derivation.configure(text=self._derivation(index))
         rows = []
         if index and index[1] == across and index[2] == up:
             rows = self._draw_index(axes, index, shown)
