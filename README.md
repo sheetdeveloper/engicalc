@@ -183,6 +183,15 @@ Up to six curves at once, in four flavours:
 Roots are marked and labelled. Full matplotlib pan/zoom toolbar underneath, and
 Save PNG (or PDF/SVG) for reports.
 
+**How many answers there are** is part of the answer. `sin(x) = 0` does not
+come back as "0 and pi" as though those were all of them: it says there are
+infinitely many, gives the general form `2*pi*n` and `2*pi*n + pi`, and
+lists the ones within one turn of nought - exactly, so `pi` rather than
+3.14159. An inequality on a periodic function reports its period, because
+`(0, pi)` is one of endlessly many intervals and nothing on screen said so.
+And an equation with no real solution now says that, rather than quietly
+handing over two complex numbers.
+
 **Minimise and maximise** are operations like any other. They are done the
 way it is done by hand - differentiate, solve for nought, and check each
 answer - rather than by walking downhill from a guess, which on anything

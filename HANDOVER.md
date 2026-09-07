@@ -160,12 +160,19 @@ likely to grow, so it was made the easiest part to extend.
    found two that were wrong. What is *not* done is the formula input grid:
    type mm into a field declared in m and nothing objects. That is the gap
    left of what used to be the largest one.
-2. **Periodic roots are principal in the solver and complete everywhere
-   else.** `solve(sin(x) = 0)` still answers 0 and pi. The graph's read-off
-   panel and the optimiser both walk solveset's ImageSet over the range
-   instead, so a sine on [-10, 10] gives all seven roots - see
-   `core/roots.py`. Doing the same in `solve` is the obvious next step and
-   the machinery is now sitting in core waiting for it.
+2. ~~**Periodic roots are principal only.**~~ Done everywhere. `solve`
+   now says there are infinitely many, gives the general form, and lists
+   the ones within one turn of nought - exactly, so pi rather than
+   3.14159. The graph's read-off panel and the optimiser walk the same
+   family over their own range. An inequality cannot be enumerated the
+   same way, because solveset hands back only the principal interval - so
+   it reports the *period* instead, which is the part a reader cannot work
+   out from the range alone.
+
+   One thing fell out of it: an equation with no real solution said so
+   nowhere. `sin(x) = 2` was answered with two complex numbers and no
+   remark, and so was `x^2 + 1 = 0`. Both now say that nothing real
+   satisfies them.
 3. **Four variables have no closed-form rearrangement:**
    `heat_transfer.fin_efficiency` (for `m_f` and `L`), `geometry_maths.heron`
    (for `s`) and `geometry_maths.annuity_payment` (for `i`). They solve
@@ -197,9 +204,12 @@ likely to grow, so it was made the easiest part to extend.
    fatal. If you add a symbol, check it renders.
 7. **Civil and structural formulas carry no code factors.** They are the plain
    textbook forms. The assumption line on each is there for a reason.
-8. **Inequalities give principal ranges, not periodic families.** `sin(x) > 0`
-   answers `(0, pi)` rather than every interval where it holds. Same limitation
-   as issue 2, and the same fix would serve both.
+8. **Inequalities give principal ranges, and now say so.** `sin(x) > 0`
+   still answers `(0, pi)` - SymPy's solveset returns that interval and
+   nothing else for an inequality, unlike an equation where it hands back
+   the whole indexed family. What it does now is report the period, so the
+   answer no longer reads as though it were all of it. Enumerating the
+   intervals would mean building the family by hand from the period.
 9. **The test suite fails one test per full run, and a different one each
    time.** Always a `TclError` reading `.../tcl/tk8.6/ttk/ttk.tcl` while
    creating a Tk root, roughly a hundred and sixty tests in. The file exists;

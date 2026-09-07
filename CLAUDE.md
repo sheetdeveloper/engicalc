@@ -105,10 +105,25 @@ SymPy's. If you change this module, the round-trip tests in
 `TestExcelPrinter` must still pass - they evaluate the printed string in Python
 against SymPy with random values.
 
-**Formula data invariants**, both enforced by tests:
+**Formula data invariants**, all enforced by tests:
 1. The symbols in `equation` must exactly match the declared `variables`.
-2. Every formula must rearrange for every one of its variables (four known
-   exceptions are skipped by name in `test_rearrangement_coverage`).
+2. The declared *units* must balance across the equation, unless the formula
+   sets `dimensional_constant` saying which number carries units and why.
+3. Every formula must rearrange for every one of its variables. Four
+   variables are exempt, listed in `TestFormulaLibrary.NO_CLOSED_FORM` -
+   and a second test asserts they are still exempt, because a skip list
+   nobody checks is where a fixed bug goes to hide.
+
+**A rearrangement that runs away is declared, not discovered.** SymPy goes
+after the general quartic for Heron's formula solved for `s` and grinds for
+minutes. The attempt is bounded at six seconds, but a Python thread cannot
+be killed - so what is abandoned keeps running, and tearing Tk down then has
+to compete with it for the interpreter. The window closed and the process
+stayed. So the formula declares `numeric_only=("s",)` and the attempt is
+never started. It is the only one in the library, which was measured over
+all 868 variables rather than assumed. `_timed`'s thread is a daemon for
+the same reason, and must stay one: executor workers are not daemons and
+`concurrent.futures` joins them at exit.
 
 Symbols shadowing SymPy names (`E`, `I`, `e`) are safe *because*
 `Formula.eq` passes the declared variables as `local_dict`. Don't remove that.
@@ -183,8 +198,30 @@ the user what to do next rather than dumping a traceback.
 
 ## Worth building next
 
-- Unit handling (`sympy.physics.units`) so mm and m can't be silently mixed.
-- Multi-step calculation sheets: chain formulas so one result feeds the next,
-  and export the chain as a single linked workbook.
-- Periodic root families on the graph rather than principal solutions only.
-- Import/export of the user formula library so it can be shared between machines.
+- **Units in the formula input grid.** The one part of the units work still
+  open: a worksheet computes its own units and refuses what will not go
+  together, and the library's declared units are audited across all 229
+  formulas, but typing mm into a field declared in m still passes without
+  comment. The machinery it needs is all written - `core/quantity.py` and
+  `core/dimensional.py`.
+- **A calculation report.** The app generates every piece of one - typeset
+  working, charts, inputs, results, sources - and then it gets retyped into
+  Word. A workbook is not a calculation record.
+- **Monte Carlo beside the GUM uncertainty.** Cheap, and it checks the
+  assumption `core/uncertainty.py` openly states: that the answer is near
+  enough linear over the range of the tolerances. Where the two disagree
+  the linear one is wrong, and nothing can currently tell.
+- **Sweep a worksheet down a column of values** - the same page at 40, 50
+  and 65 mm. `simultaneous_tab` already does parametric studies, so the
+  pattern exists; the worksheet is where it is wanted.
+- **Buckingham Pi.** `core/dimensional.py` already knows every variable's
+  dimensions, and deriving the dimensionless groups from a list of them is
+  a standard exercise nothing here does.
+- **Import/export of the user formula library** so it can be shared between
+  machines.
+
+Done since this list was written: units and uncertainty on a worksheet,
+multi-step sheets, periodic root families (in `solve`, on the graph, and in
+the optimiser - all through `core/roots.py`), goal-seek, lookup tables,
+subscripted names, material indices derived rather than tabulated, carbon
+dioxide with a transcritical cycle, and light/dark theming.

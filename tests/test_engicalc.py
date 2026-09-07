@@ -9889,3 +9889,87 @@ class TestARunawayRearrangementCannotOutliveTheAnswer(unittest.TestCase):
                                            "b": "3.36", "c": "1.09"})
         self.assertIsNotNone(got.value)
         self.assertFalse(any("numerically" in w for w in got.warnings))
+
+
+class TestHowManyAnswersThereAre(unittest.TestCase):
+    """"x = 0, x = pi" reads as though those were all of them.
+
+    They are two of an endless family, and a calculator that lists two
+    and stops has told you something false by leaving it out. The same
+    goes for an answer that is complex when nothing said the equation has
+    no real solution, and for an inequality's range that comes round
+    again every period.
+    """
+
+    def _solve(self, text):
+        from engicalc.core.engine import calculate
+
+        return calculate(text, "solve", "x")
+
+    def test_a_periodic_equation_says_there_are_infinitely_many(self):
+        got = self._solve("sin(x) = 0")
+        said = " ".join(got.warnings)
+        self.assertIn("infinitely many", said)
+        self.assertIn("every whole number n", said)
+        # And the general form, which is the part that cannot be guessed
+        # from a list of values.
+        self.assertIn("2*pi*n", said)
+
+    def test_and_lists_more_than_two_of_them(self):
+        """One full turn each way, which for a sine is five."""
+        import sympy as sp
+
+        got = self._solve("sin(x) = 0")
+        values = sorted(float(one) for one in got.results)
+        self.assertEqual(5, len(values))
+        for index, at in enumerate(values):
+            self.assertAlmostEqual((index - 2) * math.pi, at, places=9)
+        # Exactly, not as decimals: pi is a better answer than 3.14159.
+        self.assertTrue(any(one.has(sp.pi) for one in got.results))
+
+    def test_a_period_of_pi_rather_than_two_pi(self):
+        got = self._solve("tan(x) = 1")
+        values = sorted(float(one) for one in got.results)
+        self.assertTrue(values)
+        for at in values:
+            self.assertAlmostEqual(1.0, math.tan(at), places=9)
+        # Consecutive answers a period apart.
+        for earlier, later in zip(values, values[1:]):
+            self.assertAlmostEqual(math.pi, later - earlier, places=9)
+
+    def test_an_ordinary_equation_is_left_alone(self):
+        got = self._solve("x^2 - 4 = 0")
+        self.assertEqual([], got.warnings)
+        self.assertEqual({-2.0, 2.0}, {float(one) for one in got.results})
+
+    def test_no_real_answer_is_said_rather_than_implied(self):
+        """sin(x) = 2 was answered with two complex numbers and no remark.
+
+        They are correct as complex numbers, and the thing worth knowing
+        is that nothing real satisfies it.
+        """
+        got = self._solve("sin(x) = 2")
+        self.assertTrue(any("No real value" in w for w in got.warnings))
+        self.assertTrue(got.results)
+
+    def test_the_same_for_a_quadratic_with_no_real_roots(self):
+        got = self._solve("x^2 + 1 = 0")
+        self.assertTrue(any("No real value" in w for w in got.warnings))
+
+    def test_an_inequality_says_when_its_range_comes_round_again(self):
+        got = self._solve("sin(x) > 0")
+        said = " ".join(got.warnings)
+        self.assertIn("repeats", said)
+        self.assertIn("2*pi", said)
+        # The range itself is unchanged - it is right, it was just not all.
+        self.assertIn("(0, pi)", got.result_text)
+
+    def test_the_period_reported_is_the_actual_period(self):
+        got = self._solve("sin(2*x) >= 0")
+        self.assertTrue(any("period of pi" in w for w in got.warnings))
+
+    def test_an_inequality_that_does_not_repeat_says_nothing(self):
+        for text in ("x^2 <= 9", "x > 5"):
+            with self.subTest(text):
+                got = self._solve(text)
+                self.assertFalse(any("repeats" in w for w in got.warnings))

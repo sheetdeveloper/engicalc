@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import math
+
 import sympy as sp
 
 from . import steps as steps_mod
@@ -303,6 +305,7 @@ def _solve(text, expr, variable, subs_map) -> CalcResult:
             res.warnings.append("No closed form found - these are numerical roots.")
 
     sols = [sp.simplify(s) if not s.free_symbols else s for s in sols]
+    sols = _every_one_of_them(target, var, sols, res)
     res.results = sols
     res.numeric = [_to_float(s) for s in sols]
     res.result_text = "\n".join(
@@ -315,6 +318,99 @@ def _solve(text, expr, variable, subs_map) -> CalcResult:
         res.latex = ""
     res.steps = steps_mod.equation_steps(target, var, sols)
     return res
+
+
+#: How far either side of nought to list the members of an endless
+#: family. One full turn each way, which for anything with a period of
+#: 2*pi is the answer people mean and for anything shorter is several.
+ONE_TURN_EACH_WAY = 2.0 * math.pi
+
+#: How many branches of a family to name before saying how many there are.
+BRANCHES_WORTH_NAMING = 4
+
+
+def _every_one_of_them(target, var, sols: list, res: CalcResult) -> list:
+    """Say when there are infinitely many, and when there are none real.
+
+    ``sp.solve`` answers ``sin(x) = 0`` with 0 and pi and stops, which
+    reads as though those were all of them - and they are two of an
+    endless family. It answers ``sin(x) = 2`` with two complex numbers
+    without mentioning that nothing real satisfies it.
+
+    ``solveset`` over the reals knows both of those things, so it is
+    asked. What it says does not replace the answer where the answer was
+    already right; it adds the part that was missing.
+    """
+    try:
+        over_the_reals = sp.solveset(target, var, sp.S.Reals)
+    except Exception:                                  # noqa: BLE001
+        return sols
+
+    if over_the_reals is sp.S.EmptySet or over_the_reals == sp.S.EmptySet:
+        if sols:
+            # Every answer it found is complex, and nothing said so.
+            res.warnings.append(
+                "No real value satisfies this. The answers below are "
+                "complex.")
+        return sols
+
+    families = _families(over_the_reals)
+    if not families:
+        return sols
+
+    members = _members(families, var)
+    if not members:
+        return sols
+
+    written = " or ".join(
+        f"{var.name} = {_fmt(rule)}"
+        for rule in families[:BRANCHES_WORTH_NAMING])
+    if len(families) > BRANCHES_WORTH_NAMING:
+        written += f" (and {len(families) - BRANCHES_WORTH_NAMING} more)"
+    res.warnings.append(
+        f"There are infinitely many: {written}, for every whole number n. "
+        f"Listed below are the ones between "
+        f"{-ONE_TURN_EACH_WAY:.4g} and {ONE_TURN_EACH_WAY:.4g}.")
+    return members
+
+
+def _families(answer) -> list:
+    """The general term of each endless branch, written in terms of n.
+
+    An answer that is a finite set has none, and gets none: this is only
+    about the ones SymPy hands back as a rule indexed by an integer.
+    """
+    found: list = []
+    for part in (answer.args if isinstance(answer, sp.Union) else [answer]):
+        if not isinstance(part, sp.sets.fancysets.ImageSet):
+            continue
+        rule = part.lamda
+        if len(rule.variables) != 1:
+            continue
+        # Its own dummy index, renamed to something a reader expects.
+        found.append(rule.expr.subs(rule.variables[0], sp.Symbol("n")))
+    return found
+
+
+def _members(families: list, var) -> list:
+    """The members of those families near nought, exactly rather than as
+    decimals - pi is a better answer than 3.14159."""
+    found: list = []
+    seen: list = []
+    for rule in families:
+        for step in range(-8, 9):
+            try:
+                value = sp.simplify(rule.subs(sp.Symbol("n"), step))
+                here = float(value)
+            except (TypeError, ValueError):
+                continue
+            if abs(here) > ONE_TURN_EACH_WAY * (1.0 + 1e-9):
+                continue
+            if any(abs(here - other) < 1e-9 for other in seen):
+                continue
+            seen.append(here)
+            found.append((here, value))
+    return [value for _at, value in sorted(found, key=lambda one: one[0])]
 
 
 def _solve_inequality(text, rel, variable) -> CalcResult:
@@ -354,12 +450,37 @@ def _solve_inequality(text, rel, variable) -> CalcResult:
     res.result_text = f"{var.name} in {_display_set(solution)}"
     if solution is sp.S.EmptySet or solution == sp.S.EmptySet:
         res.result_text = "No value of " + var.name + " satisfies it."
+    else:
+        _say_if_it_repeats(difference, var, res)
     try:
         res.latex = sp.latex(var) + r" \in " + sp.latex(solution)
     except Exception:  # noqa: BLE001
         res.latex = ""
     res.steps = steps_mod.inequality_steps(rel, var, solution)
     return res
+
+
+def _say_if_it_repeats(expression, var, res: CalcResult) -> None:
+    """A range that comes round again every period is not the whole answer.
+
+    ``sin(x) > 0`` is answered ``(0, pi)``, which reads as though that
+    were all of it - and it is one of endlessly many intervals, one per
+    turn. SymPy will not enumerate them here the way it does for an
+    equation: `solveset` hands back the principal interval and nothing
+    else. But it does know the period, so the app can say what the
+    principal interval is principal *of*, which is the part a reader
+    cannot work out from the answer alone.
+    """
+    try:
+        period = sp.periodicity(expression, var)
+    except Exception:                                  # noqa: BLE001
+        return
+    if period is None or period == 0 or period.free_symbols:
+        return
+    res.warnings.append(
+        f"This repeats. {_fmt(expression)} has a period of "
+        f"{_fmt(period)}, so the range above is one of endlessly many - "
+        f"add any whole multiple of {_fmt(period)} to both ends.")
 
 
 def _numeric_roots(target, var, span=(-50, 50), samples=400):
