@@ -23,8 +23,8 @@ Everything runs locally. No account, no network calls, no telemetry. Four pip
 dependencies: sympy, matplotlib, numpy, openpyxl. Tkinter and sqlite3 ship with
 Python.
 
-**Scale:** ~33,200 lines of Python across 106 modules. 229 formulas, 868
-variable slots, 717 tests.
+**Scale:** ~33,800 lines of Python across 106 modules. 229 formulas, 868
+variable slots, 743 tests.
 
 Still four pip dependencies. Everything added since 1.0 - the steam tables, the
 refrigerants, the material charts, the uncertainty propagation - is built on
@@ -265,7 +265,7 @@ Roughly by value per unit of effort.
 ## 6. How to verify a change
 
 ```
-run_engicalc.bat test          # 679 tests, about seven minutes
+run_engicalc.bat test          # 743 tests, about seven minutes
 run_engicalc.bat               # then actually look at the window
 ```
 
