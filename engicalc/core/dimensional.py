@@ -107,7 +107,7 @@ NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 POWER = re.compile(r"\^-?\d+")
 
 
-def lift_units(text: str, known: dict) -> tuple:
+def lift_units(text: str, known: dict, tag: str = "") -> tuple:
     """Pull ``5 K`` and ``9.81 m/s^2`` out of an expression.
 
     Each gets a name of its own and a quantity to go with it, so the rest
@@ -128,7 +128,10 @@ def lift_units(text: str, known: dict) -> tuple:
         unit, after = _unit_after(text, match.end(), known, table)
         if not unit:
             continue
-        name = f"_given_{len(found)}"
+        # Tagged with the row it came from. Untagged, the literal in one
+        # row and the literal in the next are both _given_0, and
+        # substituting one row into another silently swaps them.
+        name = f"_given{tag}_{len(found)}"
         try:
             found[name] = Quantity.of(float(match.group(1)), unit)
         except QuantityError:

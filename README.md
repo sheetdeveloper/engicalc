@@ -787,8 +787,9 @@ falls back to monospace text rather than showing an error.
 
 - Roots of periodic functions are reported as SymPy's principal solutions
   (`sin(x) = 0` gives 0 and pi, not the whole family).
-- Units are labels for the user, not enforced - the app will happily let you mix
-  mm and m. Keep one system per calculation.
+- Units are carried through a worksheet and through the formula library, but
+  the calculator itself is still unitless. Keep one system per calculation
+  there.
 - Complex results and infinities can't be written to Excel; the export says so
   rather than writing something wrong.
 - Library formulas are the standard textbook forms. Check the assumption line

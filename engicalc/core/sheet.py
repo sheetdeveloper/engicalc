@@ -35,11 +35,11 @@ from dataclasses import dataclass, field
 
 import sympy as sp
 
-from . import dimensional
+from . import dimensional, uncertainty
 from . import units as unit_tools
 from .display import fmt, fmt_number
 from .parsing import ParseError, canonical_name, parse_input
-from .quantity import Quantity, QuantityError
+from .quantity import Quantity, QuantityError, parse_powers
 
 #: Checked against the canonical spelling, which is always
 #: ASCII however the name was typed.
@@ -77,6 +77,10 @@ class StepResult:
     #: one and it fits; otherwise whatever the arithmetic produced.
     unit: str = ""
     quantity: object = None       # the answer with its unit attached
+    #: How far the answer moves for the tolerances on what went into it,
+    #: and which input put most of that in. None where no tolerance was
+    #: given anywhere above.
+    spread: object = None
 
     @property
     def ok(self) -> bool:
@@ -92,6 +96,8 @@ class StepResult:
             return f"{self.step.name}: {self.error}"
         shown = fmt_number(self.value) if getattr(self.value, "is_number",
                                                   False) else fmt(self.value)
+        if self.spread is not None and self.spread.known:
+            shown += f" +/- {self.spread.error:.4g}"
         return f"{self.step.name} = {shown}" + (
             f" {self.unit}" if self.unit else "")
 
@@ -125,8 +131,13 @@ class Sheet:
         known: dict = {}
         results: list = []
         seen: set = set()
+        # Each row's expression, written out in terms of the rows that
+        # were typed in rather than worked out - so a name reached by two
+        # routes is one name, and its tolerance is counted once.
+        formulas: dict = {}
+        givens: dict = {}
 
-        for step in self.steps:
+        for index, step in enumerate(self.steps):
             result = StepResult(step)
             results.append(result)
 
@@ -154,7 +165,8 @@ class Sheet:
                 continue
 
             try:
-                value, note = self._evaluate_step(step, known)
+                value, note, spread = self._evaluate_step(
+                    step, known, formulas, givens, index)
             except ParseError as exc:
                 result.error = str(exc)
                 continue
@@ -174,36 +186,69 @@ class Sheet:
                 result.value = sp.Float(value.value
                                         - float(unit_tools.ABSOLUTE_ZERO))
             result.note = note
+            # A given that was written with a tolerance has one too, and
+            # is given the same shape as a worked-out row so that whatever
+            # displays it has one thing to deal with rather than two.
+            if spread is None and value.error is not None:
+                spread = uncertainty.Answer(
+                    value=value, error=value.error,
+                    contributions=[uncertainty.Contribution(
+                        name=name, given=value.error, unit=value.unit,
+                        moves=value.error, share=1.0)])
+            result.spread = spread
             known[name] = value
 
         return results
 
-    def _evaluate_step(self, step: SheetStep, known: dict):
+    def _evaluate_step(self, step: SheetStep, known: dict,
+                       formulas: dict = None, givens: dict = None,
+                       index: int = 0):
         """One step, against the names defined above it.
 
-        Returns the answer as a :class:`~core.quantity.Quantity`, so the
-        next step down inherits a unit rather than a bare number.
+        Returns ``(answer, note, spread)``: the answer as a
+        :class:`~core.quantity.Quantity`, so the next step down inherits a
+        unit rather than a bare number, and how far it moves for the
+        tolerances on what went into it.
         """
         text = step.expression
         note = ""
 
         # A plain value may carry its own unit: "50 mm" in a step declared
         # mm stays 50; in one declared m it becomes 0.05.
+        # "5000 +/- 50 N" is a given, not an expression. Without asking
+        # first it goes down the expression path, where the unit lifting
+        # turns the 50 N into a name and leaves "5000 +/- _given_0" for
+        # the parser, which is not Python and says so unhelpfully.
+        formulas = {} if formulas is None else formulas
+        givens = {} if givens is None else givens
+        name = canonical_name(step.name)
+
         value_text, given_unit = unit_tools.split_quantity(text)
+        if Quantity.TOLERANCE.match(text):
+            typed = Quantity.parse(text)
+            if step.unit:
+                typed = self._in_declared(step, typed, absolute=True)
+            self._is_a_given(name, typed, formulas, givens)
+            return typed, note, None
         if not _looks_like_expression(value_text):
             typed = Quantity.parse(text)
             if not given_unit and step.unit:
                 # A number typed into a row that declares a unit is in
                 # that unit. That is what declaring one is for, and it is
                 # how nearly every given on a sheet is written.
-                return Quantity.of(typed.value, step.unit), note
+                given = Quantity(typed.value, parse_powers(step.unit),
+                                 typed.error)
+                self._is_a_given(name, given, formulas, givens)
+                return given, note, None
             if given_unit and step.unit and given_unit != step.unit:
                 _converted, note = unit_tools.to_declared(
                     text, step.unit, absolute=True)
             # A value typed into a row is a temperature, not a difference:
             # 20 degC in a row declared K is 293.15. A row that works one
             # out is genuinely ambiguous and is asked about instead.
-            return self._in_declared(step, typed, absolute=True), note
+            given = self._in_declared(step, typed, absolute=True)
+            self._is_a_given(name, given, formulas, givens)
+            return given, note, None
 
         # A sheet knows what its rows are called, so it says so. Otherwise
         # the parser splits the name into a product - T1 becomes T times 1,
@@ -213,9 +258,10 @@ class Sheet:
         # 2 m + 300 mm - is pulled out and given a name, so what is left
         # is ordinary algebra. A row name always wins over a unit of the
         # same spelling.
-        text, literals = dimensional.lift_units(text, known)
+        text, literals = dimensional.lift_units(text, known, f"_{index}")
         known = dict(known)
         known.update(literals)
+        givens.update({key: one for key, one in literals.items()})
 
         declared = {name: sp.Symbol(name) for name in known}
         for other in self.steps:
@@ -237,8 +283,28 @@ class Sheet:
             raise ParseError(
                 "Nothing here defines " + ", ".join(unknown) + "." + hint)
 
-        return self._in_declared(step,
-                                 dimensional.walk(expression, known).tidy()), note
+        worked = dimensional.walk(expression, known).tidy()
+        answer = self._in_declared(step, worked)
+
+        # Written out in terms of the givens, so the row below inherits
+        # the whole history rather than a number with a tolerance on it.
+        written = expression.subs(
+            {sp.Symbol(key): value for key, value in formulas.items()})
+        formulas[name] = written
+
+        # Only if something above actually carried a tolerance. Taking
+        # the derivatives costs a differentiation per name, and a sheet
+        # with no tolerances on it is the ordinary case.
+        spread = None
+        if any(one.error for one in givens.values()):
+            spread = uncertainty.through(written, givens, answer)
+        return answer, note, spread
+
+    @staticmethod
+    def _is_a_given(name: str, value, formulas: dict, givens: dict) -> None:
+        """Record a row that was typed in rather than worked out."""
+        formulas[name] = sp.Symbol(name)
+        givens[name] = value
 
     @staticmethod
     def _in_declared(step: SheetStep, answer: "Quantity",

@@ -5009,6 +5009,185 @@ class TestMohrsCircle(unittest.TestCase):
         self.assertAlmostEqual(state.theta_p, 45.0, places=9)
 
 
+class TestUncertainty(unittest.TestCase):
+    """How wrong the answer is, given how wrong the measurements were.
+
+    Everything here turns on one decision: the derivatives are taken
+    symbolically, of the whole expression at once, rather than by carrying
+    an error term through the arithmetic operation by operation. The tests
+    that matter are the ones where those two differ.
+    """
+
+    def _got(self, text, values):
+        from engicalc.core import uncertainty
+        return uncertainty.propagate(text, values)
+
+    def test_a_tolerance_can_be_written_three_ways(self):
+        from engicalc.core.quantity import Quantity
+
+        for text in ("5000 +/- 50 N", "5000 \u00b1 50 N", "5000 +/- 1% N"):
+            with self.subTest(text=text):
+                got = Quantity.parse(text)
+                self.assertEqual(got.value, 5000.0)
+                self.assertAlmostEqual(got.error, 50.0, places=9)
+                self.assertEqual(got.unit, "N")
+        # And an exponent has a sign in it.
+        self.assertAlmostEqual(
+            Quantity.parse("0.001 +/- 5e-5 Pa*s").error, 5e-5, places=12)
+
+    def test_no_tolerance_is_unknown_and_not_zero(self):
+        from engicalc.core.quantity import Quantity
+
+        # Zero would claim the thing was measured exactly, and nothing is.
+        self.assertIsNone(Quantity.parse("5000 N").error)
+
+    def test_the_one_it_exists_for(self):
+        got = self._got("F/A", {"F": "5000 +/- 50 N", "A": "20 +/- 0.5 mm^2"})
+        self.assertAlmostEqual(got.value.value, 250.0, places=9)
+        # sqrt((dF/F)^2 + (dA/A)^2) x 250, by hand.
+        wanted = 250.0 * math.hypot(50 / 5000, 0.5 / 20)
+        self.assertAlmostEqual(got.error, wanted, places=9)
+        self.assertEqual(got.value.unit, "N/mm^2")
+
+    def test_it_says_which_input_to_measure_better(self):
+        # The useful part. The area is a 2.5% measurement and the force a
+        # 1% one, so the area is most of the answer's uncertainty and
+        # measuring the force better would buy almost nothing.
+        got = self._got("F/A", {"F": "5000 +/- 50 N", "A": "20 +/- 0.5 mm^2"})
+        worst = got.dominant()
+        self.assertIsNotNone(worst)
+        self.assertEqual(worst.name, "A")
+        self.assertGreater(worst.share, 0.8)
+        self.assertAlmostEqual(sum(c.share for c in got.contributions), 1.0,
+                               places=9)
+
+    def test_a_name_used_twice_is_one_measurement(self):
+        # The whole reason for differentiating rather than propagating.
+        # x*x is 2x the relative error of x, not root two times it - the
+        # same x cannot be high and low at the same time.
+        for text in ("x*x", "x^2", "x*x*1.0"):
+            with self.subTest(text=text):
+                got = self._got(text, {"x": "10 +/- 1 m"})
+                self.assertAlmostEqual(got.relative, 0.2, places=9)
+        # Two separate measurements of the same size are different.
+        pair = self._got("x*y", {"x": "10 +/- 1 m", "y": "10 +/- 1 m"})
+        self.assertAlmostEqual(pair.relative, math.hypot(0.1, 0.1), places=9)
+
+    def test_a_difference_of_two_close_numbers_is_mostly_tolerance(self):
+        # 100 +/- 0.5 less 99 +/- 0.5 is 1 +/- 0.707, which is 71%. The
+        # answer is right and nearly useless, and saying so is the point.
+        got = self._got("a - b", {"a": "100 +/- 0.5 mm", "b": "99 +/- 0.5 mm"})
+        self.assertAlmostEqual(got.value.value, 1.0, places=9)
+        self.assertAlmostEqual(got.error, math.hypot(0.5, 0.5), places=9)
+        self.assertGreater(got.relative, 0.7)
+
+    def test_the_uncertainty_comes_out_in_the_answer_s_unit(self):
+        # Each contribution is a derivative times a tolerance, and the
+        # derivative carries units of its own. If those did not come to
+        # the answer's unit something would be wrong, and the conversion
+        # is what checks it.
+        got = self._got("m*a", {"m": "70 +/- 0.5 kg",
+                                "a": "9.81 +/- 0.02 m/s^2"})
+        self.assertEqual(got.value.unit, "m*kg/s^2")
+        by_hand = 70 * 9.81 * math.hypot(0.5 / 70, 0.02 / 9.81)
+        self.assertAlmostEqual(got.error, by_hand, places=6)
+
+    def test_nothing_given_means_nothing_claimed(self):
+        got = self._got("F/A", {"F": "5000 N", "A": "20 mm^2"})
+        self.assertFalse(got.known)
+        self.assertEqual(got.error, 0.0)
+        self.assertIn("No tolerances", " ".join(got.notes()))
+
+    def test_a_tolerance_converts_with_its_value(self):
+        from engicalc.core.quantity import Quantity
+
+        got = Quantity.parse("2 +/- 0.05 L/s").to("m^3/s")
+        self.assertAlmostEqual(got.value, 0.002, places=12)
+        self.assertAlmostEqual(got.error, 5e-5, places=15)
+
+
+class TestUncertaintyDownASheet(unittest.TestCase):
+    """A sheet counts each measurement once, however many routes it took.
+
+    A pipe sheet measures a diameter, works an area from it, a velocity
+    from the area and a Reynolds number from the velocity and the diameter
+    again. The diameter is in the answer twice by two different routes,
+    and giving each row an uncertainty and treating it as a fresh
+    measurement for the row below gets that wrong.
+    """
+
+    def _pipe(self, one_line=False):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet("Water in a pipe")
+        sheet.add("d", "50 +/- 0.5 mm", "mm")
+        sheet.add("Q", "2 L/s", "m^3/s")
+        sheet.add("rho", "998 kg/m^3", "")
+        sheet.add("mu", "0.001 Pa*s", "")
+        if one_line:
+            sheet.add("Re", "rho*Q*d/(mu*pi*d^2/4)", "")
+        else:
+            sheet.add("A", "pi*d^2/4", "")
+            sheet.add("v", "Q/A", "")
+            sheet.add("Re", "rho*v*d/mu", "")
+        return sheet
+
+    def _answers(self, sheet):
+        return {r.step.name: r for r in sheet.evaluate() if r.ok}
+
+    def test_a_tolerance_travels_down_the_page(self):
+        found = self._answers(self._pipe())
+        self.assertAlmostEqual(found["A"].spread.relative, 0.02, places=9)
+        self.assertAlmostEqual(found["v"].spread.relative, 0.02, places=9)
+
+    def test_the_diameter_is_counted_once_not_twice(self):
+        # Re = rho Q d / (mu A) and A goes as d^2, so Re goes as 1/d: a
+        # one per cent diameter is a one per cent Reynolds number.
+        # Row by row it would come out as root of one plus four.
+        found = self._answers(self._pipe())
+        self.assertAlmostEqual(found["Re"].spread.relative, 0.01, places=6)
+
+    def test_the_step_by_step_sheet_agrees_with_the_one_liner(self):
+        # Which is the proof that the substitution is doing its job:
+        # writing it out in seven rows or in one has to give one answer.
+        step_by_step = self._answers(self._pipe())["Re"]
+        one_line = self._answers(self._pipe(one_line=True))["Re"]
+        self.assertAlmostEqual(step_by_step.spread.error / one_line.spread.error,
+                               1.0, places=9)
+
+    def test_two_separate_measurements_are_two(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("a", "50 +/- 0.5 mm", "mm")
+        sheet.add("b", "50 +/- 0.5 mm", "mm")
+        sheet.add("area", "a*b", "mm^2")
+        found = self._answers(sheet)
+        self.assertAlmostEqual(found["area"].spread.relative,
+                               math.hypot(0.01, 0.01), places=9)
+
+    def test_one_measurement_used_twice_is_one(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("a", "50 +/- 0.5 mm", "mm")
+        sheet.add("square", "a*a", "mm^2")
+        found = self._answers(sheet)
+        self.assertAlmostEqual(found["square"].spread.relative, 0.02,
+                               places=9)
+
+    def test_a_sheet_with_no_tolerances_says_nothing_about_them(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("F", "5000 N", "N")
+        sheet.add("A", "20 mm^2", "mm^2")
+        sheet.add("sigma", "F/A", "N/mm^2")
+        found = self._answers(sheet)
+        self.assertAlmostEqual(float(found["sigma"].value), 250.0, places=9)
+        self.assertIsNone(found["sigma"].spread)
+
+
 class TestTheLibraryBalances(unittest.TestCase):
     """Does every formula agree with its own declared units?
 

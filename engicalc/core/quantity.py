@@ -69,12 +69,31 @@ class Quantity:
 
     value: float
     powers: dict = field(default_factory=dict)
+    #: The standard uncertainty, in the same unit as the value. None means
+    #: nobody said - which is not the same as zero, and zero would claim
+    #: the thing was measured exactly.
+    error: float | None = None
 
     # -- making one --------------------------------------------------------
+    #: 5000 +/- 50 N, 5000 +/- 1% N, and the same with the sign.
+    TOLERANCE = re.compile(
+        r"^\s*(?P<value>[-+0-9.eE]+)\s*(?:\u00b1|\+/-|\+-)\s*"
+        r"(?P<error>[0-9.]+(?:[eE][-+]?[0-9]+)?)"
+        r"\s*(?P<percent>%?)\s*(?P<unit>.*)$")
+
     @classmethod
     def parse(cls, text: str) -> "Quantity":
-        """Read ``"50 mm"``, ``"2.5e3 N/mm^2"`` or a bare number."""
-        number, unit = units.split_quantity(str(text))
+        """Read ``"50 mm"``, ``"2.5e3 N/mm^2"``, ``"5000 +/- 50 N"``."""
+        text = str(text)
+        wide = cls.TOLERANCE.match(text)
+        if wide:
+            found = cls.parse(f"{wide.group('value')} "
+                              f"{wide.group('unit')}".strip())
+            error = float(wide.group("error"))
+            if wide.group("percent"):
+                error = abs(found.value) * error / 100.0
+            return cls(found.value, found.powers, error)
+        number, unit = units.split_quantity(text)
         try:
             value = float(sp.sympify(number))
         except Exception as exc:                       # noqa: BLE001
@@ -242,8 +261,20 @@ class Quantity:
         return self.value >= self._same_kind(other, "comparing")
 
     # -- moving between units ---------------------------------------------
+    @property
+    def relative(self) -> float | None:
+        """The tolerance as a fraction of the value, or None if unknown."""
+        if self.error is None or not self.value:
+            return None
+        return abs(self.error / self.value)
+
     def to(self, unit: str, absolute: bool | None = None) -> "Quantity":
-        """The same quantity written in another unit."""
+        """The same quantity written in another unit.
+
+        The tolerance goes with it, scaled the same way - which is right
+        for a scale change and would not be for an offset, so it is only
+        ever a scale change that gets here.
+        """
         wanted = parse_powers(unit)
         if wanted == self.powers:
             return self
@@ -254,9 +285,15 @@ class Quantity:
                 f"{self.measures()} and {unit or 'a plain number'} measures "
                 f"{target.measures()}, so one cannot be written as the "
                 f"other.")
-        return Quantity(float(units.convert(self.value, self.unit, unit,
-                                            absolute=absolute)),
-                        wanted)
+        moved = float(units.convert(self.value, self.unit, unit,
+                                    absolute=absolute))
+        carried = None
+        if self.error is not None:
+            # A tolerance is a difference, so it never takes the offset -
+            # a rise of 20 degrees is a rise of 20 kelvin.
+            carried = abs(float(units.convert(self.error, self.unit, unit,
+                                              absolute=False)))
+        return Quantity(moved, wanted, carried)
 
     def tidy(self) -> "Quantity":
         """The same quantity, with a unit that has been allowed to cancel.
@@ -280,7 +317,7 @@ class Quantity:
         factor = _to_plain(self.expression())
         if factor is None:
             return self._folded()
-        return Quantity(self.value * factor, {})
+        return Quantity(self.value * factor, {}, _scaled(self.error, factor))
 
     def _folded(self) -> "Quantity":
         """Two names for the same kind of thing, put onto the first of them.
@@ -305,14 +342,21 @@ class Quantity:
         cleaned = _clean(moved)
         if cleaned == self.powers:
             return self
-        return Quantity(self.value * factor, cleaned)
+        return Quantity(self.value * factor, cleaned,
+                        _scaled(self.error, factor))
 
     def __str__(self) -> str:
         shown = f"{self.value:.10g}"
+        if self.error is not None:
+            shown += f" +/- {self.error:.4g}"
         return f"{shown} {self.unit}".strip()
 
     def __repr__(self) -> str:
         return f"Quantity({self.value!r}, {self.unit!r})"
+
+
+def _scaled(error: float | None, factor: float) -> float | None:
+    return None if error is None else abs(error * factor)
 
 
 def _looks_like(one: str, other: str) -> bool:
