@@ -166,11 +166,21 @@ likely to grow, so it was made the easiest part to extend.
    instead, so a sine on [-10, 10] gives all seven roots - see
    `core/roots.py`. Doing the same in `solve` is the obvious next step and
    the machinery is now sitting in core waiting for it.
-3. **Four formulas have no closed-form rearrangement** for some variables:
+3. **Four variables have no closed-form rearrangement:**
    `heat_transfer.fin_efficiency` (for `m_f` and `L`), `geometry_maths.heron`
    (for `s`) and `geometry_maths.annuity_payment` (for `i`). They solve
-   numerically and say so in the result panel. `test_rearrangement_coverage`
-   skips them by name — if you fix one, remove it from that skip list.
+   numerically and say so in the result panel.
+
+   Three of them are transcendental and SymPy gives up quickly. Heron for
+   `s` is different: it is a quartic with four distinct roots, SymPy goes
+   after the general quartic, and it runs for minutes. The formula now
+   declares that itself — `numeric_only=("s",)` — so the attempt is never
+   started. It is the only rearrangement in the library that runs away,
+   which was measured over all 868 variables rather than assumed.
+
+   `test_rearrangement_coverage` checks every variable that is not one of
+   these four, and a second test asserts the exceptions are still
+   exceptions — so if one of them starts rearranging, the list is told.
 4. **Complex results and infinities cannot go to Excel.** The exporter raises a
    readable error rather than writing something wrong. Correct behaviour, but a
    user hitting it gets a dialog and no workbook.

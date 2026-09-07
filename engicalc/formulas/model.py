@@ -49,6 +49,23 @@ class Formula:
     #: holds the reason, because "this one is exempt" with no explanation
     #: is how an exemption becomes a place to hide a mistake.
     dimensional_constant: str = ""
+    #: Variables this formula must be solved for numerically, because
+    #: reaching for the closed form does not come back.
+    #:
+    #: Heron's formula for the semi-perimeter is the one: it is a quartic
+    #: in s with four distinct roots, so SymPy goes after the general
+    #: quartic and grinds for minutes. The attempt is abandoned after six
+    #: seconds - but a Python thread cannot be killed, so what was
+    #: abandoned keeps running, and the window would not close afterwards
+    #: because tearing Tk down has to compete with it for the interpreter.
+    #:
+    #: Declared here rather than worked out, for the same reason the
+    #: material slots are: nothing about the shape of the equation says
+    #: it. Degree does not - fourteen variables in the library reach
+    #: degree three or four and rearrange instantly, because they are
+    #: pure powers. Only trying it tells you, so what trying it told us
+    #: is written down.
+    numeric_only: tuple = ()
 
     # -- lazily built SymPy objects ---------------------------------------
     _eq: sp.Eq | None = field(default=None, repr=False, compare=False)
@@ -119,7 +136,7 @@ def make_builder(branch: str):
 
     def build(key, name, category, equation, variables, notes="",
               assumptions="", tags=(), reference="", made_of=None,
-              dimensional_constant=""):
+              dimensional_constant="", numeric_only=()):
         made_of = made_of or {}
         vs = [Variable(sym, *rest) if isinstance(rest, tuple) else Variable(sym, rest)
               for sym, rest in variables.items()]
@@ -135,6 +152,7 @@ def make_builder(branch: str):
                        branch=branch, category=category, equation=equation,
                        variables=vs, notes=notes, assumptions=assumptions,
                        tags=tuple(tags), reference=reference,
-                       dimensional_constant=dimensional_constant)
+                       dimensional_constant=dimensional_constant,
+                       numeric_only=tuple(numeric_only))
 
     return build

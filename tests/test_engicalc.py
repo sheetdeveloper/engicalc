@@ -223,21 +223,60 @@ class TestFormulaLibrary(unittest.TestCase):
         self.assertIsNone(solution.value)
         self.assertTrue(solution.warnings)
 
+    #: The variables with no closed form, by name rather than by formula.
+    #:
+    #: It used to skip the three whole formulas these live in, so twelve
+    #: variables that *do* rearrange went unchecked - and the list sat
+    #: here, where nothing could tell it when it stopped being true.
+    NO_CLOSED_FORM = {
+        ("heat_transfer.fin_efficiency", "m_f"),
+        ("heat_transfer.fin_efficiency", "L"),
+        ("geometry_maths.annuity_payment", "i"),
+    }
+
     def test_rearrangement_coverage(self):
-        """Most library formulas should rearrange for every variable."""
+        """Every library formula rearranges for every variable, bar four.
+
+        Three are transcendental in the variable and SymPy says so
+        quickly. The fourth is Heron's for the semi-perimeter, and the
+        formula declares that one itself - see `numeric_only`.
+        """
+        from engicalc.formulas.library import _timed
+
         failures = []
         for formula in self.library.all():
-            if formula.key in ("heat_transfer.fin_efficiency",
-                               "geometry_maths.heron",
-                               "geometry_maths.annuity_payment"):
-                continue          # known transcendental / slow cases
             for variable in formula.variables:
+                pair = (formula.key, variable.symbol)
+                if (pair in self.NO_CLOSED_FORM
+                        or variable.symbol in formula.numeric_only):
+                    continue
                 try:
-                    if rearrange(formula.eq, sp.Symbol(variable.symbol)) is None:
-                        failures.append((formula.key, variable.symbol))
+                    # Through the same clock the app uses. A rearrangement
+                    # that needs longer than the app will wait is one the
+                    # app does not have, whatever SymPy would eventually
+                    # return.
+                    if _timed(rearrange, formula.eq,
+                              sp.Symbol(variable.symbol)) is None:
+                        failures.append(pair)
                 except Exception:  # noqa: BLE001
-                    failures.append((formula.key, variable.symbol))
+                    failures.append(pair)
         self.assertEqual(failures, [])
+
+    def test_the_exceptions_are_still_exceptions(self):
+        """A skip list nobody checks is a place for a fixed bug to hide.
+
+        If one of these starts rearranging, this fails and the name comes
+        off the list.
+        """
+        from engicalc.formulas.library import _timed
+
+        for key, symbol in sorted(self.NO_CLOSED_FORM):
+            with self.subTest(f"{key} for {symbol}"):
+                formula = self.library.get(key)
+                self.assertIsNone(
+                    _timed(rearrange, formula.eq, sp.Symbol(symbol)),
+                    f"{key} now rearranges for {symbol} - take it off "
+                    f"NO_CLOSED_FORM.")
 
 
 class TestRearrangementIsChecked(unittest.TestCase):
@@ -9768,3 +9807,85 @@ class TestWorkingASheetBackwards(unittest.TestCase):
         self.assertAlmostEqual(15.0 + 15.0 * (0.15 / 0.25),
                                found.answers[0].value, places=6)
 
+
+
+class TestARunawayRearrangementCannotOutliveTheAnswer(unittest.TestCase):
+    """SymPy occasionally goes after a closed form that takes minutes.
+
+    The app gives up after six seconds, which is right - but a Python
+    thread cannot be killed, so what it gave up on carries on. That was
+    not free: the answer came back in six seconds and then EngiCalc would
+    not close, because tearing Tk down has to compete for the interpreter
+    with a computation nobody is waiting on.
+    """
+
+    def test_what_is_abandoned_is_a_daemon(self):
+        """Or it holds the whole process open at exit.
+
+        `concurrent.futures` joins its workers on the way out, and its
+        workers are not daemons - so abandoning one cost the entire
+        process, not a core for a few seconds.
+        """
+        import threading
+        import time as clock
+
+        from engicalc.formulas.library import _timed
+
+        before = {t.ident for t in threading.enumerate()}
+        started = clock.time()
+        self.assertIsNone(_timed(clock.sleep, 30, timeout=0.3))
+        # It really gave up rather than waiting for the work.
+        self.assertLess(clock.time() - started, 5.0)
+
+        left = [t for t in threading.enumerate()
+                if t.ident not in before and t.is_alive()]
+        self.assertTrue(left, "nothing was abandoned, so nothing is proved")
+        for one in left:
+            self.assertTrue(one.daemon,
+                            f"{one.name} is not a daemon, so it will hold "
+                            f"the program open at exit")
+
+    def test_the_one_rearrangement_that_runs_away_is_never_started(self):
+        """Heron's formula for the semi-perimeter. Measured across the
+        whole library: it is the only one."""
+        import time as clock
+
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = get_library().get("geometry_maths.heron")
+        self.assertEqual(("s",), formula.numeric_only)
+
+        started = clock.time()
+        got = solve_formula(formula, "s", {"A": "1.7", "a": "2.43",
+                                           "b": "3.36", "c": "1.09"})
+        # It used to take six seconds and leave a thread running for
+        # minutes afterwards. Iterating takes a hundredth of a second.
+        self.assertLess(clock.time() - started, 2.0)
+        self.assertAlmostEqual(3.6236935238, got.value, places=6)
+        self.assertTrue(any("numerically" in w for w in got.warnings))
+
+    def test_it_still_satisfies_the_equation_it_came_from(self):
+        """The point of the closed form was to be right, so the thing
+        replacing it has to be."""
+        import sympy as sp
+
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = get_library().get("geometry_maths.heron")
+        given = {"A": "1.7", "a": "2.43", "b": "3.36", "c": "1.09"}
+        got = solve_formula(formula, "s", given)
+        subs = {sp.Symbol(k): float(v) for k, v in given.items()}
+        subs[sp.Symbol("s")] = got.value
+        left = float(sp.N(formula.eq.lhs.subs(subs)))
+        right = float(sp.N(formula.eq.rhs.subs(subs)))
+        self.assertAlmostEqual(left, right, places=9)
+
+    def test_the_other_variables_of_it_still_rearrange(self):
+        """Only the one variable is declared, not the whole formula."""
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = get_library().get("geometry_maths.heron")
+        got = solve_formula(formula, "a", {"A": "1.7", "s": "2.43",
+                                           "b": "3.36", "c": "1.09"})
+        self.assertIsNotNone(got.value)
+        self.assertFalse(any("numerically" in w for w in got.warnings))

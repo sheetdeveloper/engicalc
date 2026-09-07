@@ -22,7 +22,12 @@ FORMULAS = [
     f("heron", "Heron's formula", "Plane figures",
       "A = sqrt(s*(s - a)*(s - b)*(s - c))",
       {"A": ("Area", "m^2"), "s": ("Semi-perimeter (a+b+c)/2", "m"),
-       "a": ("Side a", "m"), "b": ("Side b", "m"), "c": ("Side c", "m")}),
+       "a": ("Side a", "m"), "b": ("Side b", "m"), "c": ("Side c", "m")},
+      # Squaring both sides leaves a quartic in s with four distinct
+      # roots, and the general quartic is where SymPy disappears. It is
+      # the only rearrangement in the library that does - measured, not
+      # assumed. Solved by iteration instead, in a hundredth of a second.
+      numeric_only=("s",)),
 
     f("trapezoid_area", "Area of a trapezoid", "Plane figures",
       "A = (a + b)*h/2",

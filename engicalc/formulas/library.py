@@ -176,7 +176,11 @@ def solve_formula(formula: Formula, target: str,
     tgt = sp.Symbol(target)
     warnings: list[str] = []
 
-    expr = _timed(rearrange, formula.eq, tgt, timeout=6.0)
+    # Asked before trying, not after. The attempt can be abandoned but
+    # it cannot be stopped, and what it leaves running is what kept the
+    # window from closing.
+    expr = (None if target in formula.numeric_only
+            else _timed(rearrange, formula.eq, tgt, timeout=6.0))
     if expr is None:
         # A few formulas (implicit or transcendental in the target) have no
         # closed-form rearrangement - solve them numerically instead.
@@ -370,26 +374,38 @@ def _timed(func, *args, timeout: float = 6.0):
     SymPy occasionally disappears down a rabbit hole on an awkward
     rearrangement; the UI must not freeze while that happens.
 
-    The executor is deliberately not used as a context manager. Leaving the
-    `with` block calls shutdown(wait=True), which waits for the runaway call
-    to finish - so this returned None after the timeout as promised, but
-    only once the work it was giving up on had completed. A one second
-    timeout on an eight second call took eight seconds, and the window froze
-    for exactly as long as the timeout existed to prevent.
+    A Python thread cannot be killed from outside, so a call that runs away
+    is abandoned rather than stopped. That is the price of the timeout being
+    real, and it is meant to cost a core for a few seconds while nobody
+    waits on it.
 
-    A Python thread cannot be killed from outside, so the abandoned one runs
-    to completion in the background. That is the price of the timeout being
-    real; it costs a core for a few seconds and nobody is waiting on it.
+    **The thread is a daemon, and that is the whole of why this is written
+    out by hand rather than using a ThreadPoolExecutor.** Executor workers
+    are not daemons, and `concurrent.futures` registers an atexit hook that
+    joins them - so abandoning one did not cost a core for a few seconds, it
+    held the entire process open at exit for as long as the runaway call
+    took. Heron's formula solved for the semi-perimeter answered in six
+    seconds and then EngiCalc would not close: the window went, the process
+    stayed, indefinitely. A daemon thread cannot do that. It is killed with
+    the interpreter, and abandoning it is finally free.
     """
-    import concurrent.futures as cf
+    import threading
 
-    pool = cf.ThreadPoolExecutor(max_workers=1)
-    try:
-        return pool.submit(func, *args).result(timeout=timeout)
-    except Exception:  # noqa: BLE001 - timeout, or SymPy gave up
+    box: dict = {}
+
+    def work():
+        try:
+            box["value"] = func(*args)
+        except Exception:  # noqa: BLE001 - SymPy gave up; so do we
+            box["failed"] = True
+
+    runner = threading.Thread(target=work, daemon=True,
+                              name="engicalc-rearrange")
+    runner.start()
+    runner.join(timeout)
+    if runner.is_alive() or "failed" in box:
         return None
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+    return box.get("value")
 
 
 def _numeric_solve(formula: Formula, target: str, values: dict,
