@@ -1,6 +1,6 @@
 # Fluid properties
 
-Water and steam, moist air, and three refrigerants.
+Water and steam, moist air, and four refrigerants.
 
 **Fluid properties**, in the top row of tabs.
 
@@ -61,8 +61,14 @@ psychrometric chart.
 
 # Refrigerants
 
-R134a, ammonia and propane, under **Properties**, beside water and moist
-air. Pick one at the top of the tab and everything below it follows.
+R134a, ammonia, propane and carbon dioxide, under **Properties**, beside
+water and moist air. Pick one at the top of the tab and everything below it
+follows.
+
+Each comes from its own published reference equation of state - Tillner-Roth
+and Baehr for R134a, Gao and others for ammonia, Lemmon and others for
+propane, Span and Wagner for CO2 - rather than from a table of one and a
+correlation for the rest.
 
 Three ways of asking, the same three as steam: on the saturation line, inside
 the dome at a known dryness, or at a pressure and a temperature that fix the

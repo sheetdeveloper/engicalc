@@ -49,7 +49,7 @@ the area it measures shaded underneath and the working beside it.*
 | ![Section properties](docs/screenshots/section.png) | ![Motion](docs/screenshots/motion.png) |
 | **Section properties** - centroid and second moment, from the dimensions | **Motion** - distance, velocity and acceleration on one time axis |
 | ![R134a](docs/screenshots/r134a.png) | ![Refrigeration cycle](docs/screenshots/cycle.png) |
-| **Refrigerants** - R134a, ammonia and propane, each from its own reference equation | **The refrigeration cycle** - four states, the COP, the duty |
+| **Refrigerants** - R134a, ammonia, propane and CO2, each from its own reference equation | **The refrigeration cycle** - four states, the COP, the duty, and transcritical where there is no condenser |
 | ![Torsion](docs/screenshots/torsion.png) | ![Columns](docs/screenshots/columns.png) |
 | **Torsion** - shear stress and twist, from the power at a speed | **Columns** - Euler, Rankine and Perry-Robertson on one chart |
 | ![Truss](docs/screenshots/truss.png) | ![Pressure vessel](docs/screenshots/vessel.png) |
@@ -380,40 +380,69 @@ a different curve and not one this has. Where that happens the dew point and
 wet bulb are left out with the reason on screen; everything that does not
 depend on that curve is still exactly right.
 
-**Refrigerants** - R134a, ammonia (R717) and propane (R290), each from its
-own published reference equation of state rather than from a table of one
-and a correlation for the others:
+**Refrigerants** - R134a, ammonia (R717), propane (R290) and carbon dioxide
+(R744), each from its own published reference equation of state rather than
+from a table of one and a correlation for the others:
 
 | | |
 | --- | --- |
 | R134a | Tillner-Roth and Baehr (1994) |
 | Ammonia | Gao and others (2023), with the associating term |
 | Propane | Lemmon, McLinden and Wagner (2009) |
+| Carbon dioxide | Span and Wagner (1996), with the non-analytic terms |
 
 The saturation line is found by Maxwell construction - the pressure at
 which the liquid and the vapour sit at the same pressure with the same
 Gibbs energy - and not from a fitted curve. Nothing sets the saturation
 pressure directly, so agreeing with the ancillary equation published
 alongside each formulation is a **result** rather than an arrangement, and
-all three agree with theirs to within the accuracy the ancillary is itself
-quoted to: 0.009% for R134a, 0.016% for propane, 0.05% for ammonia.
+all four agree with theirs to within the accuracy the ancillary is itself
+quoted to: 0.001% for CO2, 0.009% for R134a, 0.016% for propane, 0.05% for
+ammonia.
 
 The boiling points come out at -26.074, -33.316 and -42.114 C against
-published values of -26.07, -33.327 and -42.114. The critical pressure is
-not set either - the equation is evaluated at the critical temperature and
-density and the published pressure comes back.
+published values of -26.07, -33.327 and -42.114. Carbon dioxide has none:
+its triple point is at 5.18 bar, so at one atmosphere there is no liquid
+phase to boil out of and the solid goes straight to gas, which is what dry
+ice does and why it is called dry. The critical pressure is not set either -
+the equation is evaluated at the critical temperature and density and the
+published pressure comes back.
 
-Ammonia's molecules hydrogen bond, and that is why its formulation needed a
-term shape the other two do not have. All three are measured from the same
-reference state - saturated liquid at 0 C, h = 200 kJ/kg, s = 1 kJ/(kg K) -
-so their enthalpies can be put side by side.
+Two of them needed a term shape the others do not have. Ammonia's molecules
+hydrogen bond, which is one. Carbon dioxide's is the other and it is a
+different kind of problem: the critical point is **not analytic** - the heat
+capacity diverges there - and no sum of smooth terms reproduces a
+divergence, so Span and Wagner added three that are not smooth. All four are
+measured from the same reference state - saturated liquid at 0 C,
+h = 200 kJ/kg, s = 1 kJ/(kg K) - so their enthalpies can be put side by
+side.
 
 **The refrigeration cycle** puts four states on that diagram - compressor in
 and out, condenser out, evaporator in - and gives the COP, the work, and the
-mass flow needed for a duty, on any of the three refrigerants. Isentropic
+mass flow needed for a duty, on any of the four refrigerants. Isentropic
 efficiency, superheat and subcooling are all optional and left out rather
 than assumed. The same four states run as a heat pump, since a heat pump is
 this cycle read for what it rejects instead of what it absorbs.
+
+**Transcritical.** Carbon dioxide's critical temperature is 31 C, which is
+below a warm afternoon, so a machine rejecting heat to outside air is often
+above it and nothing condenses: the high side is a supercritical gas being
+cooled, and the component is a gas cooler rather than a condenser. Ask for a
+condensing temperature above 31 C and the tab says so and names the
+temperature rather than producing a number.
+
+The difference that matters is not the name. Below the critical point the
+condensing temperature *fixes* the pressure - they are the same fact, which
+is why a subcritical cycle has one high-side variable. Above it they come
+apart, and there are two: the pressure, which is chosen, and the temperature
+the gas leaves at, which the ambient sets. And because the pressure is now
+free, **there is a best one** - the COP rises with it at first, because more
+heat gets rejected, and then falls, because the compressor is working harder
+for it. The tab finds that maximum and says how far the pressure you asked
+for is from it. At -5 C evaporating and 35 C out of the gas cooler it is
+about 88 bar, and the COP there is 2.12 against 0.80 at 75 bar and 1.74 at
+130 bar - which is why a CO2 plant is controlled on gas cooler pressure and
+an R134a one is not.
 
 Running the same machine on all three shows what the choice of refrigerant
 actually buys. Between -10 and 40 C the COP is 2.88 to 3.00 whichever one

@@ -6097,7 +6097,7 @@ class TestCurvedBeams(unittest.TestCase):
 
 
 class TestRefrigerants(unittest.TestCase):
-    """Ammonia and propane, beside R134a, from their own reference equations.
+    """Four refrigerants, each from its own reference equation.
 
     The check that matters is against the ancillary equation published with
     each formulation. Nothing in this app uses an ancillary - the
@@ -6131,10 +6131,22 @@ class TestRefrigerants(unittest.TestCase):
              (-0.42240851966839504, 2.259), (-2.7378298813798962, 4.287),
              (0.257888414168987, 7.66), (-1.3113462226130785, 18.584)),
             0.0163),
+        "Carbon dioxide": (
+            7377300.0, 304.1282,
+            ((-5.867399337600407, 0.983), (-7.10969550015274, 1.322),
+             (11.022781986239263, 1.488), (4.8260764050219995, 2.807),
+             (-6.240803382557819, 3.571), (-6.7009642572439, 1.941)),
+            0.0011),
     }
 
     #: Boiling points at one standard atmosphere, which are measured
     #: quantities and not outputs of any of these equations.
+    #:
+    #: Carbon dioxide has none. Its triple point is at 5.18 bar, so at one
+    #: atmosphere there is no liquid phase to boil out of - the solid goes
+    #: straight to gas, which is what dry ice does and why it is called
+    #: dry. A fluid missing from here is asserted to have no boiling point
+    #: rather than skipped, because that is the fact.
     BOILING = {"R134a": -26.07, "Ammonia": -33.327, "Propane": -42.114}
 
     @staticmethod
@@ -6146,8 +6158,8 @@ class TestRefrigerants(unittest.TestCase):
 
     @staticmethod
     def _fluids():
-        from engicalc.core import ammonia, propane, r134a
-        return (r134a.FLUID, ammonia.FLUID, propane.FLUID)
+        from engicalc.core import ammonia, co2, propane, r134a
+        return (r134a.FLUID, ammonia.FLUID, propane.FLUID, co2.FLUID)
 
     def test_the_saturation_line_agrees_with_the_published_curve(self):
         for fluid in self._fluids():
@@ -6169,6 +6181,11 @@ class TestRefrigerants(unittest.TestCase):
     def test_the_boiling_points_are_the_measured_ones(self):
         for fluid in self._fluids():
             with self.subTest(fluid=fluid.name):
+                if fluid.name not in self.BOILING:
+                    # No liquid at one atmosphere at all: the triple point
+                    # is above it, so there is nothing to boil.
+                    self.assertGreater(fluid.p_triple, 101325.0)
+                    continue
                 got = fluid.saturation_temperature(101325.0) - 273.15
                 self.assertAlmostEqual(got, self.BOILING[fluid.name],
                                        delta=0.02)
@@ -6207,14 +6224,29 @@ class TestRefrigerants(unittest.TestCase):
         self.assertGreater(heats["Ammonia"] / heats["R134a"], 6.0)
 
     def test_every_derivative_matches_numerical_differentiation(self):
-        # Three term shapes with quite different derivatives - plain and
-        # exponential, the Gaussian bell, and the associating term whose
-        # temperature part is a reciprocal. A sign wrong in any of them
-        # leaves the pressure looking plausible and the heat capacities
-        # nonsense.
+        # Four term shapes with quite different derivatives - plain and
+        # exponential, the Gaussian bell, the associating term whose
+        # temperature part is a reciprocal, and the non-analytic ones. A
+        # sign wrong in any of them leaves the pressure looking plausible
+        # and the heat capacities nonsense.
+        #
+        # The critical point itself is left out, and only for a fluid
+        # that has non-analytic terms in it. There the second temperature
+        # derivative genuinely diverges - that divergence is the heat
+        # capacity blowing up at the critical point, and reproducing it is
+        # the whole reason those terms exist. A central difference across
+        # a pole returns something small and finite, so the comparison
+        # would be testing the difference rather than the derivative.
+        # TestNonAnalyticTerms asserts the divergence instead.
+        from engicalc.core.helmholtz import NonAnalytic
+
         for fluid in self._fluids():
+            odd = any(isinstance(term, NonAnalytic)
+                      for term in fluid.residual)
             for delta in (0.1, 0.5, 1.0, 1.7, 2.5):
                 for tau in (0.7, 1.0, 1.35, 2.5):
+                    if odd and delta == 1.0 and tau == 1.0:
+                        continue
                     with self.subTest(fluid=fluid.name, delta=delta,
                                       tau=tau):
                         self._compare_derivatives(fluid, delta, tau)
@@ -8996,3 +9028,201 @@ class TestReadingOffAGraph(unittest.TestCase):
         spec = PlotSpec(curves=[Curve(expression="x^2 - 4", visible=False)],
                         xmin=-10.0, xmax=10.0)
         self.assertEqual([], read_off(spec))
+
+
+class TestNonAnalyticTerms(unittest.TestCase):
+    """The fourth kind of term, which carbon dioxide's equation needed.
+
+    Span and Wagner's non-analytic terms exist because the critical point
+    is not analytic: the isochoric heat capacity diverges there and no sum
+    of smooth terms reproduces that. The derivatives are written out by
+    hand, which is where an equation of state goes wrong quietly - a bad
+    one still gives plausible numbers.
+    """
+
+    #: Where to check. Deliberately spread over liquid, vapour and the
+    #: critical region, and deliberately *not* at tau exactly 1 with
+    #: delta at 1 - see the test that says why.
+    SPOTS = ((0.4, 0.8), (0.9, 1.05), (1.6, 1.2), (2.4, 1.4), (0.05, 2.0),
+             (2.9, 0.95), (1.1, 0.999), (1.0000001, 1.0002),
+             (1.0000001, 0.9998), (0.999, 1.001))
+
+    STEP = 1e-7
+
+    def _fluids(self):
+        from engicalc.core import ammonia, co2, propane, r134a
+        return ((co2.FLUID, "carbon dioxide"), (r134a.FLUID, "R134a"),
+                (ammonia.FLUID, "ammonia"), (propane.FLUID, "propane"))
+
+    def test_the_derivatives_agree_with_a_difference_of_themselves(self):
+        """Every derivative, on every fluid, against a central difference.
+
+        This cannot catch a mistyped coefficient - the ancillary check
+        does that. It catches a wrong derivative exactly, which is the
+        other half and the half that hand-written algebra gets wrong.
+        """
+        for fluid, name in self._fluids():
+            for delta, tau in self.SPOTS:
+                base = fluid._residual(delta, tau)
+                up = fluid._residual(delta * (1 + self.STEP), tau)
+                down = fluid._residual(delta * (1 - self.STEP), tau)
+                hot = fluid._residual(delta, tau * (1 + self.STEP))
+                cold = fluid._residual(delta, tau * (1 - self.STEP))
+                step_d = 2.0 * delta * self.STEP
+                step_t = 2.0 * tau * self.STEP
+                checks = {
+                    "phi_d": ((up[0] - down[0]) / step_d, base[1]),
+                    "phi_dd": ((up[1] - down[1]) / step_d, base[2]),
+                    "phi_t": ((hot[0] - cold[0]) / step_t, base[3]),
+                    "phi_tt": ((hot[3] - cold[3]) / step_t, base[4]),
+                    "phi_dt": ((hot[1] - cold[1]) / step_t, base[5]),
+                }
+                for what, (numeric, analytic) in checks.items():
+                    scale = max(abs(numeric), abs(analytic), 1e-8)
+                    with self.subTest(fluid=name, delta=delta, tau=tau,
+                                      derivative=what):
+                        self.assertLess(abs(numeric - analytic) / scale,
+                                        1e-5)
+
+    def test_the_critical_point_itself_is_where_it_stops_being_smooth(self):
+        """And that is the point of the terms, not a defect in them.
+
+        At the critical point the second temperature derivative diverges -
+        which is the divergence in the heat capacity that these terms were
+        added to reproduce. A central difference straddles it and returns
+        something small and finite, so the one place the check above
+        cannot be applied is the one place the terms are doing their job.
+        """
+        from engicalc.core import co2
+
+        fluid = co2.FLUID
+        step = 1e-6
+        at_the_point = fluid._residual(1.0, 1.0)[4]
+        hot = fluid._residual(1.0, 1.0 + step)[3]
+        cold = fluid._residual(1.0, 1.0 - step)[3]
+        difference = (hot - cold) / (2.0 * step)
+
+        # Enormous, and nothing like the difference across it.
+        self.assertGreater(abs(at_the_point), 1e5)
+        self.assertLess(abs(difference), 1e3)
+
+        # And it grows without bound as the point is approached, which is
+        # the divergence rather than a large number that happens to be
+        # there.
+        near = [abs(fluid._residual(1.0, 1.0 + gap)[4])
+                for gap in (1e-3, 1e-5, 1e-7, 1e-9)]
+        self.assertEqual(near, sorted(near))
+
+    def test_a_term_says_what_it_is_rather_than_how_long_it_is(self):
+        """The other three shapes are told apart by length; this one is 8,
+        and so is a Gaussian. Dispatching on length alone would read every
+        non-analytic term as a Gaussian and quietly give wrong answers."""
+        from engicalc.core import co2
+        from engicalc.core.helmholtz import NonAnalytic
+
+        odd = [t for t in co2.RESIDUAL if isinstance(t, NonAnalytic)]
+        self.assertEqual(3, len(odd))
+        self.assertTrue(all(len(t) == 8 for t in odd))
+        self.assertEqual(42, len(co2.RESIDUAL))
+
+
+class TestTranscriticalCycle(unittest.TestCase):
+    """A machine with no condenser in it.
+
+    Carbon dioxide's critical temperature is 31 C, so a system rejecting
+    heat to a warm ambient is above it and nothing condenses. The high
+    side then has two independent variables instead of one, and the
+    pressure becomes a choice with a best answer.
+    """
+
+    def _cycle(self, **changed):
+        from engicalc.core import co2
+        from engicalc.core.cycle import Cycle
+
+        settings = dict(fluid=co2.FLUID, evaporating=273.15 - 5.0,
+                        gas_cooler_pressure=90e5,
+                        gas_cooler_out=273.15 + 35.0,
+                        superheat=5.0, efficiency=0.7)
+        settings.update(changed)
+        return Cycle(**settings)
+
+    def test_asking_it_to_condense_above_the_critical_point_is_refused(self):
+        """And the refusal says what to do instead."""
+        from engicalc.core import co2
+        from engicalc.core.cycle import Cycle, CycleError
+
+        run = Cycle(fluid=co2.FLUID, evaporating=273.15 - 5.0,
+                    condensing=273.15 + 35.0)
+        with self.assertRaises(CycleError) as caught:
+            run.states()
+        said = str(caught.exception)
+        self.assertIn("31.0 C", said)
+        self.assertIn("transcritical", said)
+
+    def test_the_energy_still_closes(self):
+        run = self._cycle()
+        found = run.performance()
+        closes = (found["refrigerating effect"] + found["compressor work"]
+                  - found["heat rejected"])
+        self.assertLess(abs(closes), 1e-6 * found["heat rejected"])
+        self.assertAlmostEqual(found["heating COP"],
+                               found["cooling COP"] + 1.0, places=9)
+
+    def test_nothing_condenses_so_the_high_side_is_one_phase(self):
+        """State 3 is a gas, not saturated liquid. It has no dryness."""
+        _first, second, third, fourth = self._cycle().states()
+        from engicalc.core import co2
+
+        self.assertGreater(second.p, co2.P_CRITICAL)
+        self.assertGreater(third.p, co2.P_CRITICAL)
+        self.assertIsNone(third.quality)
+        # And the throttle still flashes a lot of it - which is why a real
+        # CO2 plant puts something after the throttle to recover it.
+        self.assertGreater(fourth.quality, 0.35)
+
+    def test_the_pressure_has_a_best_value_and_the_search_finds_it(self):
+        """Scanned rather than trusted: the search is checked against a
+        sweep of the same function it is searching."""
+        run = self._cycle()
+        best = run.best_pressure()
+        mine = run.at_pressure(best).performance()["cooling COP"]
+        for bar in range(76, 131, 2):
+            with self.subTest(bar=bar):
+                there = run.at_pressure(bar * 1e5).performance()["cooling COP"]
+                self.assertLessEqual(there, mine + 1e-6)
+
+    def test_the_best_pressure_rises_with_the_outlet_temperature(self):
+        """The one number a CO2 plant is actually controlled on.
+
+        A warmer gas cooler outlet needs a higher pressure, because it is
+        the isotherm getting further from the dome that has to be paid
+        for. It is monotonic, and steep - about six bar per kelvin.
+        """
+        found = [self._cycle(gas_cooler_out=273.15 + out).best_pressure()
+                 for out in (28, 32, 35, 40, 45)]
+        self.assertEqual(found, sorted(found))
+        self.assertGreater(found[-1] - found[0], 30e5)
+
+    def test_a_subcritical_cycle_has_no_pressure_to_optimise(self):
+        from engicalc.core import r134a
+        from engicalc.core.cycle import Cycle, CycleError
+
+        run = Cycle(fluid=r134a.FLUID, evaporating=263.15,
+                    condensing=313.15, superheat=5.0)
+        with self.assertRaises(CycleError):
+            run.best_pressure()
+
+    def test_carbon_dioxide_still_works_subcritically(self):
+        """On a cold enough day it condenses like anything else."""
+        from engicalc.core import co2
+        from engicalc.core.cycle import Cycle
+
+        run = Cycle(fluid=co2.FLUID, evaporating=273.15 - 30.0,
+                    condensing=273.15 + 10.0, superheat=5.0,
+                    efficiency=0.7)
+        found = run.performance()
+        self.assertGreater(found["cooling COP"], 1.0)
+        self.assertFalse(run.transcritical)
+        _first, _second, third, _fourth = run.states()
+        self.assertAlmostEqual(third.T, 273.15 + 10.0, places=6)
+

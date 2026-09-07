@@ -37,6 +37,12 @@ equation needed a shape the others do not. Note the signs: in that one eta
 is used with a plus and is published negative, and the temperature part is
 a reciprocal rather than a Gaussian.
 
+There is a fourth, and it does not fit that scheme because it needs eight
+numbers and so does a Gaussian. It says what it is instead - see
+``NonAnalytic``, which carbon dioxide's equation is built on. A Gaussian
+bell is smooth and the critical point is not: the heat capacity diverges
+there, and no sum of smooth terms reproduces a divergence.
+
 A fluid whose published equation needs a shape not listed here has to have
 it added rather than approximated by one of these.
 """
@@ -46,12 +52,125 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import NamedTuple
 
 from .parsing import ParseError
 
 
 class FluidError(ParseError):
     """Raised when a state cannot be worked out."""
+
+
+class NonAnalytic(NamedTuple):
+    """Span and Wagner's fourth kind of term, for the critical region.
+
+    The three shapes above are told apart by how long the tuple is, and
+    this one needs eight numbers, which is what a Gaussian term needs. So
+    it says what it is instead. It is still a tuple, so the length test
+    would match it - which is why the dispatch asks this question first.
+
+    The term is ``n * Delta^b * delta * psi``, where::
+
+        theta = (1 - tau) + A * ((delta-1)^2)^(1/(2 beta))
+        Delta = theta^2 + B * ((delta-1)^2)^a
+        psi   = exp(-C (delta-1)^2 - D (tau-1)^2)
+
+    It exists because a Gaussian bell is analytic and the critical point
+    is not: the isochoric heat capacity diverges there, and no sum of
+    smooth terms reproduces that. These three do. The price is that the
+    expression is singular at ``delta = 1`` even though the fluid is not -
+    see ``_non_analytic``.
+    """
+
+    n: float
+    a: float
+    b: float
+    beta: float
+    A: float
+    B: float
+    C: float
+    D: float
+
+
+#: How far to move off delta = 1 when a state lands exactly on the
+#: reducing density. The non-analytic term is written with (delta-1) in
+#: denominators and with negative powers of (delta-1)^2, so it is
+#: singular there while the fluid is perfectly well behaved. The limits
+#: exist; nudging is the ordinary way of taking them, and a part in ten
+#: billion of the density is far below anything else in the calculation.
+OFF_THE_AXIS = 1e-10
+
+
+def _non_analytic(term, delta: float, tau: float) -> tuple:
+    """(phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt) for one such term.
+
+    Written out rather than differentiated numerically because these
+    derivatives are what the pressure and the heat capacity *are*, and a
+    finite difference of a term that is deliberately not smooth at the
+    critical point is the one place it would go wrong.
+    """
+    n, a, b, beta, A, B, C, D = term
+    if abs(delta - 1.0) < OFF_THE_AXIS:
+        delta = 1.0 + OFF_THE_AXIS
+
+    gap = delta - 1.0
+    square = gap * gap
+    dt = tau - 1.0
+
+    # psi: a plain Gaussian in both, so its derivatives are the usual ones.
+    psi = math.exp(-C * square - D * dt * dt)
+    psi_d = -2.0 * C * gap * psi
+    psi_dd = (2.0 * C * square - 1.0) * 2.0 * C * psi
+    psi_t = -2.0 * D * dt * psi
+    psi_tt = (2.0 * D * dt * dt - 1.0) * 2.0 * D * psi
+    psi_dt = 4.0 * C * D * gap * dt * psi
+
+    # theta and Delta. The fractional powers of (delta-1)^2 are what make
+    # this non-analytic, and they are also why delta = 1 had to be moved.
+    half = 1.0 / (2.0 * beta)
+    theta = (1.0 - tau) + A * square ** half
+    Delta = theta * theta + B * square ** a
+
+    Delta_d = gap * (A * theta * (2.0 / beta) * square ** (half - 1.0)
+                     + 2.0 * B * a * square ** (a - 1.0))
+    Delta_dd = (Delta_d / gap
+                + square * (4.0 * B * a * (a - 1.0) * square ** (a - 2.0)
+                            + 2.0 * A * A * (1.0 / beta) ** 2
+                            * (square ** (half - 1.0)) ** 2
+                            + A * theta * (4.0 / beta) * (half - 1.0)
+                            * square ** (half - 2.0)))
+
+    # Delta^b and its derivatives. Delta is a square plus a positive
+    # multiple of a positive number, so it is positive and the power is
+    # real - but at the very edge of the two-phase region rounding can
+    # take it to nought, and 0^(b-2) is not a number.
+    if Delta <= 0.0:
+        return (0.0,) * 6
+    Db = Delta ** b
+    Db1 = Delta ** (b - 1.0)
+    Db2 = Delta ** (b - 2.0)
+
+    Db_d = b * Db1 * Delta_d
+    Db_dd = b * (Db1 * Delta_dd + (b - 1.0) * Db2 * Delta_d * Delta_d)
+    Db_t = -2.0 * theta * b * Db1
+    Db_tt = 2.0 * b * Db1 + 4.0 * theta * theta * b * (b - 1.0) * Db2
+    Db_dt = (-A * b * (2.0 / beta) * Db1 * gap * square ** (half - 1.0)
+             - 2.0 * theta * b * (b - 1.0) * Db2 * Delta_d)
+
+    # And the product rule over Delta^b * delta * psi.
+    phi = Db * delta * psi
+    phi_d = Db * (psi + delta * psi_d) + Db_d * delta * psi
+    phi_dd = (Db * (2.0 * psi_d + delta * psi_dd)
+              + 2.0 * Db_d * (psi + delta * psi_d)
+              + Db_dd * delta * psi)
+    phi_t = delta * (Db_t * psi + Db * psi_t)
+    phi_tt = delta * (Db_tt * psi + 2.0 * Db_t * psi_t + Db * psi_tt)
+    phi_dt = (Db * (psi_t + delta * psi_dt)
+              + Db_d * delta * psi_t
+              + Db_t * (psi + delta * psi_d)
+              + Db_dt * delta * psi)
+    return (n * phi, n * phi_d, n * phi_dd,
+            n * phi_t, n * phi_tt, n * phi_dt)
 
 
 @dataclass
@@ -148,6 +267,17 @@ class Fluid:
         """(phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt), residual part."""
         phi = phi_d = phi_dd = phi_t = phi_tt = phi_dt = 0.0
         for term in self.residual:
+            if isinstance(term, NonAnalytic):
+                # Asked first: a NonAnalytic is a tuple of eight, so the
+                # length test below would take it for a Gaussian.
+                got = _non_analytic(term, delta, tau)
+                phi += got[0]
+                phi_d += got[1]
+                phi_dd += got[2]
+                phi_t += got[3]
+                phi_tt += got[4]
+                phi_dt += got[5]
+                continue
             n, d, t, c = term[:4]
             power = n * delta ** d * tau ** t
             if len(term) == 9:

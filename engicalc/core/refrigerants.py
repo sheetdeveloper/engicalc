@@ -4,7 +4,7 @@ Adding another is a module beside this one and a line in ``FLUIDS``. The
 tabs read from here rather than naming a fluid, so nothing else has to
 change.
 
-All three are measured from the same reference state - saturated liquid at
+All four are measured from the same reference state - saturated liquid at
 0 C with h = 200 kJ/kg and s = 1 kJ/(kg K) - so their enthalpies can be put
 side by side. A table printed from a different reference has every enthalpy
 shifted by a constant and every difference the same, which is what actually
@@ -13,7 +13,7 @@ gets used.
 
 from __future__ import annotations
 
-from . import ammonia, propane, r134a
+from . import ammonia, co2, propane, r134a
 
 #: name -> (fluid, what it is for)
 FLUIDS = {
@@ -33,6 +33,14 @@ FLUIDS = {
         "A hydrocarbon with a warming potential of about three. "
         "Flammable, which is why the charge in a system using it is "
         "limited rather than why it is not used."),
+    "Carbon dioxide (R744)": (
+        co2.FLUID,
+        "A warming potential of one, by definition, and non-flammable "
+        "and non-toxic. Its critical temperature is 31 C, which is below "
+        "a warm afternoon, so a system rejecting heat to outside air is "
+        "often above it and there is no condenser in the ordinary sense - "
+        "see the note on the cycle tab. Pressures are several times any "
+        "other refrigerant's."),
 }
 
 

@@ -41,9 +41,24 @@ STATE_ROWS = [
     ("x", "dryness", "", lambda s: s.quality),
 ]
 
-#: What each corner of the cycle is.
-CORNERS = ["1 into the compressor", "2 into the condenser",
-           "3 into the throttle", "4 into the evaporator"]
+#: Where the refrigerant is at each corner - the component it is about to
+#: go into. The second one is a condenser below the critical point and a
+#: gas cooler above it, which is not pedantry: it is the difference the
+#: transcritical half of this tab is about, and this is the one place on
+#: screen where it shows.
+CORNERS = ["into the\ncompressor", "into the\ncondenser",
+           "into the\nthrottle", "into the\nevaporator"]
+TRANSCRITICAL_CORNERS = ["into the\ncompressor", "into the\ngas cooler",
+                         "into the\nthrottle", "into the\nevaporator"]
+
+
+def corners(transcritical: bool) -> list:
+    return TRANSCRITICAL_CORNERS if transcritical else CORNERS
+
+#: A refrigerant whose critical temperature is below this cannot reject
+#: heat to an ordinary ambient by condensing, so the tab opens on the
+#: transcritical form when one is chosen.
+WARM_AMBIENT = 273.15 + 35.0
 
 
 class CycleTab(ttk.Frame):
@@ -80,17 +95,38 @@ class CycleTab(ttk.Frame):
         box = ttk.Combobox(first, state="readonly", width=10,
                            textvariable=self.fluid, values=list(FLUIDS))
         box.pack(side="left", padx=(4, 14))
-        box.bind("<<ComboboxSelected>>", lambda e: self.compute())
+        box.bind("<<ComboboxSelected>>", lambda e: self._fluid_changed())
         self.evaporating = self._entry(first, "Evaporating at", "-10",
                                        "deg C")
-        self.condensing = self._entry(first, "condensing at", "40", "deg C")
+
+        # The high side, which is one question below the critical point
+        # and two above it. Both sets of boxes are built and one is shown.
+        self.high_side = tk.StringVar(value="condensing")
+        self.subcritical_box = ttk.Frame(first)
+        self.condensing = self._entry(self.subcritical_box, "condensing at",
+                                      "40", "deg C")
+        self.transcritical_box = ttk.Frame(first)
+        self.gas_pressure = self._entry(self.transcritical_box,
+                                        "gas cooler at", "90", "bar")
+        self.gas_out = self._entry(self.transcritical_box, "leaving at",
+                                   "35", "deg C")
+        self.subcritical_box.pack(side="left")
 
         second = ttk.Frame(asked)
         second.pack(fill="x", pady=(6, 0))
         self.superheat = self._entry(second, "Superheat", "5", "K")
-        self.subcool = self._entry(second, "Subcooling", "3", "K")
+        self.subcool_box = ttk.Frame(second)
+        self.subcool_box.pack(side="left")
+        self.subcool = self._entry(self.subcool_box, "Subcooling", "3", "K")
         self.efficiency = self._entry(second, "Compressor", "70",
                                       "% isentropic")
+        self.efficiency_holder = self._last_holder
+        for label, value in (("condensing", "condensing"),
+                             ("gas cooler (transcritical)", "gas cooler")):
+            ttk.Radiobutton(second, text=label, value=value,
+                            variable=self.high_side,
+                            command=self._high_side_changed).pack(
+                                side="left", padx=(8, 0))
 
         third = ttk.Frame(asked)
         third.pack(fill="x", pady=(6, 0))
@@ -135,6 +171,34 @@ class CycleTab(ttk.Frame):
         ttk.Button(actions, text="Save chart...",
                    command=self.save_chart).pack(side="right", padx=6)
 
+    def _fluid_changed(self) -> None:
+        """A refrigerant that cannot condense at ambient opens transcritical.
+
+        Not forced - the radio buttons still say what the cycle is, and a
+        cold enough ambient makes a subcritical CO2 cycle perfectly real.
+        It is the sensible thing to be looking at first.
+        """
+        fluid = FLUIDS[self.fluid.get()]
+        warm = getattr(fluid, "T_critical", 1e9) < WARM_AMBIENT
+        self.high_side.set("gas cooler" if warm else "condensing")
+        self._high_side_changed()
+
+    def _high_side_changed(self) -> None:
+        """Show the two boxes the chosen high side actually has."""
+        transcritical = self.high_side.get() == "gas cooler"
+        self.subcritical_box.pack_forget()
+        self.transcritical_box.pack_forget()
+        (self.transcritical_box if transcritical
+         else self.subcritical_box).pack(side="left")
+        # Subcooling is measured from a condensing temperature. Above the
+        # critical point there is not one, so the box goes rather than
+        # sitting there taking a number nothing can use.
+        if transcritical:
+            self.subcool_box.pack_forget()
+        else:
+            self.subcool_box.pack(side="left", before=self.efficiency_holder)
+        self.compute()
+
     def _entry(self, parent, label: str, value: str, unit: str):
         holder = ttk.Frame(parent)
         holder.pack(side="left", padx=(0, 14))
@@ -145,6 +209,7 @@ class CycleTab(ttk.Frame):
         entry.bind("<Return>", lambda e: self.compute())
         variable.trace_add("write", lambda *a: self.compute())
         ttk.Label(holder, text=unit, style="Hint.TLabel").pack(side="left")
+        self._last_holder = holder
         return variable
 
     # -- working it out -----------------------------------------------------
@@ -159,19 +224,29 @@ class CycleTab(ttk.Frame):
         return float(value)
 
     def cycle(self) -> cycles.Cycle:
-        return cycles.Cycle(
+        shared = dict(
             fluid=FLUIDS[self.fluid.get()],
             evaporating=self._number(self.evaporating,
                                      "the evaporating temperature") + 273.15,
-            condensing=self._number(self.condensing,
-                                    "the condensing temperature") + 273.15,
             superheat=self._number(self.superheat, "the superheat", 0.0),
-            subcool=self._number(self.subcool, "the subcooling", 0.0),
             efficiency=self._number(self.efficiency,
                                     "the compressor efficiency", 100.0)
             / 100.0,
             duty=self._number(self.duty, "the duty", 0.0) * 1000.0,
             heating=self.wanted.get() == "heating")
+        if self.high_side.get() == "gas cooler":
+            return cycles.Cycle(
+                gas_cooler_pressure=self._number(
+                    self.gas_pressure, "the gas cooler pressure") * 1e5,
+                gas_cooler_out=self._number(
+                    self.gas_out,
+                    "the temperature leaving the gas cooler") + 273.15,
+                **shared)
+        return cycles.Cycle(
+            condensing=self._number(self.condensing,
+                                    "the condensing temperature") + 273.15,
+            subcool=self._number(self.subcool, "the subcooling", 0.0),
+            **shared)
 
     def compute(self, *_args) -> None:
         try:
@@ -201,10 +276,12 @@ class CycleTab(ttk.Frame):
         self.table.clear()
         body = self.table.body
         self.rows = []
+        where = corners(self.high_side.get() == "gas cooler")
 
         ttk.Label(body, text="", width=20).grid(row=0, column=0)
-        for column, corner in enumerate(CORNERS, start=1):
-            ttk.Label(body, text=corner.split()[0], width=13, anchor="e",
+        for column, corner in enumerate(where, start=1):
+            ttk.Label(body, text=f"{column}  {corner}", width=13,
+                      anchor="e", justify="right",
                       font=("Segoe UI", 9, "bold")).grid(
                           row=0, column=column, sticky="e", padx=4)
 
@@ -330,8 +407,11 @@ class CycleTab(ttk.Frame):
         if not path:
             return
         try:
+            where = corners(self.high_side.get() == "gas cooler")
             with figures.temporary_png(self.figure) as picture:
-                export_table(["Quantity"] + [c.split()[0] for c in CORNERS]
+                export_table(["Quantity"]
+                             + [f"{n} {c}".replace("\n", " ")
+                                for n, c in enumerate(where, start=1)]
                              + ["Unit"],
                              [list(row) for row in self.rows], path,
                              title=f"{self.fluid.get()} refrigeration cycle",
