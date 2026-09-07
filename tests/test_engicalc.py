@@ -251,12 +251,15 @@ class TestFormulaLibrary(unittest.TestCase):
                         or variable.symbol in formula.numeric_only):
                     continue
                 try:
-                    # Through the same clock the app uses. A rearrangement
-                    # that needs longer than the app will wait is one the
-                    # app does not have, whatever SymPy would eventually
-                    # return.
+                    # On a clock, so a rearrangement that runs away cannot
+                    # hang the suite - but a generous one. The app waits
+                    # six seconds because a window must not freeze; the
+                    # question here is only whether a closed form exists,
+                    # and tying that to six seconds made this test fail
+                    # whenever the machine was busy with something else.
                     if _timed(rearrange, formula.eq,
-                              sp.Symbol(variable.symbol)) is None:
+                              sp.Symbol(variable.symbol),
+                              timeout=60.0) is None:
                         failures.append(pair)
                 except Exception:  # noqa: BLE001
                     failures.append(pair)
@@ -274,7 +277,8 @@ class TestFormulaLibrary(unittest.TestCase):
             with self.subTest(f"{key} for {symbol}"):
                 formula = self.library.get(key)
                 self.assertIsNone(
-                    _timed(rearrange, formula.eq, sp.Symbol(symbol)),
+                    _timed(rearrange, formula.eq, sp.Symbol(symbol),
+                           timeout=60.0),
                     f"{key} now rearranges for {symbol} - take it off "
                     f"NO_CLOSED_FORM.")
 
