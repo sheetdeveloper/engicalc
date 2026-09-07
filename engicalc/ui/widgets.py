@@ -7,22 +7,10 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-#: The page behind everything. Quiet, so the white cards on it read as
-#: content rather than as another panel.
-BG = "#f1f3f6"
-#: Content sits on this.
-SURFACE = "#ffffff"
-#: Hairlines. A one pixel line separates things as well as a bevel does and
-#: takes up a tenth of the room.
-LINE = "#dcdfe5"
-#: The accent, used on the control that does the work and on the heading
-#: that says what a panel is - and nowhere else, so it keeps meaning that.
-ACCENT = "#1f4e79"
-ACCENT_LIGHT = "#2b6ca8"
-ACCENT_SOFT = "#e8f0f9"
-#: Text.
-INK = "#1b1d21"
-MUTED = "#6b7280"
+from . import theme
+
+# The colours themselves live in `theme`, which is the only place they
+# are written down. This module is what puts them onto widgets.
 
 _CACHE_ROOTS: dict = {}
 
@@ -50,7 +38,31 @@ MONO_BIG = ("Consolas", 12)
 
 
 def apply_theme(root: tk.Tk) -> None:
-    """Style every widget class the app uses, from the palette above."""
+    """Style every widget class the app uses, from the palette in force.
+
+    Callable again. The colours are read here rather than bound at import,
+    so changing the base or the accent and calling this restyles every
+    ttk widget in the window at once - which is most of it.
+    """
+    palette = theme.colours()
+    BG = palette["bg"]
+    SURFACE = palette["surface"]
+    LINE = palette["line"]
+    ACCENT = palette["accent"]
+    ACCENT_LIGHT = palette["accent_light"]
+    ACCENT_SOFT = palette["accent_soft"]
+    INK = palette["ink"]
+    MUTED = palette["muted"]
+    FIELD = palette["field"]
+    # The few in-between greys, mixed rather than written down: a pressed
+    # button at #e4e8ee looks pressed on a light page and looks like a
+    # hole in a dark one.
+    PRESSED = theme.mix(BG, INK, 0.10)
+    PAD_PRESSED = theme.mix(ACCENT_SOFT, ACCENT, 0.30)
+    ACCENT_PRESSED = theme.mix(ACCENT, INK, 0.22)
+    BAR = theme.mix(BG, INK, 0.16)
+    BAR_ACTIVE = theme.mix(BG, INK, 0.28)
+
     style = ttk.Style(root)
     # clam is the one that lets most of this be set at all; the native
     # themes ignore half of it.
@@ -84,11 +96,15 @@ def apply_theme(root: tk.Tk) -> None:
     # Ten tabs need room to be told apart, and the selected one needs to
     # look like the page it opens rather than like its neighbours.
     style.configure("TNotebook", background=BG, borderwidth=0,
+                    bordercolor=LINE, lightcolor=BG, darkcolor=BG,
                     tabmargins=(2, 4, 2, 0))
     style.configure("TNotebook.Tab", background=BG, foreground=MUTED,
-                    padding=(14, 7), borderwidth=0,
+                    padding=(14, 7), borderwidth=1,
+                    bordercolor=LINE, lightcolor=BG, darkcolor=BG,
                     font=("Segoe UI", 9))
     style.map("TNotebook.Tab",
+              lightcolor=[("selected", SURFACE)],
+              darkcolor=[("selected", SURFACE)],
               background=[("selected", SURFACE), ("active", ACCENT_SOFT)],
               foreground=[("selected", ACCENT), ("active", ACCENT)],
               font=[("selected", ("Segoe UI", 9, "bold"))],
@@ -100,19 +116,23 @@ def apply_theme(root: tk.Tk) -> None:
                     relief="solid", borderwidth=1, padding=(12, 5),
                     focusthickness=0, focuscolor="")
     style.map("TButton",
-              background=[("pressed", "#e4e8ee"), ("active", ACCENT_SOFT)],
+              background=[("pressed", PRESSED), ("active", ACCENT_SOFT)],
               bordercolor=[("active", ACCENT_LIGHT)],
               foreground=[("active", ACCENT)])
 
     # The one that does the work is filled, so it is obvious which it is.
+    # What is written on it is white or black, whichever can be read on the
+    # accent - white is right for navy and wrong for amber.
+    ON_ACCENT = ("#ffffff" if theme.contrast(ACCENT, "#ffffff")
+                 >= theme.contrast(ACCENT, "#111111") else "#111111")
     style.configure("Accent.TButton", font=("Segoe UI", 9, "bold"),
-                    background=ACCENT, foreground="#ffffff",
+                    background=ACCENT, foreground=ON_ACCENT,
                     bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
                     relief="solid", borderwidth=1, padding=(14, 5))
     style.map("Accent.TButton",
-              background=[("pressed", "#17395a"), ("active", ACCENT_LIGHT)],
+              background=[("pressed", ACCENT_PRESSED), ("active", ACCENT_LIGHT)],
               bordercolor=[("active", ACCENT_LIGHT)],
-              foreground=[("active", "#ffffff")])
+              foreground=[("active", ON_ACCENT)])
 
     style.configure("TMenubutton", background=SURFACE, foreground=INK,
                     bordercolor=LINE, relief="solid", borderwidth=1,
@@ -123,7 +143,7 @@ def apply_theme(root: tk.Tk) -> None:
 
     # -- fields ----------------------------------------------------------
     for name in ("TEntry", "TCombobox", "TSpinbox"):
-        style.configure(name, fieldbackground=SURFACE, background=SURFACE,
+        style.configure(name, fieldbackground=FIELD, background=FIELD,
                         foreground=INK, bordercolor=LINE, lightcolor=LINE,
                         darkcolor=LINE, insertcolor=INK,
                         relief="solid", borderwidth=1, padding=(5, 3),
@@ -132,7 +152,7 @@ def apply_theme(root: tk.Tk) -> None:
                   bordercolor=[("focus", ACCENT_LIGHT)],
                   lightcolor=[("focus", ACCENT_LIGHT)],
                   darkcolor=[("focus", ACCENT_LIGHT)])
-    style.map("TCombobox", fieldbackground=[("readonly", SURFACE)],
+    style.map("TCombobox", fieldbackground=[("readonly", FIELD)],
               arrowcolor=[("active", ACCENT)])
 
     # -- the symbol pad --------------------------------------------------
@@ -144,7 +164,7 @@ def apply_theme(root: tk.Tk) -> None:
                     lightcolor=SURFACE, darkcolor=SURFACE,
                     focusthickness=0, focuscolor="")
     style.map("Pad.TButton",
-              background=[("pressed", "#d7e4f6"), ("active", ACCENT_SOFT)],
+              background=[("pressed", PAD_PRESSED), ("active", ACCENT_SOFT)],
               bordercolor=[("active", ACCENT_LIGHT)],
               relief=[("pressed", "solid"), ("active", "solid")])
     style.configure("PadGroup.TLabel", font=("Segoe UI", 8, "bold"),
@@ -170,27 +190,126 @@ def apply_theme(root: tk.Tk) -> None:
                     borderwidth=0)
     for orientation in ("Vertical.TScrollbar", "Horizontal.TScrollbar"):
         style.map(orientation,
-                  background=[("active", "#c3c8d1"), ("!active", "#d5d9e0")])
+                  background=[("active", BAR_ACTIVE), ("!active", BAR)])
 
     style.configure("TPanedwindow", background=BG)
     style.configure("Sash", sashthickness=6, gripcount=0)
 
-    _side_tabs(style)
-    root.configure(background=BG)
+    style.configure("Card.TFrame", background=SURFACE, relief="solid",
+                    borderwidth=1, bordercolor=LINE,
+                    lightcolor=LINE, darkcolor=LINE)
 
+    _side_tabs(style, palette)
+    root.configure(background=BG)
+    _menu_colours(root, palette)
+
+
+
+def _menu_colours(root, palette: dict) -> None:
+    """The menu bar, which is a tk widget and takes no style.
+
+    On Windows the menu bar itself is drawn by the system and ignores
+    this; the drop-downs do not, and a white menu hanging off a dark
+    window is worse than none of it being themed.
+    """
+    menu = root.nametowidget(root.cget("menu")) if root.cget("menu") else None
+    if menu is None:
+        return
+    for one in _every_menu(menu):
+        try:
+            one.configure(background=palette["surface"],
+                          foreground=palette["ink"],
+                          activebackground=palette["accent_soft"],
+                          activeforeground=palette["accent"],
+                          selectcolor=palette["accent"],
+                          borderwidth=0)
+        except tk.TclError:
+            pass
+
+
+def _every_menu(menu):
+    """A menu and every menu hanging off it."""
+    found = [menu]
+    for index in range(menu.index("end") or 0, -1, -1):
+        try:
+            child = menu.entrycget(index, "menu")
+        except tk.TclError:
+            continue
+        if child:
+            found += _every_menu(menu.nametowidget(child))
+    return found
+
+
+def retheme(widget, redraw: bool = True) -> None:
+    """Put the colours onto everything ttk styling cannot reach.
+
+    Walks the window. A widget that knows what it wants says so by having
+    a ``retheme`` of its own - the maths canvases do, because a canvas
+    that matplotlib owns must not be touched and one of ours must. The
+    rest are plain tk text boxes and lists, which ttk has no say over.
+
+    ``redraw=False`` does the plain widgets and nothing else. That is the
+    startup pass: everything built from the palette is already the right
+    colour, and asking a tab to draw itself again the moment after it was
+    drawn is just the slow half of opening the window done twice.
+    """
+    palette = theme.colours()
+    _retheme(widget, palette, redraw)
+
+
+def _retheme(widget, palette: dict, redraw: bool) -> None:
+    own = getattr(widget, "retheme", None) if redraw else None
+    if callable(own) and widget.__class__.__module__.startswith("engicalc"):
+        try:
+            own()
+        except Exception:                              # noqa: BLE001
+            pass
+    else:
+        _plain(widget, palette)
+    for child in widget.winfo_children():
+        _retheme(child, palette, redraw)
+
+
+def _plain(widget, palette: dict) -> None:
+    if isinstance(widget, tk.Toplevel):
+        try:
+            widget.configure(background=palette["bg"])
+        except tk.TclError:
+            pass
+        return
+    if isinstance(widget, (tk.Text, tk.Listbox)):
+        try:
+            widget.configure(background=palette["field"],
+                             foreground=palette["ink"],
+                             insertbackground=palette["ink"],
+                             selectbackground=palette["accent_soft"],
+                             selectforeground=palette["accent"],
+                             highlightbackground=palette["line"],
+                             highlightcolor=palette["line"])
+        except tk.TclError:
+            pass
 
 
 #: Sub-tabs run down the left with an icon as well as a label. Set on the
 #: notebook with style="Side.TNotebook".
-def _side_tabs(style) -> None:
+def _side_tabs(style, palette: dict) -> None:
     """A notebook whose tabs run down the left-hand side.
 
     Only clam lets `tabposition` be set at all, which is why the app is on
     clam; the native themes draw their own tabs and ignore it.
     """
+    BG = palette["bg"]
+    SURFACE = palette["surface"]
+    ACCENT = palette["accent"]
+    ACCENT_SOFT = palette["accent_soft"]
+    MUTED = palette["muted"]
+
     style.configure("Side.TNotebook", tabposition="wn", background=BG,
+                    bordercolor=palette["line"], lightcolor=BG, darkcolor=BG,
                     borderwidth=0, tabmargins=(0, 4, 0, 0))
     style.configure("Side.TNotebook.Tab", background=BG, foreground=MUTED,
+                    bordercolor=palette["line"],
+                    lightcolor=BG, darkcolor=BG,
                     padding=(12, 9), borderwidth=0, anchor="w",
                     font=("Segoe UI", 9))
     style.map("Side.TNotebook.Tab",
@@ -202,10 +321,14 @@ def _side_tabs(style) -> None:
 class ScrollFrame(ttk.Frame):
     """A vertically scrollable frame; put content in ``.body``."""
 
+    def retheme(self) -> None:
+        self.canvas.configure(background=theme.colours()["bg"])
+
     def __init__(self, master, height: int = 320, **kwargs):
         super().__init__(master, **kwargs)
         self.canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0,
-                                background=BG, height=height)
+                                background=theme.colours()["bg"],
+                                height=height)
         self.scroll = ttk.Scrollbar(self, orient="vertical",
                                     command=self.canvas.yview)
         self.body = ttk.Frame(self.canvas)
@@ -256,9 +379,14 @@ class ReadOnlyText(tk.Text):
     def __init__(self, master, **kwargs):
         kwargs.setdefault("wrap", "word")
         kwargs.setdefault("font", MONO)
-        kwargs.setdefault("background", "white")
-        kwargs.setdefault("relief", "solid")
-        kwargs.setdefault("borderwidth", 1)
+        palette = theme.colours()
+        kwargs.setdefault("background", palette["field"])
+        kwargs.setdefault("foreground", palette["ink"])
+        kwargs.setdefault("relief", "flat")
+        kwargs.setdefault("borderwidth", 0)
+        kwargs.setdefault("highlightthickness", 1)
+        kwargs.setdefault("highlightbackground", palette["line"])
+        kwargs.setdefault("highlightcolor", palette["line"])
         super().__init__(master, **kwargs)
         self.configure(state="disabled")
 

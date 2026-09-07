@@ -34,6 +34,8 @@ from . import clipboard, figures, mathfield, mathrender
 from .symbol_pad import SymbolPad
 from .widgets import AsyncRunner, MONO, ReadOnlyText, ScrollFrame
 
+from . import theme
+
 #: Sets worth starting from. The duct is the case the solver exists for -
 #: nothing in it can be worked out without something else in it.
 EXAMPLES = [
@@ -74,7 +76,7 @@ class _CommentRow(ttk.Frame):
         super().__init__(master)
         self.value = tk.StringVar(value=text.strip())
         entry = ttk.Entry(self, textvariable=self.value, font=MONO,
-                          foreground="#6b7280")
+                          foreground=theme.colours()["muted"])
         entry.pack(fill="x")
         self.value.trace_add("write", lambda *a: on_change())
 

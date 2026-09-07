@@ -9,6 +9,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from . import theme
+
 from . import mathrender
 
 CARD_WIDTH = 300
@@ -49,7 +51,7 @@ class CardsTab(ttk.Frame):
 
         holder = ttk.Frame(self)
         holder.pack(fill="both", expand=True, pady=(8, 0))
-        self.canvas = tk.Canvas(holder, background="#f7f7f9",
+        self.canvas = tk.Canvas(holder, background=theme.colours()["bg"],
                                 highlightthickness=0)
         scroll = ttk.Scrollbar(holder, orient="vertical",
                                command=self.canvas.yview)
@@ -128,33 +130,45 @@ class CardsTab(ttk.Frame):
         self.shown += PAGE
         self.refresh()
 
+    def retheme(self) -> None:
+        """Recolour the page and lay the cards out again in the new ink."""
+        self.canvas.configure(background=theme.colours()["bg"])
+        self.refresh()
+
     def _card(self, formula, row: int, column: int) -> None:
-        card = tk.Frame(self.body, background="white", highlightthickness=1,
-                        highlightbackground="#dddddd", width=CARD_WIDTH,
+        palette = theme.colours()
+        surface, line = palette["surface"], palette["line"]
+        card = tk.Frame(self.body, background=surface, highlightthickness=1,
+                        highlightbackground=line, width=CARD_WIDTH,
                         height=CARD_HEIGHT)
         card.grid(row=row, column=column, padx=6, pady=6, sticky="nsew")
         card.grid_propagate(False)
 
-        title = tk.Label(card, text=formula.name, background="#fafafa",
-                         foreground="#555555", font=("Segoe UI", 9),
+        # The title strip and the footer sit a shade off the card so the
+        # equation between them is the thing the eye lands on.
+        strip = theme.mix(surface, palette["bg"], 0.6)
+        title = tk.Label(card, text=formula.name, background=strip,
+                         foreground=palette["muted"], font=("Segoe UI", 9),
                          anchor="center", pady=5)
         title.pack(fill="x")
 
         math = mathrender.MathLabel(card, fontsize=16, height=CARD_HEIGHT - 60,
-                                    anchor="center", background="white")
+                                    anchor="center", background=surface)
         math.pack(fill="both", expand=True)
         math.show(formula.display_latex, formula.equation)
 
-        footer = tk.Label(card, text=formula.branch, background="white",
-                          foreground="#999999", font=("Segoe UI", 8), pady=3)
+        footer = tk.Label(card, text=formula.branch, background=surface,
+                          foreground=palette["muted"], font=("Segoe UI", 8),
+                          pady=3)
         footer.pack(fill="x")
 
+        accent = palette["accent"]
         for widget in (card, title, footer, math, math.canvas):
             widget.bind("<Button-1>", lambda e, f=formula: self._open(f))
-            widget.bind("<Enter>",
-                        lambda e, c=card: c.configure(highlightbackground="#1f4e79"))
-            widget.bind("<Leave>",
-                        lambda e, c=card: c.configure(highlightbackground="#dddddd"))
+            widget.bind("<Enter>", lambda e, c=card, a=accent:
+                        c.configure(highlightbackground=a))
+            widget.bind("<Leave>", lambda e, c=card, l=line:
+                        c.configure(highlightbackground=l))
         self._cards.append(card)
 
     def _open(self, formula) -> None:

@@ -8676,3 +8676,82 @@ class TestUpdateCheck(unittest.TestCase):
         from engicalc.core.updates import Update, is_newer
 
         self.assertFalse(is_newer(Update("1.1.0").version, "1.1.0"))
+
+
+class TestTheme(unittest.TestCase):
+    """The promise the accent picker makes is that nothing can be unreadable.
+
+    A user who picks a pale yellow on white, or navy on charcoal, gets a
+    heading they can read - not the colour they asked for. That is the
+    whole reason a colour can be chosen at all, so it is the thing worth
+    testing.
+    """
+
+    def test_every_offered_accent_reads_on_every_base(self):
+        from engicalc.ui import theme
+
+        for base in theme.BASES:
+            for name, colour in theme.ACCENTS.items():
+                theme.use(base, colour)
+                palette = theme.colours()
+                for ground in ("surface", "bg"):
+                    with self.subTest(f"{name} on {base} {ground}"):
+                        self.assertGreaterEqual(
+                            theme.contrast(palette["accent"],
+                                           palette[ground]),
+                            theme.LEAST_CONTRAST - 1e-9)
+        theme.use("light", theme.ACCENTS["Navy"])
+
+    def test_a_colour_nobody_should_pick_is_corrected_rather_than_refused(self):
+        from engicalc.ui import theme
+
+        # Pale yellow on white: 1.1:1 as asked, unreadable. It comes back
+        # darkened rather than rejected, because refusing a colour is a
+        # worse answer than making it work.
+        self.assertLess(theme.contrast("#ffe066", "#ffffff"), 1.5)
+        fixed = theme.readable("#ffe066", "#ffffff")
+        self.assertGreaterEqual(theme.contrast(fixed, "#ffffff"),
+                                theme.LEAST_CONTRAST)
+
+        # And the same colour on a dark ground needs no help at all, so it
+        # is left exactly as asked.
+        self.assertEqual("#ffe066", theme.readable("#ffe066", "#1c1f24"))
+
+    def test_the_charts_do_not_follow_the_theme(self):
+        """A chart is a document. It gets printed."""
+        from engicalc.ui import theme
+
+        theme.use("dark", theme.ACCENTS["Amber"])
+        try:
+            self.assertEqual("#ffffff", theme.CHART_PAPER)
+            self.assertEqual("#111111", theme.CHART_INK)
+            self.assertTrue(theme.is_dark())
+        finally:
+            theme.use("light", theme.ACCENTS["Navy"])
+
+    def test_mixing_ends_where_it_should(self):
+        from engicalc.ui import theme
+
+        self.assertEqual("#000000", theme.mix("#000000", "#ffffff", 0.0))
+        self.assertEqual("#ffffff", theme.mix("#000000", "#ffffff", 1.0))
+        self.assertEqual("#808080", theme.mix("#000000", "#ffffff", 0.5))
+
+    def test_the_settings_file_keeps_what_a_writer_is_not_about(self):
+        """Two settings in one file, and neither may erase the other."""
+        import json
+        import tempfile
+        from unittest import mock
+
+        from engicalc.ui import app as app_module
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "settings.json")
+            with mock.patch.object(app_module, "SETTINGS_FILE", path):
+                app_module.remember(check_at_start=True)
+                app_module.remember(theme_base="dark", theme_accent="#b45309")
+                app_module.remember(check_at_start=False)
+                with open(path, encoding="utf-8") as handle:
+                    kept = json.load(handle)
+
+        self.assertEqual({"check_at_start": False, "theme_base": "dark",
+                          "theme_accent": "#b45309"}, kept)

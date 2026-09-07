@@ -10,11 +10,21 @@ import tkinter as tk
 from tkinter import ttk
 
 from . import mathrender
+from . import theme
 from .pad import GROUPS, SYNTAX_NOTES, find
 
-ROW_BG = "#ffffff"
-ROW_ALT = "#f6f7fa"
-ROW_SELECTED = "#dce6f2"
+
+def rows() -> tuple:
+    """The three row colours: plain, every other one, and selected.
+
+    Worked out rather than written down, so they follow the theme. The
+    banding is the page mixed a little way into the card - just enough to
+    be seen as banding and not as two panels.
+    """
+    palette = theme.colours()
+    return (palette["surface"],
+            theme.mix(palette["surface"], palette["bg"], 0.55),
+            palette["accent_soft"])
 
 
 class ReferenceWindow(tk.Toplevel):
@@ -23,6 +33,7 @@ class ReferenceWindow(tk.Toplevel):
     def __init__(self, master, on_insert=None):
         super().__init__(master)
         self.title("Symbols and syntax")
+        self.configure(background=theme.colours()["bg"])
         self.geometry("900x660")
         self.minsize(760, 520)
         self.on_insert = on_insert
@@ -57,24 +68,32 @@ class ReferenceWindow(tk.Toplevel):
         ttk.Label(bar, text="Double-click a row to type it into the calculator.",
                   style="Hint.TLabel").pack(side="right")
 
-        head = tk.Frame(symbols, background="#1f4e79")
-        head.pack(fill="x", pady=(8, 0))
+        # The heading strip is the accent as a *background*, so what has
+        # to be readable on it is the white writing - hence the accent as
+        # asked for, and white or black over it, whichever wins.
+        strip = theme.accent()
+        on_strip = ("#ffffff" if theme.contrast(strip, "#ffffff")
+                    >= theme.contrast(strip, "#111111") else "#111111")
+        self.head = tk.Frame(symbols, background=strip)
+        self.head.pack(fill="x", pady=(8, 0))
         for text, width in (("Symbol", 12), ("Name", 24), ("What you type", 20),
                             ("Example", 30)):
-            tk.Label(head, text=text, background="#1f4e79", foreground="white",
-                     font=("Segoe UI", 9, "bold"), width=width, anchor="w",
+            tk.Label(self.head, text=text, background=strip,
+                     foreground=on_strip, font=("Segoe UI", 9, "bold"),
+                     width=width, anchor="w",
                      padx=6, pady=4).pack(side="left")
 
         holder = ttk.Frame(symbols)
         holder.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(holder, background=ROW_BG, highlightthickness=1,
-                                highlightbackground="#cccccc")
+        self.canvas = tk.Canvas(holder, background=rows()[0],
+                                highlightthickness=1,
+                                highlightbackground=theme.colours()["line"])
         scroll = ttk.Scrollbar(holder, orient="vertical",
                                command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
-        self.body = tk.Frame(self.canvas, background=ROW_BG)
+        self.body = tk.Frame(self.canvas, background=rows()[0])
         self._window = self.canvas.create_window((0, 0), window=self.body,
                                                  anchor="nw")
         self.body.bind("<Configure>", lambda e: self.canvas.configure(
@@ -96,7 +115,7 @@ class ReferenceWindow(tk.Toplevel):
         syntax = ttk.Frame(notebook, padding=4)
         notebook.add(syntax, text="  Syntax rules  ")
         rules_canvas = tk.Canvas(syntax, highlightthickness=0,
-                                 background="#f7f7f9")
+                                 background=theme.colours()["bg"])
         rules_scroll = ttk.Scrollbar(syntax, orient="vertical",
                                      command=rules_canvas.yview)
         inner = ttk.Frame(rules_canvas)
@@ -110,12 +129,34 @@ class ReferenceWindow(tk.Toplevel):
                   style="Title.TLabel").pack(anchor="w", padx=12, pady=(10, 0))
         for heading, body in SYNTAX_NOTES:
             ttk.Label(inner, text=heading, font=("Segoe UI", 10, "bold"),
-                      foreground="#1f4e79").pack(anchor="w", padx=12,
-                                                 pady=(10, 2))
+                      foreground=theme.colours()["accent"]).pack(
+                          anchor="w", padx=12, pady=(10, 2))
             ttk.Label(inner, text=body, wraplength=780,
                       justify="left").pack(anchor="w", padx=12)
 
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
+
+    def retheme(self) -> None:
+        """New colours on a window that is already open.
+
+        The rows are rebuilt rather than recoloured one at a time - there
+        are two hundred of them and `refresh` already knows how to make
+        them, so there is no second place that decides what a row looks
+        like.
+        """
+        palette = theme.colours()
+        self.configure(background=palette["bg"])
+        self.canvas.configure(background=rows()[0],
+                              highlightbackground=palette["line"])
+        self.body.configure(background=rows()[0])
+        strip = theme.accent()
+        on_strip = ("#ffffff" if theme.contrast(strip, "#ffffff")
+                    >= theme.contrast(strip, "#111111") else "#111111")
+        self.head.configure(background=strip)
+        for label in self.head.winfo_children():
+            label.configure(background=strip, foreground=on_strip)
+        self._images.clear()          # the glyphs are drawn in the old ink
+        self.refresh()
 
     def _wheel(self, on: bool) -> None:
         for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
@@ -152,7 +193,8 @@ class ReferenceWindow(tk.Toplevel):
             self.select(items[0])
 
     def _row(self, item, index: int) -> None:
-        background = ROW_BG if index % 2 == 0 else ROW_ALT
+        plain, banded, _ = rows()
+        background = plain if index % 2 == 0 else banded
         row = tk.Frame(self.body, background=background, height=42)
         row.pack(fill="x")
         row.pack_propagate(False)
@@ -175,7 +217,8 @@ class ReferenceWindow(tk.Toplevel):
                                   (item.markup, 20, ("Consolas", 10)),
                                   (item.example, 30, ("Consolas", 9))):
             label = tk.Label(row, text=text, background=background, width=width,
-                             anchor="w", padx=6, font=font, foreground="#222222")
+                             anchor="w", padx=6, font=font,
+                             foreground=theme.colours()["ink"])
             label.pack(side="left")
             cells.append(label)
         cells.append(row)
@@ -189,7 +232,7 @@ class ReferenceWindow(tk.Toplevel):
         if item.key not in self._images:
             try:
                 self._images[item.key] = mathrender.photo(item.label, 12,
-                                                          "#111111", dpi=105)
+                                                          dpi=105)
             except Exception:  # noqa: BLE001
                 return None
         return self._images[item.key]
@@ -198,12 +241,13 @@ class ReferenceWindow(tk.Toplevel):
     def select(self, item) -> None:
         if self._selected is not None:
             for index, widget in enumerate(self._rows.get(self._selected.key, [])):
-                original = ROW_BG if self._items.index(self._selected) % 2 == 0 \
-                    else ROW_ALT
+                plain, banded, _ = rows()
+                original = (plain if self._items.index(self._selected) % 2 == 0
+                            else banded)
                 widget.configure(background=original)
         self._selected = item
         for widget in self._rows.get(item.key, []):
-            widget.configure(background=ROW_SELECTED)
+            widget.configure(background=rows()[2])
 
         self.detail_math.show(item.example_latex or item.label, item.example)
         parts = [f"Type:   {item.markup}"]

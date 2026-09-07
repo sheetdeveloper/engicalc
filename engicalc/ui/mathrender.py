@@ -20,7 +20,8 @@ from tkinter import ttk
 import sympy as sp
 from matplotlib.figure import Figure
 
-from .widgets import LINE, images_are_stale
+from . import theme
+from .widgets import images_are_stale
 
 # mathtext understands a subset of LaTeX. These rewrites cover what SymPy
 # actually emits for the expressions this app produces.
@@ -67,9 +68,15 @@ def to_latex(expr) -> str:
     return _latex(expr)
 
 
-def render_png(latex: str, fontsize: int = 14, colour: str = "#111111",
+def ink() -> str:
+    """What maths is written in - the text colour of the theme in force."""
+    return theme.colours()["ink"]
+
+
+def render_png(latex: str, fontsize: int = 14, colour: str | None = None,
                dpi: int = 130) -> bytes:
     """Draw ``latex`` and return PNG bytes."""
+    colour = colour or ink()
     body = sanitise(latex)
     figure = Figure(figsize=(0.05, 0.05), dpi=dpi)
     figure.patch.set_alpha(0.0)
@@ -83,9 +90,14 @@ def render_png(latex: str, fontsize: int = 14, colour: str = "#111111",
     return buffer.getvalue()
 
 
-def photo(latex: str, fontsize: int = 14, colour: str = "#111111",
+def photo(latex: str, fontsize: int = 14, colour: str | None = None,
           dpi: int = 130) -> tk.PhotoImage:
-    """Cached Tk image for a LaTeX string."""
+    """Cached Tk image for a LaTeX string.
+
+    Keyed on the colour as well, so a change of theme simply misses the
+    cache and draws again rather than needing it emptied.
+    """
+    colour = colour or ink()
     key = (latex, fontsize, colour, dpi)
     if images_are_stale(__name__):
         _CACHE.clear()
@@ -110,6 +122,9 @@ def render_calculation(blocks, fontsize: int = 15, dpi: int = 200,
 
     Rendered at 200 dpi because a screen-resolution image looks soft once
     Word scales it onto a page. Returns a PIL image.
+
+    Black on white whatever the window is doing. This one is not a widget -
+    it is going into a report, and a report is printed.
     """
     from PIL import Image
 
@@ -170,9 +185,11 @@ def available() -> bool:
 class MathLabel(ttk.Frame):
     """Shows one expression as typeset maths, with a plain-text fallback."""
 
-    def __init__(self, master, fontsize: int = 15, colour: str = "#111111",
-                 anchor: str = "w", background: str = "white",
+    def __init__(self, master, fontsize: int = 15, colour: str | None = None,
+                 anchor: str = "w", background: str | None = None,
                  height: int | None = None, **kwargs):
+        background = background or theme.colours()["surface"]
+        colour = colour or ink()
         super().__init__(master, **kwargs)
         self.fontsize = fontsize
         self.colour = colour
@@ -195,6 +212,12 @@ class MathLabel(ttk.Frame):
         self._latex = ""
         self._fallback = ""
         self.canvas.delete("all")
+
+    def retheme(self) -> None:
+        palette = theme.colours()
+        self.colour = palette["ink"]
+        self.canvas.configure(background=palette["surface"])
+        self._place()
 
     def _fitted(self, room: int, tall: int):
         """The expression drawn at a size that fits the box it is in.
@@ -245,17 +268,19 @@ class MathList(ttk.Frame):
 
     LINE_HEIGHT = 20
 
-    def __init__(self, master, fontsize: int = 14, background: str = "white",
-                 **kwargs):
+    def __init__(self, master, fontsize: int = 14,
+                 background: str | None = None, **kwargs):
         super().__init__(master, **kwargs)
         self.fontsize = fontsize
+        background = background or theme.colours()["surface"]
+        self._blocks: list = []
         # A canvas is not a ttk widget, so it does not pick the theme up; it
         # is given the same hairline the cards use rather than relief
         # "solid", which draws black.
         self.canvas = tk.Canvas(self, background=background, borderwidth=0,
                                 highlightthickness=1,
-                                highlightbackground=LINE,
-                                highlightcolor=LINE)
+                                highlightbackground=theme.colours()["line"],
+                                highlightcolor=theme.colours()["line"])
         self.scroll = ttk.Scrollbar(self, orient="vertical",
                                     command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scroll.set)
@@ -286,22 +311,34 @@ class MathList(ttk.Frame):
         self.canvas.delete("all")
         self._images.clear()
 
+    def retheme(self) -> None:
+        """Recolour, and draw what was on it again in the new ink."""
+        palette = theme.colours()
+        self.canvas.configure(background=palette["surface"],
+                              highlightbackground=palette["line"],
+                              highlightcolor=palette["line"])
+        if self._blocks:
+            self.render(self._blocks)
+
     def render(self, blocks) -> None:
         """``blocks`` is a sequence of (title, expr_or_None, detail_or_None)."""
+        self._blocks = list(blocks)
+        palette = theme.colours()
         self.clear()
         y = 12
         for title, expr, detail in blocks:
             if title:
                 self.canvas.create_text(12, y, anchor="nw", text=title,
                                         font=("Segoe UI", 10, "bold"),
-                                        fill="#1f4e79")
+                                        fill=palette["accent"])
                 y += self.LINE_HEIGHT
             if expr is not None:
                 y = self._draw_expression(expr, y)
             if detail:
                 for line in str(detail).splitlines():
                     self.canvas.create_text(26, y, anchor="nw", text=line,
-                                            font=("Segoe UI", 9), fill="#555555")
+                                            font=("Segoe UI", 9),
+                                            fill=palette["muted"])
                     y += self.LINE_HEIGHT - 2
             y += 10
         self.canvas.configure(scrollregion=(0, 0, 10, y + 10))
@@ -315,5 +352,6 @@ class MathList(ttk.Frame):
         except Exception:  # noqa: BLE001
             from ..core.display import fmt
             self.canvas.create_text(26, y, anchor="nw", text=fmt(expr),
-                                    font=("Consolas", 10), fill="#111111")
+                                    font=("Consolas", 10),
+                                    fill=theme.colours()["ink"])
             return y + self.LINE_HEIGHT

@@ -22,6 +22,8 @@ from ..core.sheet import SHEET_DIR, Sheet, blocks_for
 from . import mathrender
 from .widgets import MONO, ScrollFrame
 
+from . import theme
+
 EXAMPLE = [
     ("d", "50 mm", "m", "pipe bore"),
     ("Q", "0.0035", "m^3/s", "volume flow"),
@@ -218,9 +220,10 @@ class SheetTab(ttk.Frame):
             index += 1
             if result.ok:
                 answer.configure(text=result.text().split(" = ", 1)[-1],
-                                 foreground="#1f4e79")
+                                 foreground=theme.colours()["accent"])
             else:
-                answer.configure(text=result.error[:40], foreground="#b00020")
+                answer.configure(text=result.error[:40],
+                                 foreground=theme.colours()["bad"])
                 problems += 1
 
         self.status.configure(

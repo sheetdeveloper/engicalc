@@ -41,7 +41,8 @@ from matplotlib.font_manager import FontProperties
 
 from ..core.display import latex_name
 from ..core.parsing import SAFE_FUNCTIONS
-from .widgets import LINE, images_are_stale
+from . import theme
+from .widgets import images_are_stale
 
 DPI = 130
 # A hollow box reads as "type here"; mathtext has no \square or \Box, but it
@@ -603,8 +604,10 @@ def _hex_to_rgb(colour: str):
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def render(latex: str, fontsize: int, colour: str = "#111111", dpi: int = DPI):
+def render(latex: str, fontsize: int, colour: str | None = None,
+           dpi: int = DPI):
     """Rasterise ``latex``. Returns (PhotoImage, width, height, baseline)."""
+    colour = colour or theme.colours()["ink"]
     if images_are_stale(__name__):
         _IMAGE_CACHE.clear()
     key = (latex, fontsize, colour, dpi)
@@ -679,11 +682,16 @@ class MathField(tk.Canvas):
     MARGIN = 8
 
     def __init__(self, master, on_change=None, on_submit=None,
-                 fontsize: int = 17, colour: str = "#111111",
-                 background: str = "#ffffff", height: int = 62, **kwargs):
+                 fontsize: int = 17, colour: str | None = None,
+                 background: str | None = None, height: int = 62, **kwargs):
+        palette = theme.colours()
+        colour = colour or palette["ink"]
+        background = background or palette["field"]
         super().__init__(master, height=height, background=background,
-                         highlightthickness=1, highlightbackground=LINE,
-                         highlightcolor="#4a76c8", takefocus=True, **kwargs)
+                         highlightthickness=1,
+                         highlightbackground=palette["line"],
+                         highlightcolor=palette["accent_light"],
+                         takefocus=True, **kwargs)
         self.fontsize = fontsize
         self.colour = colour
         self.on_change = on_change
@@ -971,6 +979,15 @@ class MathField(tk.Canvas):
         visible = max(self.winfo_width(), 1) - 2 * self.PAD_X
         return max(0.0, min(value, max(0.0, self._image_width - visible)))
 
+    def retheme(self) -> None:
+        """Recolour the bar and draw what is in it again."""
+        palette = theme.colours()
+        self.colour = palette["ink"]
+        self.configure(background=palette["field"],
+                       highlightbackground=palette["line"],
+                       highlightcolor=palette["accent_light"])
+        self._redraw()
+
     def _redraw(self, follow_caret: bool = True) -> None:
         self.delete("all")
         height = max(self.winfo_height(), 1)
@@ -1045,11 +1062,14 @@ class MathField(tk.Canvas):
         half = glyph_size * scale * 0.58
         centre = top + self._image_baseline - above_baseline - half * 0.30
         self.create_line(left + x, centre - half, left + x, centre + half,
-                         fill="#2f6fd0", width=2)
+                         fill=theme.colours()["accent_light"], width=2)
 
     def _draw_edge_fade(self, height: int, side: str) -> None:
         """A hint that the expression continues past the edge of the box."""
         width = max(self.winfo_width(), 1)
         x = 0 if side == "left" else width - 14
-        self.create_rectangle(x, 0, x + 14, height, fill="#f0f0f4",
+        palette = theme.colours()
+        self.create_rectangle(x, 0, x + 14, height,
+                              fill=theme.mix(palette["field"],
+                                             palette["ink"], 0.30),
                               outline="", stipple="gray25")

@@ -16,6 +16,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from . import theme
 from .calculator_tab import CalculatorTab
 from .complex_tab import ComplexTab
 from .simultaneous_tab import SimultaneousTab
@@ -51,12 +52,25 @@ class CalculatorPane(ttk.Frame):
         self.units = UnitsTab(self.tabs, app)
         self.complex = ComplexTab(self.tabs, app)
 
-        for label, page in (("One equation", self.calculator),
-                            ("Simultaneous", self.simultaneous),
-                            ("Units", self.units),
-                            ("Complex", self.complex)):
+        self._labels = ["One equation", "Simultaneous", "Units", "Complex"]
+        for label, page in zip(self._labels,
+                               (self.calculator, self.simultaneous,
+                                self.units, self.complex)):
             self.tabs.add(page, text=f"  {label}  ", image=self._icon(label),
                           compound="top")
+
+    def retheme(self) -> None:
+        """Draw the tab notation again in the new ink.
+
+        The icons are pictures, not text, so no amount of restyling moves
+        them: a dark app would keep four dark-grey equations down the side
+        of a dark strip, which is the same as not having them.
+        """
+        self._icons.clear()
+        for index, label in enumerate(self._labels):
+            picture = self._icon(label)
+            if picture != "":
+                self.tabs.tab(index, image=picture)
 
     def _icon(self, label: str):
         """The notation for one tab, drawn once and kept.
@@ -82,7 +96,11 @@ class CalculatorPane(ttk.Frame):
             ink = np.asarray(parse.image, dtype=np.uint8)
             height, width = ink.shape
             rgba = np.zeros((height, width, 4), dtype=np.uint8)
-            rgba[..., 0], rgba[..., 1], rgba[..., 2] = 0x4a, 0x55, 0x68
+            # The same grey the unselected tab labels are written in,
+            # so the notation and the words under it read as one thing.
+            grey = theme.colours()["muted"].lstrip("#")
+            rgba[..., 0], rgba[..., 1], rgba[..., 2] = (
+                int(grey[0:2], 16), int(grey[2:4], 16), int(grey[4:6], 16))
             rgba[..., 3] = ink
             drawn = Image.fromarray(rgba, "RGBA")
 

@@ -22,6 +22,7 @@ matplotlib.use("Agg")
 from PIL import ImageGrab                                       # noqa: E402
 
 from engicalc.core.engine import calculate                      # noqa: E402
+from engicalc.ui import theme
 from engicalc.ui.app import EngiCalcApp                         # noqa: E402
 
 SIZE = "1280x820+40+40"
@@ -71,6 +72,10 @@ def wait_for(app, tab, seconds: float = 25.0) -> None:
 
 def main() -> None:
     os.makedirs(HERE, exist_ok=True)
+    # The pictures in the README are of the app, not of whatever colours
+    # this machine happens to be set to. Forced, or a developer who works
+    # in dark rebuilds the documentation into a different-looking program.
+    theme.use("light", theme.ACCENTS["Navy"])
     app = EngiCalcApp(db_path=os.path.join(tempfile.mkdtemp(), "shots.db"))
     app.geometry(SIZE)
     app.update()

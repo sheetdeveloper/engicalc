@@ -97,7 +97,8 @@ class StatisticsTab(ttk.Frame):
 
         left = ttk.Labelframe(panes, text="Readings", padding=6)
         self.data_text = tk.Text(left, height=16, width=26, font=MONO,
-                                 relief="solid", borderwidth=1)
+                                 relief="flat", borderwidth=0,
+                                 highlightthickness=1)
         self.data_text.pack(fill="both", expand=True)
         self.data_text.insert("1.0", EXAMPLE)
         buttons = ttk.Frame(left)

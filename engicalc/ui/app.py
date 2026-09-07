@@ -25,6 +25,8 @@ from .statistics_tab import StatisticsTab
 from .library_tab import LibraryTab
 from .reference_window import ReferenceWindow
 from .splash import Splash
+from . import theme
+from . import widgets
 from .widgets import AsyncRunner, apply_theme
 
 ABOUT = """EngiCalc
@@ -45,22 +47,41 @@ SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".engicalc",
                              "settings.json")
 
 
-def _remembered_check_setting() -> bool:
-    """Whether update checking was switched on. Off if never answered."""
+def settings() -> dict:
+    """Everything remembered between runs. Empty if there is nothing yet."""
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as handle:
-            return bool(json.load(handle).get("check_at_start", False))
+            found = json.load(handle)
+        return found if isinstance(found, dict) else {}
     except Exception:                                     # noqa: BLE001
-        return False
+        return {}
 
 
-def _remember_check_setting(value: bool) -> None:
+def remember(**changed) -> None:
+    """Write settings back, keeping the ones this call is not about.
+
+    Read, change, write - not write. There is more than one setting in the
+    file now, and a writer that dumps only its own key silently forgets
+    every other one.
+    """
+    kept = settings()
+    kept.update(changed)
     try:
         os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
         with open(SETTINGS_FILE, "w", encoding="utf-8") as handle:
-            json.dump({"check_at_start": bool(value)}, handle)
+            json.dump(kept, handle, indent=2)
     except Exception:                                     # noqa: BLE001
         pass                      # a setting that will not save is not fatal
+
+
+def remembered_appearance() -> None:
+    """Put back the colours the user last chose, before anything is built.
+
+    Called before the window exists, so a dark app opens dark rather than
+    opening light and turning over while it is being looked at.
+    """
+    kept = settings()
+    theme.use(kept.get("theme_base"), kept.get("theme_accent"))
 
 
 class EngiCalcApp(tk.Tk):
@@ -72,7 +93,10 @@ class EngiCalcApp(tk.Tk):
         self.title("EngiCalc - equation solver, grapher and formula library")
         self.geometry("1200x780")
         self.minsize(980, 640)
+        remembered_appearance()
         apply_theme(self)
+        # Everything that ttk cannot reach, whenever the colours change.
+        theme.on_change(self._recolour)
 
         self.library = get_library()
         self.history = History(db_path)
@@ -84,10 +108,11 @@ class EngiCalcApp(tk.Tk):
         # Off unless asked for. The app promises nothing leaves the machine,
         # and a check is a request to GitHub carrying an IP address - small,
         # but not the promise. Remembered once somebody turns it on.
-        self.check_at_start = tk.BooleanVar(value=_remembered_check_setting())
+        self.check_at_start = tk.BooleanVar(
+            value=bool(settings().get("check_at_start", False)))
         self.check_at_start.trace_add(
-            "write", lambda *a: _remember_check_setting(
-                self.check_at_start.get()))
+            "write", lambda *a: remember(
+                check_at_start=bool(self.check_at_start.get())))
 
         # Up before the body, because the body is the slow part - the
         # formula library and matplotlib are most of the second it takes.
@@ -102,6 +127,10 @@ class EngiCalcApp(tk.Tk):
         if splash:
             splash.say("Loading the tabs...")
         self._build_body()
+        # The plain tk widgets - text boxes, lists - take a border colour
+        # from the system unless they are told one, and the system's is a
+        # light grey. One walk once the body exists settles all of them.
+        widgets.retheme(self, redraw=False)
         if splash:
             splash.say("Ready")
             self.after(Splash.LINGER if hasattr(Splash, "LINGER") else 450,
@@ -149,6 +178,7 @@ class EngiCalcApp(tk.Tk):
                 variable=self.figures,
                 command=self._number_format_changed)
         view.add_cascade(label="Numbers", menu=numbers)
+        view.add_cascade(label="Appearance", menu=self._appearance_menu(view))
         menu.add_cascade(label="Options", menu=view)
 
         help_menu = tk.Menu(menu, tearoff=0)
@@ -162,6 +192,63 @@ class EngiCalcApp(tk.Tk):
         help_menu.add_command(label="About", command=self.show_about)
         menu.add_cascade(label="Help", menu=help_menu)
         self.configure(menu=menu)
+
+    def _appearance_menu(self, parent) -> tk.Menu:
+        """Light or dark, and what colour the app answers in.
+
+        The base and the accent are separate choices because they are
+        separate questions: one is whether the room is bright, the other
+        is taste. Both are remembered.
+        """
+        appearance = tk.Menu(parent, tearoff=0)
+        self.theme_base = tk.StringVar(value=theme.base())
+        for key, label in (("light", "Light"), ("dark", "Dark")):
+            appearance.add_radiobutton(label=label, value=key,
+                                       variable=self.theme_base,
+                                       command=self._appearance_changed)
+        appearance.add_separator()
+
+        self.theme_accent = tk.StringVar(value=theme.accent())
+        for name, colour in theme.ACCENTS.items():
+            appearance.add_radiobutton(label=name, value=colour,
+                                       variable=self.theme_accent,
+                                       command=self._appearance_changed)
+        appearance.add_separator()
+        appearance.add_command(label="Another colour...",
+                               command=self._choose_accent)
+        return appearance
+
+    def _choose_accent(self) -> None:
+        """Any colour at all, out of the system picker.
+
+        Whatever comes back is used as asked wherever it is a background,
+        and darkened or lifted where it is text - see `theme.readable`. So
+        there is no colour here that produces a heading that cannot be
+        read, and no need to stop the user picking one.
+        """
+        from tkinter import colorchooser
+        _, chosen = colorchooser.askcolor(
+            color=theme.accent(), parent=self, title="Accent colour")
+        if chosen:
+            self.theme_accent.set(chosen)
+            self._appearance_changed()
+
+    def _appearance_changed(self) -> None:
+        theme.use(self.theme_base.get(), self.theme_accent.get())
+        remember(theme_base=theme.base(), theme_accent=theme.accent())
+
+    def _recolour(self) -> None:
+        """Put the new colours on. Called by `theme` when they change."""
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return                          # the window has already gone
+        apply_theme(self)
+        widgets.retheme(self)
+        for window in self.winfo_children():
+            if isinstance(window, tk.Toplevel):
+                widgets.retheme(window)
 
     # -- keys ---------------------------------------------------------
     #: What a tab might call the thing its main button does. Tried in

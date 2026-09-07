@@ -14,6 +14,8 @@ from matplotlib.figure import Figure
 from ..plotting.plot import Curve, PlotSpec, draw
 from .widgets import MONO
 
+from . import theme
+
 KINDS = ["explicit", "implicit", "parametric", "polar"]
 MAX_CURVES = 6
 
@@ -109,7 +111,8 @@ class GraphTab(ttk.Frame):
         ttk.Button(buttons, text="Save PNG", command=self.save_png).pack(side="left")
 
         self.messages = tk.Label(left, text="", justify="left", anchor="w",
-                                 fg="#a33", wraplength=380, background="#f7f7f9")
+                                 fg=theme.colours()["bad"], wraplength=380,
+                                 background=theme.colours()["bg"])
         self.messages.pack(fill="x", pady=(8, 0))
 
         right = ttk.Frame(self)

@@ -19,6 +19,8 @@ import sympy as sp
 
 from . import mathrender
 
+from . import theme
+
 CELL_PAD_X = 14
 CELL_PAD_Y = 8
 BRACKET_GAP = 8
@@ -29,13 +31,14 @@ BRACKET_WIDTH = 2
 class MatrixView(tk.Canvas):
     """A canvas that draws one matrix, or a labelled row of them."""
 
-    def __init__(self, master, fontsize: int = 15, colour: str = "#111111",
-                 background: str = "white", **kwargs):
+    def __init__(self, master, fontsize: int = 15, colour: str | None = None,
+                 background: str | None = None, **kwargs):
+        palette = theme.colours()
         kwargs.setdefault("highlightthickness", 0)
-        kwargs.setdefault("background", background)
+        kwargs.setdefault("background", background or palette["surface"])
         super().__init__(master, **kwargs)
         self.fontsize = fontsize
-        self.colour = colour
+        self.colour = colour or palette["ink"]
         self._images: list = []          # kept alive; Tk will not hold them
         self._parts: list = []
         self.bind("<Configure>", lambda e: self._draw())
@@ -55,6 +58,13 @@ class MatrixView(tk.Canvas):
         needed = self.required_height()
         if needed != int(self["height"]):
             self.configure(height=needed)
+        self._draw()
+
+    def retheme(self) -> None:
+        """New ink, new paper, and the same matrix drawn again in them."""
+        palette = theme.colours()
+        self.colour = palette["ink"]
+        self.configure(background=palette["surface"])
         self._draw()
 
     def clear(self) -> None:

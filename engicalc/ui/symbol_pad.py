@@ -5,6 +5,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from . import theme
+
 from . import mathrender
 from .pad import GROUPS, TOPICS, by_group, common_items
 from .widgets import ScrollFrame
@@ -35,6 +37,8 @@ class SymbolPad(ttk.Frame):
         self.on_insert = on_insert
         self.columns = 12
         self._images: dict[str, tk.PhotoImage] = {}
+        #: Every key made, so they can all be redrawn when the ink changes.
+        self._keys: list = []
         self._sections: list[tuple] = []     # (frame, [buttons]) to re-grid
         #: (group name, its heading, its frame) so a topic can hide the
         #: groups it does not want without rebuilding anything.
@@ -79,14 +83,29 @@ class SymbolPad(ttk.Frame):
         if item.key not in self._images:
             try:
                 size = self.GLYPH_SIZE
-                image = mathrender.photo(item.label, size, "#1a1a1a")
+                image = mathrender.photo(item.label, size)
                 if image.width() > self.GLYPH_WIDTH:
                     size = max(7, int(size * self.GLYPH_WIDTH / image.width()))
-                    image = mathrender.photo(item.label, size, "#1a1a1a")
+                    image = mathrender.photo(item.label, size)
                 self._images[item.key] = image
             except Exception:  # noqa: BLE001 - fall back to the plain markup
                 return None
         return self._images[item.key]
+
+    def retheme(self) -> None:
+        """Redraw every key in the new ink.
+
+        The glyphs are pictures. Restyling the buttons under them leaves
+        the maths on top in the old colour, which on a dark pad is black
+        on charcoal.
+        """
+        self._images.clear()
+        for button in self._keys:
+            if not button.winfo_exists():
+                continue
+            picture = self._image(button.item)
+            if picture is not None:
+                button.configure(image=picture)
 
     def _button(self, master, item):
         image = self._image(item)
@@ -98,6 +117,8 @@ class SymbolPad(ttk.Frame):
                                 style="Pad.TButton",
                                 command=lambda i=item: self.on_insert(i))
         _Tooltip(button, f"{item.name}\ntype:  {item.markup}")
+        button.item = item          # so retheme knows what to draw again
+        self._keys.append(button)
         return button
 
     def _build_compact(self) -> None:
@@ -245,7 +266,9 @@ class _Tooltip:
         self._window.wm_overrideredirect(True)
         self._window.wm_geometry(f"+{x}+{y}")
         tk.Label(self._window, text=self.text, justify="left",
-                 background="#ffffe0", relief="solid", borderwidth=1,
+                 background=theme.colours()["accent_soft"],
+                 foreground=theme.colours()["ink"],
+                 relief="solid", borderwidth=1,
                  font=("Segoe UI", 9), padx=6, pady=3).pack()
 
     def _hide(self, _event=None):

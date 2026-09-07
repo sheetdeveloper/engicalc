@@ -15,7 +15,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .. import __version__
-from .widgets import ACCENT, LINE, MUTED, SURFACE
+from . import theme
 
 #: How long it stays up once the window behind it is ready, in milliseconds.
 LINGER = 450
@@ -29,6 +29,10 @@ class Splash(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
         self.overrideredirect(True)          # no title bar; it is not a window
+        palette = theme.colours()
+        SURFACE, LINE = palette["surface"], palette["line"]
+        ACCENT, MUTED, INK = (palette["accent"], palette["muted"],
+                              palette["ink"])
         self.configure(background=SURFACE)
         self._centre(master)
 
@@ -47,7 +51,7 @@ class Splash(tk.Toplevel):
                  background=SURFACE, foreground=MUTED,
                  font=("Segoe UI", 10)).pack(pady=(2, 0))
         tk.Label(body, text=f"Version {__version__}", background=SURFACE,
-                 foreground="#1b1d21",
+                 foreground=INK,
                  font=("Segoe UI", 11, "bold")).pack(pady=(18, 0))
 
         self.note = tk.Label(body, text="Starting...", background=SURFACE,

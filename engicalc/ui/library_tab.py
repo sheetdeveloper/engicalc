@@ -80,11 +80,10 @@ class LibraryTab(ttk.Frame):
         ttk.Button(actions, text="Add my own formula",
                    command=self.add_formula_dialog).pack(side="right")
 
-        equation_box = ttk.Frame(right, relief="solid", borderwidth=1)
+        equation_box = ttk.Frame(right, style="Card.TFrame")
         equation_box.pack(fill="x", pady=(4, 4))
         self.equation_math = mathrender.MathLabel(equation_box, fontsize=19,
-                                                  height=62,
-                                                  background="#fbfbfd")
+                                                  height=62)
         self.equation_math.pack(fill="x")
         self.meta_label = ttk.Label(right, text="", style="Hint.TLabel",
                                     wraplength=520, justify="left")

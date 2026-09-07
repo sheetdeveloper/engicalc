@@ -70,7 +70,8 @@ class InterpolateTab(ttk.Frame):
         left = ttk.Labelframe(panes, text="Data  (x in the first column, "
                                           "y in the second)", padding=6)
         self.data_text = tk.Text(left, height=14, width=30, font=MONO,
-                                 relief="solid", borderwidth=1)
+                                 relief="flat", borderwidth=0,
+                                 highlightthickness=1)
         self.data_text.pack(fill="both", expand=True)
         self.data_text.insert("1.0", EXAMPLE)
 
