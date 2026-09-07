@@ -215,8 +215,28 @@ def main() -> None:
 
     # -- the worksheet -----------------------------------------------------
     top_tab(app, "Worksheet")
-    app.sheet_tab._load_example()
-    app.sheet_tab.calculate()
+    # A pipe, measured rather than assumed. It shows the two things the
+    # worksheet does that a column of sums does not: the unit comes out of
+    # the arithmetic, and the tolerance comes down the page with each
+    # measurement counted once however many rows it reached the answer
+    # through - the bore is in the Reynolds number twice.
+    sheet = app.sheet_tab
+    sheet._clear_rows()
+    # Replacing every row changes how much room the tab wants, and the
+    # window manager takes that as leave to move the window. Put it back
+    # now rather than in grab, which would be moving it on every capture
+    # and reading the position while it was still travelling.
+    app.geometry(SIZE)
+    sheet.title_var.set("Water in a pipe, measured")
+    for spec in (("d", "50 +/- 0.5 mm", "mm", "bore, off a vernier"),
+                 ("A", "pi*d^2/4", "mm^2", "flow area"),
+                 ("Q", "2 +/- 0.05 L/s", "m^3/s", "from the flowmeter"),
+                 ("v", "Q/A", "m/s", "mean velocity"),
+                 ("rho", "998 kg/m^3", "kg/m^3", "water at 20 C"),
+                 ("mu", "0.001 Pa*s", "Pa*s", ""),
+                 ("Re", "rho*v*d/mu", "", "Reynolds number")):
+        sheet._add_widgets(*spec)
+    sheet.calculate()
     grab(app, "sheet.png")
 
     # -- steam, with the chart --------------------------------------------

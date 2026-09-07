@@ -45,6 +45,17 @@ from .quantity import Quantity, QuantityError, parse_powers
 #: ASCII however the name was typed.
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+#: How big a row's expression may get, written back out in terms of the
+#: measurements, before the tolerances stop being worked out.
+#:
+#: Writing each row out in terms of the givens is what makes a measurement
+#: count once however many routes it took, and it is also what makes the
+#: expression grow - a row using two rows above it, each of which used two
+#: above them, doubles at every level. A twenty-row sheet can get large,
+#: and differentiating it in the middle of a keystroke would stop the
+#: window. Past this the row says so rather than hanging.
+TOO_BIG_TO_DIFFERENTIATE = 2000
+
 SHEET_DIR = os.path.join(os.path.expanduser("~"), ".engicalc", "sheets")
 
 
@@ -297,7 +308,24 @@ class Sheet:
         # with no tolerances on it is the ordinary case.
         spread = None
         if any(one.error for one in givens.values()):
-            spread = uncertainty.through(written, givens, answer)
+            if written.count_ops() > TOO_BIG_TO_DIFFERENTIATE:
+                note = _and(note,
+                            "too many steps deep to work the tolerances "
+                            "out - the expression written back to the "
+                            "measurements has over "
+                            f"{TOO_BIG_TO_DIFFERENTIATE} operations in it")
+            else:
+                try:
+                    spread = uncertainty.through(written, givens, answer)
+                except (ParseError, ArithmeticError, ValueError,
+                        OverflowError) as exc:
+                    # The row's own answer is fine - it was worked out from
+                    # the row above. It is the expression written all the
+                    # way back to the measurements that would not go, and
+                    # losing the value over that would be losing the thing
+                    # the row is for.
+                    note = _and(note, f"the tolerances would not work out "
+                                      f"here ({exc})")
         return answer, note, spread
 
     @staticmethod
@@ -371,6 +399,11 @@ class Sheet:
     def load(cls, path: str) -> "Sheet":
         with open(path, "r", encoding="utf-8") as handle:
             return cls.from_dict(json.load(handle))
+
+
+def _and(note: str, said: str) -> str:
+    """Add a remark to a row's note without losing what was there."""
+    return f"{note}   {said}" if note else said
 
 
 def _looks_like_expression(text: str) -> bool:

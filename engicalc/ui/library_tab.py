@@ -107,7 +107,9 @@ class LibraryTab(ttk.Frame):
         # into a box that has only ever wanted a bare number.
         ttk.Label(right, style="Hint.TLabel", justify="left",
                   text="A value can bring its own unit - type 50 mm into a "
-                       "field that wants metres and it converts.").pack(
+                       "field that wants metres and it converts. It can "
+                       "bring a tolerance too: 5000 +/- 50, or 5000 +/- 1%, "
+                       "and the answer comes back with one.").pack(
                            anchor="w", pady=(2, 0))
 
         # Only shown for the formulas that have somewhere to put a
@@ -328,13 +330,45 @@ class LibraryTab(ttk.Frame):
             blocks.append(("Rearranged", sp.Eq(target, solution.expression), None))
         if solution.value is not None:
             unit = f" {solution.unit}" if solution.unit not in ("", "-") else ""
+            said = f"{solution.value:.6g}{unit}"
+            spread = getattr(solution, "spread", None)
+            if spread is not None and spread.known:
+                said += (f"   +/- {spread.error:.4g}{unit}"
+                         f"   ({100 * spread.relative:.2g}%)")
             blocks.append(("Answer", sp.Eq(target, sp.Float(solution.value, 6)),
-                           f"{solution.value:.6g}{unit}"))
+                           said))
+            if spread is not None and spread.known:
+                blocks.append(("Where that comes from", None,
+                               self._where_from(spread, unit)))
         for warning in solution.warnings:
             blocks.append(("Note", None, warning))
         self.result_math.render(blocks)
         if self.app.autosave.get() and solution.value is not None:
             self.save(quiet=True)
+
+    @staticmethod
+    def _where_from(spread, unit: str) -> str:
+        """Each input's share of the answer's uncertainty, worst first.
+
+        The share is the useful half. Being told the answer is good to
+        2.7% is worth knowing; being told that 86% of that comes from one
+        measurement is what tells you which one to take again.
+        """
+        lines = []
+        for one in spread.contributions:
+            lines.append(f"{one.name} +/- {one.given:.4g} "
+                         f"{one.unit}".rstrip()
+                         + f"  moves it {one.moves:.4g}{unit}"
+                         + f"  -  {100 * one.share:.0f}% of the total")
+        worst = spread.dominant()
+        if worst is not None:
+            lines.append(f"Measuring {worst.name} better is most of what "
+                         f"is left to gain; measuring anything else better "
+                         f"would buy almost nothing.")
+        lines.append("Independent inputs assumed. A name used twice is "
+                     "counted once - the derivatives are taken of the "
+                     "whole rearrangement.")
+        return "\n".join(lines)
 
     def _failed(self, exc: Exception) -> None:
         self.solution = None

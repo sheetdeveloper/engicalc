@@ -59,7 +59,7 @@ the area it measures shaded underneath and the working beside it.*
 | ![Curved beam](docs/screenshots/curved.png) | ![Axial](docs/screenshots/axial.png) |
 | **Curved beams** - a hook or a clamp, where M y / I is not conservative | **Axial members** - stepped and composite bars, held at both ends and heated |
 | ![Worksheet](docs/screenshots/sheet.png) | ![Formula cards](docs/screenshots/formula_cards.png) |
-| **Worksheets** - named steps down the page, each using the ones above it | **Formula cards** - the library to browse rather than to solve |
+| **Worksheets** - units and tolerances carried down the page, each measurement counted once | **Formula cards** - the library to browse rather than to solve |
 | ![Differential equations](docs/screenshots/ode.png) | ![Inequalities](docs/screenshots/inequality.png) |
 | **Differential equations** - solved symbolically, with the initial conditions applied | **Inequalities** - solved, and the range shaded on the number line |
 
@@ -215,6 +215,11 @@ parsed without evaluation and printed with the ordering left alone.
 800 of the 804 possible rearrangements (every variable of every formula) resolve
 symbolically; the four that can't - fin efficiency, Heron for the semi-perimeter,
 annuity interest rate - are solved numerically instead, and say so.
+
+**A value can bring a tolerance** as well as a unit - `5000 +/- 50`, or
+`5000 +/- 1%` - and the answer comes back with one, along with each input's
+share of it. A 2.5% answer where one measurement accounts for 94% of that
+tells you which one to take again; the 2.5% on its own does not.
 
 **Made of** appears on the formulas that have somewhere to put a material,
 and fills those slots from the material database - a modulus into `E`, a
@@ -577,6 +582,35 @@ Worksheets save and reopen as files.
 
 A step that fails is reported and the ones after it carry on, because one
 broken line in the middle should not blank the page.
+
+**The unit comes out of the arithmetic, not off a label.** A row computing
+`pi*d^2/4` from a diameter in millimetres comes out in mm^2 because that is
+what it is, and a row that declares m^2 for it is told so rather than
+believed. A row that declares nothing is given whatever it produced. A row
+that adds a force to an area is refused, naming the two terms that will not
+go together.
+
+**Tolerances come down the page with it.** Write a measurement as
+`50 +/- 0.5 mm` and every row below carries the consequence:
+
+    d   = 50 +/- 0.5 mm         a bore off a vernier
+    A   = pi*d^2/4              1963.5 +/- 39.27 mm^2
+    Q   = 2 +/- 0.05 L/s        0.002 +/- 5e-05 m^3/s
+    v   = Q/A                   1.0186 +/- 0.03261 m/s
+    Re  = rho*v*d/mu            50828 +/- 1369
+
+and underneath, the thing actually worth knowing: **Q accounts for 86% of
+that, so measuring anything else better would buy almost nothing.**
+
+Each measurement is counted **once**, however many rows it reached the
+answer through. In that sheet the bore is in the Reynolds number twice -
+directly, and through the area - and giving each row an uncertainty and
+treating it as a fresh measurement for the row below would get it wrong,
+because the same bore cannot be high on one route and low on the other.
+Instead each row keeps its expression written out in terms of the rows that
+were typed in, and the derivatives are taken of that. Writing the same
+calculation as five rows or as one line gives the identical answer, and
+there is a test that asserts exactly that.
 
 ### Matrices
 

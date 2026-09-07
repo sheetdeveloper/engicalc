@@ -106,6 +106,43 @@ strength from Brinell hardness carries MPa. A formula can record that, and
 the test asserts the reason is a reason rather than a label: an exemption
 with nothing beside it is where a mistake goes to hide.
 
+## On a worksheet
+
+The worksheet is where both of these earn their keep, because it is where
+one number is worked out from another and then from that.
+
+    Name   Is                Unit     Answer
+    d      50 +/- 0.5 mm     mm       50 +/- 0.5 mm
+    A      pi*d^2/4                   1963.5 +/- 39.27 mm^2
+    Q      2 +/- 0.05 L/s    m^3/s    0.002 +/- 5e-05 m^3/s
+    v      Q/A                        1.0186 +/- 0.03261 m/s
+    rho    998 kg/m^3        kg/m^3   998 kg/m^3
+    mu     0.001 Pa*s        Pa*s     0.001 Pa*s
+    Re     rho*v*d/mu                 50828 +/- 1369
+
+Three things there are worth pointing at.
+
+**A row that declares no unit is given one.** The area comes out in mm^2
+because the diameter was in millimetres, and nothing had to say so. A row
+that *does* declare one has to be able to hold what the expression makes:
+declare m^2 for that area and it converts, declare mm and it is refused,
+because an area is not a length.
+
+**A given typed as a bare number takes the unit its row declares.** That is
+what declaring one is for, and it is how nearly every measurement on a
+sheet is written.
+
+**The tolerance converts with the value.** `2 +/- 0.05 L/s` in a row
+declared m^3/s is `0.002 +/- 5e-05`, and nobody moved a decimal point by
+hand.
+
+Under the table the sheet says what the tolerances came to and which
+measurement to improve:
+
+    Re = 50828 +/- 1369, which is 2.7%.
+    Q accounts for 86% of that - measuring anything else better would buy
+    almost nothing.
+
 ## Uncertainty
 
 Every number that came off an instrument has a tolerance, and an answer
@@ -185,6 +222,37 @@ instrument, and nothing here can tell. Correlation *within a sheet* is
 handled exactly, because the sheet knows where each number came from.
 Correlation between two things you measured yourself is not, because it
 cannot be.
+
+## In the formula library
+
+The same thing, in the tab where most single calculations get done. Every
+variable there already declares a unit and a typed value is already
+converted into it, so a typed tolerance rides along:
+
+    E  = 210 +/- 5 GPa
+    I  = 8503 +/- 20 cm^4
+    K  = 1
+    L  = 3.5 +/- 0.01 m
+    Pcr = pi^2 E I / (K L)^2    ->  14.39 +/- 0.35 MN   (2.5%)
+
+        E   +/- 5e9 Pa      moves it 3.43e5 N   -  94% of the total
+        L   +/- 0.01 m      moves it 8.2e4 N    -   5%
+        I   +/- 2e-7 m^4    moves it 3.4e4 N    -   1%
+
+The tolerance converts with its value - 5 GPa becomes 5e9 Pa and 20 cm^4
+becomes 2e-7 m^4, with nobody moving a decimal point - and the expression
+differentiated is the **rearrangement**, which is the one the answer
+actually came from.
+
+Because every variable declares a unit, the whole calculation is
+dimensionally checked on the way through for nothing extra: each
+contribution is a derivative times a tolerance, and if those did not come
+to the answer's own unit something would be wrong.
+
+A formula that carries a constant with units hidden in it - Manning's, and
+the Brinell rule of thumb - gets no uncertainty rather than a wrong one.
+There is no dimensionally consistent derivative to take, and saying nothing
+is better than saying something that cannot be right.
 
 ### A difference of two close numbers
 

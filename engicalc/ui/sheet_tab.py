@@ -109,6 +109,13 @@ class SheetTab(ttk.Frame):
             ttk.Label(header, text=text, width=width,
                       font=("Segoe UI", 9, "bold")).pack(side="left", padx=2)
 
+        # What the tolerances came to, and which measurement to improve.
+        # Under the table rather than in it: it is about the sheet as a
+        # whole, and the row it belongs to is whichever one is last.
+        self.spread_note = ttk.Label(self, text="", style="Hint.TLabel",
+                                     wraplength=980, justify="left")
+        self.spread_note.pack(side="bottom", fill="x", pady=(4, 0))
+
         self.table = ScrollFrame(self, height=360)
         self.table.pack(fill="both", expand=True)
 
@@ -134,7 +141,7 @@ class SheetTab(ttk.Frame):
             else:
                 entry.bind("<Return>", lambda e: self.calculate())
             variables.append(var)
-        answer = ttk.Label(row, text="", width=26, anchor="w", font=MONO)
+        answer = ttk.Label(row, text="", width=34, anchor="w", font=MONO)
         answer.pack(side="left", padx=2)
         ttk.Button(row, text="x", width=2,
                    command=lambda r=row: self.remove_row(r)).pack(side="right")
@@ -217,6 +224,33 @@ class SheetTab(ttk.Frame):
         self.status.configure(
             text=f"{len(self.results)} steps, {problems} need attention"
             if problems else f"{len(self.results)} steps, all worked out")
+        self.spread_note.configure(text=self._about_the_spread())
+
+    def _about_the_spread(self) -> str:
+        """A sentence about the tolerances, or nothing if there are none.
+
+        About the last row that has one, because that is the answer the
+        sheet was written to get - the rows above it are the working.
+        """
+        worked = [r for r in self.results
+                  if r.ok and r.spread is not None and r.spread.known]
+        if not worked:
+            return ""
+        last = worked[-1]
+        said = (f"{last.step.name} = {float(last.value):.6g} "
+                f"+/- {last.spread.error:.4g}"
+                + (f" {last.unit}" if last.unit else "")
+                + f", which is {100 * last.spread.relative:.2g}%.")
+        worst = last.spread.dominant()
+        if worst is not None:
+            said += (f"  {worst.name} accounts for "
+                     f"{100 * worst.share:.0f}% of that - measuring anything "
+                     f"else better would buy almost nothing.")
+        elif len(last.spread.contributions) > 1:
+            share = ", ".join(f"{c.name} {100 * c.share:.0f}%"
+                              for c in last.spread.contributions[:4])
+            said += f"  Shared between {share}."
+        return said
 
     # -- files ------------------------------------------------------------
     def new(self) -> None:

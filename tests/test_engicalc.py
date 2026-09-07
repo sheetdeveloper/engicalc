@@ -5106,6 +5106,85 @@ class TestUncertainty(unittest.TestCase):
         self.assertAlmostEqual(got.error, 5e-5, places=15)
 
 
+class TestUncertaintyInTheLibrary(unittest.TestCase):
+    """A tolerance typed into a formula field comes back on the answer.
+
+    The rearrangement is exactly the expression to differentiate, and every
+    variable already declares a unit - so the whole thing is dimensionally
+    checked on the way through, for free.
+    """
+
+    def _solve(self, key, target, values):
+        from engicalc.formulas.library import FormulaLibrary, solve_formula
+        library = FormulaLibrary(load_user=False)
+        return solve_formula(library.get(key), target, values)
+
+    def test_a_tolerance_comes_back_on_the_answer(self):
+        got = self._solve("strength_of_materials.normal_stress", "sigma",
+                          {"F": "5000 +/- 50", "A": "20e-6 +/- 5e-7"})
+        self.assertAlmostEqual(got.value, 2.5e8, delta=1.0)
+        self.assertIsNotNone(got.spread)
+        wanted = 2.5e8 * math.hypot(50 / 5000, 5e-7 / 20e-6)
+        self.assertAlmostEqual(got.spread.error / wanted, 1.0, places=9)
+
+    def test_the_nominal_value_is_still_read_correctly(self):
+        # The tolerance used to reach sympify as part of the number and
+        # fail there with a syntax error about nothing the user did wrong.
+        with_tolerance = self._solve(
+            "strength_of_materials.normal_stress", "sigma",
+            {"F": "5000 +/- 50", "A": "20e-6"})
+        without = self._solve("strength_of_materials.normal_stress", "sigma",
+                              {"F": "5000", "A": "20e-6"})
+        self.assertAlmostEqual(with_tolerance.value, without.value, places=6)
+
+    def test_a_tolerance_converts_with_the_unit_beside_it(self):
+        # 5 GPa of tolerance on a field that wants pascals is 5e9 Pa, and
+        # 20 cm^4 is 2e-7 m^4. Neither is a decimal point moved by hand.
+        got = self._solve("strength_of_materials.euler_buckling", "Pcr",
+                          {"E": "210 +/- 5 GPa", "I": "8503 +/- 20 cm^4",
+                           "K": "1", "L": "3.5 +/- 0.01 m"})
+        by_name = {c.name: c for c in got.spread.contributions}
+        self.assertAlmostEqual(by_name["E"].given, 5e9, delta=1.0)
+        self.assertAlmostEqual(by_name["I"].given, 2e-7, delta=1e-12)
+        # E enters linearly and is the loosest of the three, so it is the
+        # one worth measuring better.
+        self.assertEqual(got.spread.dominant().name, "E")
+
+    def test_no_tolerance_anywhere_means_none_claimed(self):
+        got = self._solve("strength_of_materials.normal_stress", "sigma",
+                          {"F": "5000", "A": "20e-6"})
+        self.assertIsNone(got.spread)
+
+    def test_a_formula_with_a_hidden_constant_gets_none(self):
+        # Manning's n carries s/m^(1/3) while being quoted as a bare
+        # number, so there is no dimensionally consistent derivative to
+        # take. Better no uncertainty than a wrong one.
+        got = self._solve("fluid_mechanics.manning", "v",
+                          {"Rh": "0.5 +/- 0.01", "S": "0.001", "n": "0.013"})
+        self.assertIsNotNone(got.value)
+        self.assertIsNone(got.spread)
+
+    def test_it_agrees_with_the_worksheet_on_the_same_sum(self):
+        # Two routes to one answer, and they have to give one answer.
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("F", "5000 +/- 50 N", "N")
+        sheet.add("A", "20 +/- 0.5 mm^2", "mm^2")
+        sheet.add("sigma", "F/A", "N/mm^2")
+        row = [r for r in sheet.evaluate() if r.step.name == "sigma"][0]
+
+        library = self._solve(
+            "strength_of_materials.normal_stress", "sigma",
+            {"F": "5000 +/- 50 N", "A": "20 +/- 0.5 mm^2"})
+        # The library works in pascals and the sheet in N/mm^2, which is a
+        # factor of a million on both the value and the tolerance.
+        self.assertAlmostEqual(library.value / 1e6, float(row.value),
+                               places=6)
+        self.assertAlmostEqual(library.spread.error / 1e6,
+                               row.spread.error, places=6)
+
+
 class TestUncertaintyDownASheet(unittest.TestCase):
     """A sheet counts each measurement once, however many routes it took.
 
@@ -5175,6 +5254,46 @@ class TestUncertaintyDownASheet(unittest.TestCase):
         found = self._answers(sheet)
         self.assertAlmostEqual(found["square"].spread.relative, 0.02,
                                places=9)
+
+    def _deep(self, rows: int):
+        """A sheet where each row uses the two above it.
+
+        Written back to the measurements that is a to the power of a
+        Fibonacci number, so it goes both large and deep quickly - which
+        is the shape that would hang the window if nothing stopped it.
+        """
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("a", "1.01 +/- 0.001", "")
+        sheet.add("b", "1.02 +/- 0.001", "")
+        before, above = "a", "b"
+        for step in range(2, rows):
+            sheet.add(f"r{step}", f"{before}*{above}", "")
+            before, above = f"r{step}", before
+        return sheet
+
+    def test_a_tolerance_that_will_not_work_out_keeps_the_answer(self):
+        # The row's own value came from the row above it and is fine. It
+        # is the expression written all the way back to the measurements
+        # that overflows, and losing the value over that would be losing
+        # the thing the row is for.
+        results = self._deep(34).evaluate()
+        self.assertTrue(all(r.ok for r in results),
+                        [r.error for r in results if not r.ok][:1])
+        deep = results[-1]
+        self.assertIsNone(deep.spread)
+        self.assertIn("tolerance", deep.note.lower())
+
+    def test_a_deep_sheet_does_not_take_all_day(self):
+        import time
+
+        # Not a benchmark - a guard. Without a ceiling on how big the
+        # written-out expression may get, this is where the window would
+        # stop responding in the middle of a keystroke.
+        start = time.time()
+        self._deep(40).evaluate()
+        self.assertLess(time.time() - start, 10.0)
 
     def test_a_sheet_with_no_tolerances_says_nothing_about_them(self):
         from engicalc.core.sheet import Sheet

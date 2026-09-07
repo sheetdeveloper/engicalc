@@ -139,13 +139,17 @@ class FormulaLibrary:
 # --------------------------------------------------------------------------
 class FormulaSolution:
     def __init__(self, formula: Formula, target: str, expression,
-                 value=None, substitutions=None, warnings=None):
+                 value=None, substitutions=None, warnings=None,
+                 spread=None):
         self.formula = formula
         self.target = target
         self.expression = expression        # symbolic rearrangement
         self.value = value                  # numeric result (or None)
         self.substitutions = substitutions or {}
         self.warnings = warnings or []
+        #: How far the answer moves for the tolerances that were typed in,
+        #: or None where none were.
+        self.spread = spread
 
     @property
     def unit(self) -> str:
@@ -210,8 +214,60 @@ def solve_formula(formula: Formula, target: str,
     else:
         warnings.append("Still symbolic - no value for: " + ", ".join(missing))
 
-    return FormulaSolution(formula, target, sp.simplify(expr), value,
-                           {str(k): sp.sstr(v) for k, v in subs.items()}, warnings)
+    return FormulaSolution(
+        formula, target, sp.simplify(expr), value,
+        {str(k): sp.sstr(v) for k, v in subs.items()}, warnings,
+        spread=_spread(formula, target, expr, values, value))
+
+
+def _spread(formula: Formula, target: str, expression, values: dict,
+            value) -> object:
+    """How far the answer moves for the tolerances that were typed in.
+
+    The rearrangement is exactly the expression to differentiate, and
+    every variable already declares a unit, so the whole thing is
+    dimensionally checked on the way through.
+
+    A formula whose declared units do not balance - Manning's, and the
+    Brinell rule of thumb, which carry a constant with units in it - has
+    no dimensionally consistent derivative to take, so it gets no
+    uncertainty rather than a wrong one.
+    """
+    from ..core import uncertainty
+    from ..core.quantity import Quantity, parse_powers
+
+    if value is None or formula.dimensional_constant:
+        return None
+    known, any_tolerance = {}, False
+    for variable in formula.variables:
+        if variable.symbol == target:
+            continue
+        raw = values.get(variable.symbol)
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            typed = Quantity.parse(str(raw))
+            if variable.unit:
+                # A bare number is in the unit the formula declares, which
+                # is what declaring one means here and everywhere else. A
+                # number with a unit on it is converted into that one, and
+                # its tolerance goes with it.
+                typed = (Quantity(typed.value, parse_powers(variable.unit),
+                                  typed.error) if typed.plain
+                         else typed.to(variable.unit, absolute=False))
+        except Exception:                              # noqa: BLE001
+            return None
+        known[variable.symbol] = typed
+        any_tolerance = any_tolerance or bool(typed.error)
+    if not any_tolerance:
+        return None
+    try:
+        answer = Quantity.of(float(value), formula.unit_of(target))
+        return uncertainty.through(expression, known, answer)
+    except Exception:                                  # noqa: BLE001
+        # A formula whose declared units do not hold together has no
+        # derivative worth taking. Better nothing than a wrong number.
+        return None
 
 
 #: How far the two sides of the equation may differ, relative to their own
@@ -278,9 +334,17 @@ def _read_value(formula: Formula, name: str, raw: str, warnings: list):
     silent thousandfold mistake.
     """
     from ..core import units as unit_tools
+    from ..core.quantity import Quantity
 
     variable = formula.variable(name)
     declared = variable.unit if variable else ""
+    # A tolerance is read separately - see _spread - and the nominal value
+    # is what gets substituted. Left in, it reaches sympify as
+    # "5000 +/- 50" and fails there with a syntax error about nothing the
+    # person typing it did wrong.
+    wide = Quantity.TOLERANCE.match(str(raw))
+    if wide:
+        raw = f"{wide.group('value')} {wide.group('unit')}".strip()
     try:
         value, note = unit_tools.to_declared(str(raw), declared)
     except unit_tools.UnitError as exc:
