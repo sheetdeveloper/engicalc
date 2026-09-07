@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -79,6 +80,10 @@ class LibraryTab(ttk.Frame):
                    command=self.plot_sweep).pack(side="left")
         ttk.Button(actions, text="Add my own formula",
                    command=self.add_formula_dialog).pack(side="right")
+        ttk.Button(actions, text="Import...",
+                   command=self.import_formulas).pack(side="right", padx=6)
+        ttk.Button(actions, text="Share mine...",
+                   command=self.export_formulas).pack(side="right")
 
         equation_box = ttk.Frame(right, style="Card.TFrame")
         equation_box.pack(fill="x", pady=(4, 4))
@@ -434,6 +439,54 @@ class LibraryTab(ttk.Frame):
             lambda exc: messagebox.showerror("Sweep failed", str(exc)))
 
     # -- user formulas ----------------------------------------------------
+    def export_formulas(self) -> None:
+        """Write the formulas this person added to a file they can pass on."""
+        mine = self.library.user_formulas()
+        if not mine:
+            messagebox.showinfo(
+                "Nothing to share",
+                "You have not added any formulas of your own yet. The two "
+                "hundred and twenty-nine that came with the program are "
+                "already on everybody's copy.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("Formula library", "*.json")],
+            initialfile="my-formulas.json")
+        if not path:
+            return
+        try:
+            count = self.library.export_user_formulas(path)
+        except OSError as exc:
+            messagebox.showerror("Could not write it", str(exc))
+            return
+        self.app.set_status(
+            f"{count} formula{'s' if count != 1 else ''} written to "
+            f"{os.path.basename(path)}")
+
+    def import_formulas(self) -> None:
+        """Read a library somebody else exported."""
+        path = filedialog.askopenfilename(
+            filetypes=[("Formula library", "*.json"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            got = self.library.import_user_formulas(path)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Could not read it", str(exc))
+            return
+        except Exception as exc:                          # noqa: BLE001
+            messagebox.showerror("Could not read it",
+                                 f"That file is not a formula library. "
+                                 f"({exc})")
+            return
+
+        self.populate_tree()
+        messagebox.showinfo("Imported", _what_happened(got))
+        self.app.set_status(
+            f"{len(got['added']) + len(got['updated'])} formulas in from "
+            f"{os.path.basename(path)}")
+
     def add_formula_dialog(self) -> None:
         dialog = tk.Toplevel(self)
         dialog.title("Add a formula")
@@ -501,3 +554,30 @@ class LibraryTab(ttk.Frame):
                        category=fields["category"].get().strip() or "General",
                        equation=equation, variables=variables,
                        notes=fields["notes"].get().strip())
+
+
+def _what_happened(got: dict) -> str:
+    """A sentence per outcome, and only for the ones that happened.
+
+    All four matter. What arrived is the point; what was replaced is
+    worth knowing before it is; what was refused is a file trying to
+    redefine a formula that came with the program, which is the thing
+    somebody sharing a library could do by accident and nobody would
+    otherwise see.
+    """
+    said = []
+    if got["added"]:
+        said.append(f"{len(got['added'])} added.")
+    if got["updated"]:
+        said.append(f"{len(got['updated'])} replaced one of yours with the "
+                    f"same name: " + ", ".join(got["updated"][:6]) + ".")
+    if got["refused"]:
+        said.append(
+            f"{len(got['refused'])} refused, because they use the name of a "
+            f"formula that came with the program and a file is not allowed "
+            f"to change what those compute: "
+            + ", ".join(got["refused"][:6]) + ".")
+    if got["broken"]:
+        said.append(f"{len(got['broken'])} would not read: "
+                    + ", ".join(got["broken"][:6]) + ".")
+    return " ".join(said) or "There was nothing in that file."

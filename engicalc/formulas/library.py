@@ -23,10 +23,24 @@ USER_FORMULA_FILE = os.path.join(
     os.path.expanduser("~"), ".engicalc", "user_formulas.json")
 
 
+def _as_payload(formula: Formula) -> dict:
+    """One formula as the plain data that goes in a file."""
+    return {
+        "key": formula.key, "name": formula.name, "branch": formula.branch,
+        "category": formula.category, "equation": formula.equation,
+        "variables": [v.__dict__ for v in formula.variables],
+        "notes": formula.notes, "assumptions": formula.assumptions,
+        "tags": list(formula.tags), "reference": formula.reference,
+    }
+
+
 class FormulaLibrary:
     def __init__(self, load_user: bool = True):
         self._formulas: dict[str, Formula] = OrderedDict()
         self.load_builtin()
+        #: The keys that came with the program. Nothing loaded from a file
+        #: may take one of them - see `load_user_formulas`.
+        self._builtin = frozenset(self._formulas)
         if load_user:
             self.load_user_formulas()
 
@@ -38,6 +52,13 @@ class FormulaLibrary:
                 self._formulas[formula.key] = formula
 
     def load_user_formulas(self, path: str = USER_FORMULA_FILE) -> int:
+        """Add the formulas from *path*. Returns how many arrived.
+
+        Keys that belong to a built-in formula are refused and listed in
+        ``rejected``, because a file is not allowed to change what the
+        program already knows.
+        """
+        self.rejected: list = []
         if not os.path.exists(path):
             return 0
         try:
@@ -47,6 +68,14 @@ class FormulaLibrary:
             return 0
         count = 0
         for item in payload:
+            if item.get("key") in self._builtin:
+                # A file must not be able to redefine a formula that came
+                # with the program. Somebody sharing a library, or a key
+                # that collided by accident, would otherwise change what
+                # Newton's second law computes - and every answer from it
+                # would be wrong with nothing on screen to say so.
+                self.rejected.append(item["key"])
+                continue
             try:
                 self._formulas[item["key"]] = Formula(
                     key=item["key"], name=item["name"], branch=item["branch"],
@@ -75,15 +104,71 @@ class FormulaLibrary:
             except (OSError, json.JSONDecodeError):
                 existing = []
         existing = [e for e in existing if e.get("key") != formula.key]
-        existing.append({
-            "key": formula.key, "name": formula.name, "branch": formula.branch,
-            "category": formula.category, "equation": formula.equation,
-            "variables": [v.__dict__ for v in formula.variables],
-            "notes": formula.notes, "assumptions": formula.assumptions,
-            "tags": list(formula.tags), "reference": formula.reference,
-        })
+        existing.append(_as_payload(formula))
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(existing, fh, indent=2)
+
+    # -- sharing ----------------------------------------------------------
+    def user_formulas(self) -> list:
+        """The ones this person added, in the order they were added."""
+        return [f for key, f in self._formulas.items()
+                if key not in self._builtin]
+
+    def export_user_formulas(self, path: str) -> int:
+        """Write them to a file that can be handed to somebody else."""
+        found = self.user_formulas()
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump([_as_payload(one) for one in found], fh, indent=2)
+        return len(found)
+
+    def import_user_formulas(self, path: str,
+                             store: str = USER_FORMULA_FILE) -> dict:
+        """Read formulas out of a file somebody handed over.
+
+        What arrives is kept, in *store*, so it is still there next time.
+        The parameter exists so a test can say where - a test that writes
+        into the home directory is a test that changes the machine it
+        runs on.
+
+        Returns what happened to each, because all three outcomes matter:
+        what arrived, what replaced something of the same name, and what
+        was refused for trying to take a built-in formula's key.
+        """
+        with open(path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        if not isinstance(payload, list):
+            raise ValueError(
+                "That file is not a formula library - it should hold a "
+                "list of formulas.")
+
+        added, updated, refused, broken = [], [], [], []
+        for item in payload:
+            key = item.get("key") if isinstance(item, dict) else None
+            if not key:
+                broken.append("a formula with no key")
+                continue
+            if key in self._builtin:
+                refused.append(key)
+                continue
+            try:
+                formula = Formula(
+                    key=key, name=item["name"], branch=item["branch"],
+                    category=item.get("category", "User"),
+                    equation=item["equation"],
+                    variables=[Variable(**v)
+                               for v in item.get("variables", [])],
+                    notes=item.get("notes", ""),
+                    assumptions=item.get("assumptions", ""),
+                    tags=tuple(item.get("tags", ())),
+                    reference=item.get("reference", ""))
+                formula.eq          # parses it, so a bad one fails here
+            except Exception as exc:                      # noqa: BLE001
+                broken.append(f"{key} ({type(exc).__name__})")
+                continue
+            (updated if key in self._formulas else added).append(key)
+            self.add_user_formula(formula, path=store)
+        return {"added": added, "updated": updated, "refused": refused,
+                "broken": broken}
 
     # -- access -----------------------------------------------------------
     def __len__(self) -> int:

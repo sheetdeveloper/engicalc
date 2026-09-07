@@ -9973,3 +9973,293 @@ class TestHowManyAnswersThereAre(unittest.TestCase):
             with self.subTest(text):
                 got = self._solve(text)
                 self.assertFalse(any("repeats" in w for w in got.warnings))
+
+
+class TestTheFormulaGridChecksUnits(unittest.TestCase):
+    """A value typed into a formula field is read against its declared unit.
+
+    This was listed as the last open piece of the units work for a while
+    after it had been done. The tests here exist so that nobody has to
+    take the documentation's word for it either way.
+    """
+
+    def _buckling(self):
+        from engicalc.formulas.library import get_library
+
+        return get_library().get("strength_of_materials.euler_buckling")
+
+    def _solve(self, **given):
+        from engicalc.formulas.library import solve_formula
+
+        base = {"E": "200e9", "I": "3.91e-5", "L": "3.5", "K": "1"}
+        base.update(given)
+        return solve_formula(self._buckling(), "Pcr", base)
+
+    def test_a_value_in_another_unit_of_the_same_kind_converts(self):
+        plain = self._solve()
+        prefixed = self._solve(E="200 GPa")
+        self.assertAlmostEqual(plain.value, prefixed.value, places=6)
+        self.assertTrue(any("GPa" in w and "Pa" in w
+                            for w in prefixed.warnings),
+                        "the conversion happened silently")
+
+    def test_and_says_what_it_did(self):
+        """Silently correcting somebody is how they learn nothing."""
+        got = self._solve(L="3500 mm")
+        self.assertAlmostEqual(self._solve().value, got.value, places=6)
+        self.assertTrue(any("3500 mm" in w and " m" in w
+                            for w in got.warnings))
+
+    def test_a_value_of_the_wrong_kind_is_refused(self):
+        """Not converted, not ignored - refused, naming both kinds."""
+        with self.assertRaises(ValueError) as caught:
+            self._solve(L="3500 kg")
+        said = str(caught.exception)
+        self.assertIn("kg", said)
+        self.assertIn("m", said)
+
+    def test_a_unit_on_something_that_has_none_is_refused(self):
+        """K is an end-fixity factor. It is a number, and a number with
+        millimetres on it is a mistake, not a conversion."""
+        for wrong in ("1 kg", "1 mm"):
+            with self.subTest(wrong):
+                with self.assertRaises(ValueError) as caught:
+                    self._solve(K=wrong)
+                self.assertIn("no units", str(caught.exception))
+
+    def test_a_bare_number_means_the_declared_unit(self):
+        """Which is what declaring one is for."""
+        self.assertAlmostEqual(self._solve(E="200e9").value,
+                               self._solve(E="200e9 Pa").value, places=6)
+
+    def test_the_numerical_route_reads_them_the_same_way(self):
+        """A formula with no closed form must not have different rules.
+
+        Heron for the semi-perimeter goes down the iteration path, so it
+        is the one that would drift.
+        """
+        from engicalc.formulas.library import get_library, solve_formula
+
+        formula = get_library().get("geometry_maths.heron")
+        metres = solve_formula(formula, "s", {"A": "1.7", "a": "2.43",
+                                              "b": "3.36", "c": "1.09"})
+        millimetres = solve_formula(formula, "s",
+                                    {"A": "1.7", "a": "2430 mm",
+                                     "b": "3360 mm", "c": "1090 mm"})
+        self.assertAlmostEqual(metres.value, millimetres.value, places=9)
+
+
+class TestSharingAFormulaLibrary(unittest.TestCase):
+    """A library can be handed to somebody else, and cannot overwrite theirs.
+
+    The built-in formulas are the part everybody's copy agrees on. A file
+    that could redefine one would change what Newton's second law computes
+    on the machine it was opened on, and every answer from it would be
+    wrong with nothing on screen to say so.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        from engicalc.formulas.library import FormulaLibrary
+
+        self.folder = tempfile.mkdtemp()
+        self.store = os.path.join(self.folder, "mine.json")
+        self.library = FormulaLibrary(load_user=False)
+
+    def _add(self, key="user.my_rule", equation="y = 2*x + 1"):
+        from engicalc.formulas.model import Formula, Variable
+
+        formula = Formula(key=key, name="My rule", branch="My formulas",
+                          category="General", equation=equation,
+                          variables=[Variable("y", "Output", ""),
+                                     Variable("x", "Input", "")])
+        self.library.add_user_formula(formula, path=self.store)
+        return formula
+
+    def _payload(self, path):
+        import json
+
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def test_only_what_the_person_added_is_exported(self):
+        """Not the 229 that came with the program - everybody has those."""
+        self._add()
+        shared = os.path.join(self.folder, "shared.json")
+        self.assertEqual(1, self.library.export_user_formulas(shared))
+        self.assertEqual(["user.my_rule"],
+                         [one["key"] for one in self._payload(shared)])
+
+    def test_a_round_trip_keeps_the_formula(self):
+        from engicalc.formulas.library import FormulaLibrary
+
+        self._add()
+        shared = os.path.join(self.folder, "shared.json")
+        self.library.export_user_formulas(shared)
+
+        theirs = FormulaLibrary(load_user=False)
+        got = theirs.import_user_formulas(shared, store=self.store)
+        self.assertEqual(["user.my_rule"], got["added"])
+        self.assertEqual("y = 2*x + 1", theirs.get("user.my_rule").equation)
+
+    def test_a_file_cannot_redefine_a_formula_that_came_with_the_program(self):
+        import json
+
+        from engicalc.formulas.library import FormulaLibrary
+
+        shared = os.path.join(self.folder, "shared.json")
+        with open(shared, "w", encoding="utf-8") as handle:
+            json.dump([{
+                "key": "mechanics.newton_second", "name": "Not Newton",
+                "branch": "Mechanics", "equation": "F = m*a*2",
+                "variables": [{"symbol": "F", "description": "Force",
+                               "unit": "N", "typical": "", "material": ""},
+                              {"symbol": "m", "description": "Mass",
+                               "unit": "kg", "typical": "", "material": ""},
+                              {"symbol": "a", "description": "Acceleration",
+                               "unit": "m/s^2", "typical": "",
+                               "material": ""}]}], handle)
+
+        theirs = FormulaLibrary(load_user=False)
+        got = theirs.import_user_formulas(shared, store=self.store)
+        self.assertEqual(["mechanics.newton_second"], got["refused"])
+        self.assertEqual([], got["added"])
+        self.assertEqual("F = m*a",
+                         theirs.get("mechanics.newton_second").equation)
+
+    def test_nor_can_the_file_on_disk_that_is_loaded_at_startup(self):
+        """The same hole, one door along. The user formula file is read
+        every time the app opens, and it is a file like any other."""
+        import json
+
+        from engicalc.formulas.library import FormulaLibrary
+
+        with open(self.store, "w", encoding="utf-8") as handle:
+            json.dump([{"key": "mechanics.newton_second", "name": "No",
+                        "branch": "Mechanics", "equation": "F = m*a*99",
+                        "variables": []}], handle)
+        library = FormulaLibrary(load_user=False)
+        library.load_user_formulas(self.store)
+        self.assertEqual("F = m*a",
+                         library.get("mechanics.newton_second").equation)
+        self.assertIn("mechanics.newton_second", library.rejected)
+
+    def test_one_that_will_not_parse_is_named_rather_than_swallowed(self):
+        import json
+
+        from engicalc.formulas.library import FormulaLibrary
+
+        shared = os.path.join(self.folder, "shared.json")
+        with open(shared, "w", encoding="utf-8") as handle:
+            json.dump([{"key": "user.broken", "name": "Broken",
+                        "branch": "My formulas", "equation": "y = ((("}],
+                      handle)
+        got = FormulaLibrary(load_user=False).import_user_formulas(shared, store=self.store)
+        self.assertEqual([], got["added"])
+        self.assertEqual(1, len(got["broken"]))
+        self.assertIn("user.broken", got["broken"][0])
+
+    def test_importing_over_your_own_says_it_replaced_it(self):
+        from engicalc.formulas.library import FormulaLibrary
+
+        shared = os.path.join(self.folder, "shared.json")
+        self._add(equation="y = 3*x")
+        self.library.export_user_formulas(shared)
+
+        theirs = FormulaLibrary(load_user=False)
+        theirs.add_user_formula(self._add(equation="y = 2*x + 1"),
+                                path=os.path.join(self.folder, "t.json"))
+        got = theirs.import_user_formulas(shared, store=self.store)
+        self.assertEqual(["user.my_rule"], got["updated"])
+        self.assertEqual([], got["added"])
+
+    def test_a_file_that_is_not_a_library_says_so(self):
+        import json
+
+        from engicalc.formulas.library import FormulaLibrary
+
+        wrong = os.path.join(self.folder, "wrong.json")
+        with open(wrong, "w", encoding="utf-8") as handle:
+            json.dump({"not": "a list"}, handle)
+        with self.assertRaises(ValueError):
+            FormulaLibrary(load_user=False).import_user_formulas(wrong, store=self.store)
+
+
+class TestARowWrittenInTermsOfItself(unittest.TestCase):
+    """A sheet reads downwards, and some quantities are written implicitly.
+
+    A heat exchanger outlet temperature appears on both sides of its own
+    equation. So does a friction factor, and a mean temperature. Until
+    now the sheet answered "nothing here defines T_out - it is defined
+    further down", which was wrong twice over: it is defined on this row,
+    and there is no row further down.
+    """
+
+    def _run(self, *rows):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        for row in rows:
+            sheet.add(*row)
+        return sheet.evaluate()
+
+    def test_it_settles_on_the_value_the_algebra_gives(self):
+        """T = 20 + 2500/T is T^2 - 20T - 2500 = 0, so T = 10 + sqrt(2600)."""
+        got = self._run(("T", "20 + 5000/(2*T)", "-"))[0]
+        self.assertFalse(got.error, got.error)
+        self.assertAlmostEqual(10.0 + math.sqrt(2600.0), float(got.value),
+                               places=6)
+        self.assertIn("iteration", got.note)
+
+    def test_and_again_with_units_on_it(self):
+        """Celsius in, kelvin underneath, Celsius back out."""
+        found = self._run(("Q", "5000", "W"), ("U", "2", "W/K"),
+                          ("Tin", "20", "degC"),
+                          ("T", "Tin + Q/(U*T/1 K)", "degC"))
+        for one in found:
+            self.assertFalse(one.error, one.error)
+        # In kelvin: T^2 - 293.15 T - 2500 = 0.
+        kelvin = (293.15 + math.sqrt(293.15 ** 2 + 10000.0)) / 2.0
+        self.assertAlmostEqual(kelvin - 273.15, float(found[-1].value),
+                               places=6)
+
+    def test_one_answer_reached_from_seven_starts_is_one_answer(self):
+        """Settling means the step got small; the distance still to travel
+        can be several steps' worth. Seven starting points all reaching 60
+        landed within a millionth of each other and were reported as seven
+        different answers."""
+        got = self._run(("Tm", "0.5*(60 + Tm)", "-"))[0]
+        self.assertFalse(got.error, got.error)
+        self.assertAlmostEqual(60.0, float(got.value), places=6)
+        self.assertNotIn("more than one value", got.note)
+
+    def test_one_that_walks_away_says_so(self):
+        """Rather than reporting the hundredth guess as though it meant
+        something."""
+        got = self._run(("y", "y + 1", "-"))[0]
+        self.assertTrue(got.error)
+        self.assertIn("does not settle", got.error)
+
+    def test_two_unknowns_at_once_is_still_refused(self):
+        """One unknown at a time - and the message says which other name
+        is the problem, rather than the old one about rows further down."""
+        got = self._run(("z", "z + w", "-"))[0]
+        self.assertTrue(got.error)
+        self.assertIn("w", got.error)
+        self.assertNotIn("further down", got.error)
+
+    def test_it_can_use_the_rows_above_it_as_well(self):
+        found = self._run(("Q", "5000", "-"), ("Tin", "20", "-"),
+                          ("T", "Tin + Q/(2*T)", "-"))
+        for one in found:
+            self.assertFalse(one.error, one.error)
+        self.assertAlmostEqual(10.0 + math.sqrt(2600.0),
+                               float(found[-1].value), places=6)
+
+    def test_the_answer_satisfies_its_own_equation(self):
+        """Which is the whole claim: put it back in and it comes out."""
+        got = self._run(("T", "20 + 5000/(2*T)", "-"))[0]
+        value = float(got.value)
+        self.assertAlmostEqual(value, 20.0 + 5000.0 / (2.0 * value),
+                               places=6)

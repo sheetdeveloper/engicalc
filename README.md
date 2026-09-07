@@ -278,6 +278,15 @@ Every filled field stays editable and says where its number came from.
 
 **Add my own formula** stores your own equations in
 `~/.engicalc/user_formulas.json`, and they behave exactly like the built-in ones.
+**Share mine...** writes just those to a file you can hand to somebody, and
+**Import...** reads one back.
+
+A file cannot redefine a formula that came with the program. That is the one
+thing an import feature must not allow: a shared library with a key that
+collided - by accident or otherwise - would change what Newton's second law
+computes on the machine that opened it, and every answer from it would be
+wrong with nothing on screen to say so. Those are refused and listed, along
+with anything that would not parse and anything of your own that got replaced.
 
 ### Interpolate
 
@@ -713,6 +722,16 @@ interpolates linearly; past the ends it **refuses**, because a straight
 line between two measurements is a defensible guess and a reading taken off
 the end of a manufacturer's curve is how a number nobody can defend gets
 into a calculation.
+
+**A row may be written in terms of itself.** A heat exchanger outlet, a
+friction factor and a mean temperature all are:
+
+    T_out   Tin + Q/(U*T_out/1 K)     degC     28.2934
+
+Solved by successive substitution - guess, put it in, take what comes out,
+again until it stops moving - which is how it is done by hand and needs no
+range to search. A row that walks away rather than settling says so, instead
+of reporting its hundredth guess as though it meant something.
 
 **And it works backwards.** Every real question is stated that way — not
 "what is the Reynolds number at 50 mm" but "what bore keeps it under 4000".

@@ -422,6 +422,62 @@ class Sheet:
                 + " - and it is what a table is being asked about.")
         return dimensional.walk(expression, wider).tidy()
 
+    def _settle(self, step: SheetStep, name: str, expression, known: dict,
+                note: str):
+        """Work out a row that is written in terms of itself.
+
+        By successive substitution: guess, put the guess in, take what
+        comes out, and do it again until it stops moving. That is how
+        these are done by hand, and it needs no range to search - which
+        matters, because a row has no natural scale to guess one from.
+
+        **Nothing symbolic is attempted.** Two reasons, and either would
+        be enough. A sheet works itself out on every keystroke, so a
+        rearrangement taking seconds is unusable however well it goes.
+        And `sp.solve` on an expression somebody has just typed can go
+        after a closed form that never comes back - which is a bug this
+        program has already had once, and it costs the whole process,
+        not just the row.
+
+        Where it does not settle, the row says so. A calculation that
+        quietly reports the last of a hundred guesses would be worse than
+        one that reports nothing.
+        """
+        me = sp.Symbol(name)
+        unit = step.unit or ""
+
+        def once(value: float):
+            """The expression, with the row's own name set to *value*."""
+            here = dict(known)
+            here[name] = (Quantity(value, parse_powers(unit)) if unit
+                          else Quantity.of(value, ""))
+            return dimensional.walk(expression, here).tidy()
+
+        found: list = []
+        for start in SETTLING_GUESSES:
+            got = _settle_from(once, start, unit)
+            if got is None:
+                continue
+            if all(abs(got.value - other.value)
+                   > DISTINCT * max(abs(got.value), 1.0) for other in found):
+                found.append(got)
+
+        if not found:
+            raise ParseError(
+                f"{step.name} is written in terms of itself and does not "
+                f"settle to a value. Substituting a guess back in walks "
+                f"away from an answer rather than towards one, from every "
+                f"starting point tried.")
+
+        answer = self._in_declared(step, found[0])
+        note = _and(note, "worked out by iteration - the row uses its own "
+                          "value")
+        if len(found) > 1:
+            others = ", ".join(f"{one.value:.6g}" for one in found[1:])
+            note = _and(note, f"it settles at more than one value; the "
+                              f"others are {others}")
+        return answer, note
+
     @staticmethod
     def _read_table(written, step: SheetStep) -> "Lookup":
         """One table row, from ``table: 15, 0.35; 30, 0.6``.
@@ -522,6 +578,20 @@ class Sheet:
 
         unknown = sorted(s.name for s in expression.free_symbols
                          if s.name not in known)
+        if name in unknown:
+            # The row refers to itself, which is not a mistake - it is how
+            # a great many engineering quantities are actually written.
+            others = [one for one in unknown if one != name]
+            if others:
+                raise ParseError(
+                    "This row refers to itself, which is allowed, but it "
+                    "also uses " + ", ".join(others) + ", which nothing "
+                    "above defines. One unknown at a time.")
+            answer, note = self._settle(step, name, expression, known, note)
+            written = sp.Symbol(name)
+            formulas[name] = written
+            givens[name] = answer
+            return answer, note, None
         if unknown:
             uncalled = [n for n in unknown if n in tables]
             if uncalled:
@@ -714,6 +784,51 @@ class Sought:
     @property
     def ok(self) -> bool:
         return bool(self.answers)
+
+
+#: Where to start substituting from, for a row written in terms of
+#: itself. Spread over the magnitudes an engineering quantity actually
+#: takes, and including a negative one because some of them are.
+SETTLING_GUESSES = (1.0, 10.0, 100.0, 0.1, 1000.0, -1.0, 0.001)
+
+#: How many times to put the answer back in before giving up, and how
+#: still it has to be to count as settled.
+SETTLING_ROUNDS = 200
+SETTLED = 1e-10
+
+#: How far apart two settled values have to be to be two answers rather
+#: than one arrived at twice.
+#:
+#: Deliberately far looser than SETTLED, and that is the point: settling
+#: means the *step* got small, and the distance still to travel can be
+#: several steps' worth. Seven starting points all reaching 60 landed
+#: within a millionth of each other and were reported as seven answers.
+#: Four orders between the two thresholds is enough room for that and
+#: nowhere near the gap between real fixed points.
+DISTINCT = 1e-5
+
+
+def _settle_from(once, start: float, unit: str):
+    """Substitute from *start* until it stops moving, or give up.
+
+    Returns the Quantity it settled to, or None. Giving up is a real
+    answer here: successive substitution walks away from a fixed point
+    just as readily as towards one, depending on the slope there, and a
+    row that reports the hundredth guess would be lying.
+    """
+    here = start
+    for _ in range(SETTLING_ROUNDS):
+        try:
+            got = once(here)
+            there = float(got.value)
+        except Exception:                              # noqa: BLE001
+            return None
+        if there != there or abs(there) > 1e12:
+            return None
+        if abs(there - here) <= SETTLED * max(abs(there), 1.0):
+            return got
+        here = there
+    return None
 
 
 #: How finely to scan for a crossing. Each sample runs the whole sheet,

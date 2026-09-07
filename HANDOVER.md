@@ -152,14 +152,17 @@ likely to grow, so it was made the easiest part to extend.
 
 **Nothing here is a blocker; all of it is worth knowing.**
 
-1. **Units are enforced on a worksheet and are still labels in the formula
-   grid.** A worksheet row computes its own unit from the arithmetic, refuses
-   an addition that does not go together, and contradicts a row that declares
-   the wrong one - see `core/quantity.py` and `core/dimensional.py`. The
-   library's declared units are audited against each equation by test, which
-   found two that were wrong. What is *not* done is the formula input grid:
-   type mm into a field declared in m and nothing objects. That is the gap
-   left of what used to be the largest one.
+1. ~~**Units are labels, not enforced.**~~ Done, everywhere, and this
+   entry was out of date for a while after the last part of it was
+   finished. A worksheet row computes its own unit from the arithmetic,
+   refuses an addition that does not go together, and contradicts a row
+   that declares the wrong one. The library's declared units are audited
+   against each equation by test, which found two that were wrong. And
+   the formula input grid converts `200 GPa` into pascals and says so,
+   refuses `3500 kg` for a length naming both kinds, and refuses a unit
+   on a variable that has none. `TestTheFormulaGridChecksUnits` pins all
+   of that, so the documentation is no longer the only thing claiming
+   it.
 2. ~~**Periodic roots are principal only.**~~ Done everywhere. `solve`
    now says there are infinitely many, gives the general form, and lists
    the ones within one turn of nought - exactly, so pi rather than
@@ -232,33 +235,58 @@ Roughly by value per unit of effort.
    range that satisfies them, with the boundary points and interval test shown
    as working.
 3. **Install from `EngiCalc_Setup.exe` on a second machine** and confirm the
-   shortcuts, the uninstaller and a per-user install all behave. The installer
-   builds but has never been run.
+   shortcuts, the uninstaller and a per-user install all behave. The
+   installer builds, and the frozen exe is launched and exercised before
+   every release - but installing it somewhere else needs somewhere else,
+   so this one is still open and cannot be closed from here.
 4. **Confirm `run_engicalc.bat` works from a cold machine** — no Python, then
-   Python without Tkinter, then a normal install. Less urgent now the exe
-   exists, but it is still the path a developer hits first.
+   Python without Tkinter, then a normal install. Same: it needs a machine
+   without Python on it. Less urgent now the exe exists, but it is still
+   the path a developer hits first.
 5. ~~**Units.**~~ Done for worksheets, and the library's declared units are
    now audited by test. The formula input grid is what is left - see issue 1.
 6. ~~**Chained calculations.**~~ Done. The Worksheet tab carries names, units
    and tolerances down the page, and each measurement is counted once however
    many routes it reached the answer through.
-7. **Import/export the user formula library** so it can be shared between
-   machines or with colleagues.
-8. ~~**Periodic root families** on the graph.~~ Done in the read-off panel.
-   Doing the same in the solver and in the inequality ranges is issue 2.
+7. ~~**Import/export the user formula library.**~~ Done, with one thing
+   that had to be got right first: the user formula file is read at every
+   startup and its keys go straight into the library, so a file could
+   redefine a formula that came with the program. Somebody sharing a
+   library, or a key that collided by accident, would have changed what
+   Newton's second law computes - and every answer from it would have
+   been wrong with nothing on screen to say so. A built-in key is now
+   refused, by import and by the startup load alike, and what was refused
+   is reported rather than dropped.
+8. ~~**Periodic root families.**~~ Done in the read-off panel, in the
+   optimiser, and in `solve` itself - see issue 2.
 9. ~~**CO2 (R744).**~~ Done. Span-Wagner, with the three non-analytic
    terms the shared Helmholtz machinery needed, and a transcritical cycle
    with the gas cooler pressure optimised.
 10. ~~**Indexed variables and lookup tables.**~~ Done. `T[1]` is the same
     name as `T_1`, and a worksheet row can be a table that later rows call.
-11. **The formula input grid does not check units** - see issue 1. It is
-    what is left of the units work, and the machinery it needs is all
-    written.
-12. **A worksheet cannot iterate.** A row cannot refer to itself or to one
-    below it, which is right for a sheet that reads downwards and is what
-    stops it doing a heat exchanger with an unknown outlet temperature.
-    Solving a small implicit set inside one row is the shape of the fix,
-    and `core.system` already does the solving.
+11. ~~**The formula input grid does not check units.**~~ It did already -
+    see issue 1.
+12. ~~**A worksheet cannot iterate.**~~ Done. A row may be written in
+    terms of itself, which is how a heat exchanger outlet, a friction
+    factor and a mean temperature are all actually written. Solved by
+    successive substitution: no range to search, which matters because a
+    row has no natural scale to guess one from, and it is how these are
+    done by hand.
+
+    Nothing symbolic is attempted, deliberately. A sheet works itself out
+    on every keystroke, so a rearrangement taking seconds is unusable
+    however well it goes - and `sp.solve` on an expression somebody just
+    typed can go after a closed form that never comes back, which this
+    program has already been bitten by once. A row that walks away rather
+    than settling says so instead of reporting its hundredth guess.
+13. **A calculation report.** The app generates every piece of one -
+    typeset working, charts, inputs, results, sources - and then it gets
+    retyped into Word. A workbook is not a calculation record.
+14. **Monte Carlo beside the GUM uncertainty**, to check the near-linearity
+    the current method openly assumes. Where the two disagree the linear
+    one is wrong, and nothing can currently tell.
+15. **Sweep a worksheet down a column of values** - the same page at 40, 50
+    and 65 mm. `simultaneous_tab` already does parametric studies.
 
 ---
 
