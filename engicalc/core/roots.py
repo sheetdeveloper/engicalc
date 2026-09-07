@@ -11,9 +11,12 @@ are none; returning a ConditionSet means it could not tell. Only the
 second is worth scanning for, and treating them alike would either scan
 everything or quietly report nothing.
 
-Written for the graph tab's read-off panel and used by the optimiser as
-well, which is why it lives here rather than under plotting: finding real
-solutions inside a range is not a drawing question.
+Written for the graph tab's read-off panel and used by the optimiser and
+by goal-seek as well, which is why it lives here rather than under
+plotting: finding real solutions inside a range is not a drawing
+question. Goal-seek is why ``crossings`` takes a plain callable - its
+function is "run the whole worksheet and read a row off it", which is a
+function of one number and is not an expression.
 """
 
 from __future__ import annotations
@@ -118,48 +121,78 @@ def _real(one):
     return got.real if abs(got.imag) < 1e-9 else None
 
 
+def crossings(func, lo: float, hi: float, samples: int = SCAN,
+              most: int = MOST) -> list:
+    """Where *func* changes sign between *lo* and *hi*, pinned down.
+
+    *func* is any callable of one float. It is sampled one point at a
+    time rather than over an array, because the caller may be something
+    expensive and awkward - running a whole worksheet and reading a row
+    off it is a function of one number, and it is not a function numpy
+    can be handed a vector of.
+
+    A point where it raises, or comes back as infinity or not-a-number,
+    is treated as a gap rather than as a failure. A worksheet asked about
+    a negative diameter is not broken, it is being asked something silly,
+    and the answer is to step over it and carry on.
+
+    It finds a crossing and not a touch: a curve that comes down to
+    nought and goes back up has no sign change and is not reported. That
+    is a real limitation and a better one than a guess.
+    """
+    if samples < 2:
+        return []
+    step = (hi - lo) / (samples - 1)
+    found: list = []
+    last_x = last_y = None
+    for index in range(samples):
+        here = lo + step * index
+        value = _try(func, here)
+        if value is None:
+            last_x = last_y = None
+            continue
+        if value == 0.0:
+            # An exact hit. The next point must not then be compared
+            # against it, or the sign change either side of a root that
+            # was landed on squarely reports it a second time.
+            found.append(here)
+            last_x = last_y = None
+            continue
+        if last_y is not None and np.sign(value) != np.sign(last_y):
+            pinned = _between(func, last_x, here, last_y)
+            if pinned is not None:
+                found.append(pinned)
+        if len(found) >= most:
+            break
+        last_x, last_y = here, value
+    return found
+
+
+def _try(func, at: float):
+    """*func* at *at*, or None where there is no number to be had."""
+    try:
+        value = float(func(at))
+    except Exception:                                      # noqa: BLE001
+        return None
+    return value if np.isfinite(value) else None
+
+
 def _by_scanning(expr, lo: float, hi: float,
                  symbol=X) -> list:
-    """Where the curve changes sign, pinned down by bisection.
-
-    For everything SymPy will not solve. It finds a crossing and not a
-    touch: a curve that comes down to nought and goes back up has no sign
-    change and is not reported, which is a real limitation and a better
-    one than a guess.
-    """
+    """The same scan, on an expression SymPy would not solve."""
     try:
         func = sp.lambdify(symbol, expr, "numpy")
     except Exception:                                      # noqa: BLE001
         return []
-    xs = np.linspace(lo, hi, SCAN)
-    try:
-        with np.errstate(all="ignore"):
-            ys = np.asarray(func(xs), dtype=float) * np.ones_like(xs)
-    except Exception:                                      # noqa: BLE001
-        return []
-
-    fine = np.isfinite(ys)
-    found = []
-    for at in range(len(xs) - 1):
-        if not (fine[at] and fine[at + 1]) or ys[at] == 0.0:
-            continue
-        if np.sign(ys[at]) == np.sign(ys[at + 1]):
-            continue
-        found.append(_between(func, xs[at], xs[at + 1], ys[at]))
-        if len(found) >= MOST:
-            break
-    return [one for one in found if one is not None]
+    return crossings(func, lo, hi)
 
 
 def _between(func, low: float, high: float, at_low: float):
     """Bisect between two samples that straddle a sign change."""
     for _ in range(REFINE):
         middle = (low + high) / 2.0
-        try:
-            here = float(func(middle))
-        except Exception:                                  # noqa: BLE001
-            return None
-        if not np.isfinite(here):
+        here = _try(func, middle)
+        if here is None:
             return None
         if np.sign(here) == np.sign(at_low):
             low, at_low = middle, here

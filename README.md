@@ -705,6 +705,20 @@ line between two measurements is a defensible guess and a reading taken off
 the end of a manufacturer's curve is how a number nobody can defend gets
 into a calculation.
 
+**And it works backwards.** Every real question is stated that way — not
+"what is the Reynolds number at 50 mm" but "what bore keeps it under 4000".
+Pick a row to vary, a row to hit, and what it should read:
+
+    Vary  d  until  v  is  1.2 m/s     ->  d = 60.9394 mm
+
+The sheet is run again at each trial value and the target row read off it,
+so anything the sheet can do is in scope — units, tables, the lot. **Every
+answer is reported, not the first**, because a design question with two
+answers has two: a bore that gives Re = 4000 can have another one. Only a
+row that was typed in can be varied, since a row below it is not free to
+take a value; and the target has to be below what is varied, or moving one
+cannot move the other. Both are said rather than silently ignored.
+
 Each measurement is counted **once**, however many rows it reached the
 answer through. In that sheet the bore is in the Reynolds number twice -
 directly, and through the area - and giving each row an uncertainty and

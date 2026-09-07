@@ -18,9 +18,10 @@ from ..core.display import fmt, pretty_names
 from ..core.engine import CalcResult
 from ..core.steps import Step
 from ..export.excel import export_table
-from ..core.sheet import SHEET_DIR, Sheet, blocks_for
+from ..core.parsing import ParseError
+from ..core.sheet import SHEET_DIR, Aim, Sheet, blocks_for, seek
 from . import mathrender
-from .widgets import MONO, ScrollFrame
+from .widgets import AsyncRunner, MONO, ScrollFrame
 
 from . import theme
 
@@ -112,6 +113,47 @@ class SheetTab(ttk.Frame):
             width = WIDTHS[index] if index < len(WIDTHS) else 24
             ttk.Label(header, text=text, width=width,
                       font=("Segoe UI", 9, "bold")).pack(side="left", padx=2)
+
+        # Working backwards, which is how every design question is
+        # actually stated: not "what is the Reynolds number at 50 mm" but
+        # "what bore keeps it under 4000".
+        aim = ttk.Frame(self)
+        aim.pack(side="bottom", fill="x", pady=(6, 0))
+        ttk.Label(aim, text="Vary").pack(side="left")
+        self.vary = tk.StringVar()
+        self.vary_box = ttk.Combobox(aim, textvariable=self.vary, width=10,
+                                     state="readonly", values=[])
+        self.vary_box.pack(side="left", padx=4)
+        ttk.Label(aim, text="until").pack(side="left")
+        self.target = tk.StringVar()
+        self.target_box = ttk.Combobox(aim, textvariable=self.target,
+                                       width=10, state="readonly", values=[])
+        self.target_box.pack(side="left", padx=4)
+        ttk.Label(aim, text="is").pack(side="left")
+        self.wanted = tk.StringVar()
+        wanted_box = ttk.Entry(aim, textvariable=self.wanted, width=14,
+                               font=MONO)
+        wanted_box.pack(side="left", padx=4)
+        wanted_box.bind("<Return>", lambda e: self.seek())
+        ttk.Label(aim, text="looking between", style="Hint.TLabel").pack(
+            side="left", padx=(10, 2))
+        self.seek_low = tk.StringVar()
+        ttk.Entry(aim, textvariable=self.seek_low, width=7,
+                  font=MONO).pack(side="left", padx=2)
+        ttk.Label(aim, text="and", style="Hint.TLabel").pack(side="left")
+        self.seek_high = tk.StringVar()
+        ttk.Entry(aim, textvariable=self.seek_high, width=7,
+                  font=MONO).pack(side="left", padx=2)
+        ttk.Label(aim, text="- leave blank and it works one out",
+                  style="Hint.TLabel").pack(side="left", padx=(4, 0))
+        self.seek_button = ttk.Button(aim, text="Work it backwards",
+                                      command=self.seek)
+        self.seek_button.pack(side="left", padx=(10, 0))
+        self.seeker = AsyncRunner(self)
+
+        self.seek_note = ttk.Label(self, text="", style="Hint.TLabel",
+                                   wraplength=980, justify="left")
+        self.seek_note.pack(side="bottom", fill="x", pady=(2, 0))
 
         # What the tolerances came to, and which measurement to improve.
         # Under the table rather than in it: it is about the sheet as a
@@ -233,6 +275,80 @@ class SheetTab(ttk.Frame):
             text=f"{len(self.results)} steps, {problems} need attention"
             if problems else f"{len(self.results)} steps, all worked out")
         self.spread_note.configure(text=self._about_the_spread())
+        self._offer_rows()
+
+    # -- working it backwards ---------------------------------------------
+    def _offer_rows(self) -> None:
+        """Fill the two pickers from the rows the sheet actually has.
+
+        Only rows that were typed in can be varied - a row below is not
+        free to take a value, it is whatever the rows above make it - so
+        only those are offered, and the mistake cannot be made.
+        """
+        named = [step for step in self.sheet.steps if step.name.strip()]
+        can_vary = [step.name for step in named if step.is_input()]
+        self.vary_box.configure(values=can_vary)
+        self.target_box.configure(values=[step.name for step in named])
+        if self.vary.get() not in can_vary:
+            self.vary.set(can_vary[0] if can_vary else "")
+        if self.target.get() not in [s.name for s in named]:
+            self.target.set(named[-1].name if named else "")
+
+    def seek(self) -> None:
+        """Find the value of one row that makes another read what is wanted."""
+        if not self.wanted.get().strip():
+            self.seek_note.configure(
+                text="Say what the target row should read.")
+            return
+        self.sheet = self._collect()
+        aim = Aim(vary=self.vary.get(), target=self.target.get(),
+                  wanted=self.wanted.get(), low=self.seek_low.get(),
+                  high=self.seek_high.get())
+        self.seek_note.configure(text="Working backwards...")
+        self.seek_button.configure(state="disabled")
+
+        def done(found):
+            self.seek_button.configure(state="normal")
+            self.seek_note.configure(text=self._about_the_seek(found))
+            if len(found.answers) == 1:
+                # One answer, so put it on the sheet and work it through -
+                # which is what was being asked for. More than one and it
+                # is not this tab's business to choose.
+                self._put_back(aim.vary, found.answers[0])
+
+        def failed(problem):
+            self.seek_button.configure(state="normal")
+            self.seek_note.configure(text=str(problem))
+
+        self.seeker.run(lambda: seek(self.sheet, aim), done, failed)
+
+    def _put_back(self, name: str, answer) -> None:
+        """Type the answer into the row it belongs to, and recalculate."""
+        for _frame, variables, _answer in self.rows:
+            if variables[0].get().strip() == name.strip():
+                variables[1].set(f"{answer.value:.10g}")
+                break
+        self.calculate()
+
+    def _about_the_seek(self, found) -> str:
+        aim = found.aim
+        if not found.answers:
+            return _and_note(found.note, f"Nothing found for {aim.target}.")
+        if len(found.answers) == 1:
+            one = found.answers[0]
+            unit = f" {one.unit}" if one.unit else ""
+            return _and_note(
+                found.note,
+                f"{aim.vary} = {one.value:.6g}{unit} makes {aim.target} "
+                f"read {aim.wanted}. Put on the sheet.")
+        # More than one, which is an answer and not a problem: a Reynolds
+        # number of 4000 can happen at two bores.
+        said = ", ".join(f"{one.value:.6g}" for one in found.answers)
+        unit = f" {found.answers[0].unit}" if found.answers[0].unit else ""
+        return _and_note(
+            found.note,
+            f"{len(found.answers)} values of {aim.vary} make {aim.target} "
+            f"read {aim.wanted}: {said}{unit}. Type the one you want in.")
 
     def _about_the_spread(self) -> str:
         """A sentence about the tolerances, or nothing if there are none.
@@ -422,3 +538,8 @@ class SheetTab(ttk.Frame):
             messagebox.showerror("Could not draw the sheet", str(exc))
             return
         self.status.configure(text="Copied - paste it straight into Word")
+
+
+def _and_note(note: str, said: str) -> str:
+    """Two remarks, or whichever of them there is."""
+    return "  ".join(part for part in (said, note) if part)

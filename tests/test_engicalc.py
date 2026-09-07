@@ -9611,3 +9611,160 @@ class TestOptimising(unittest.TestCase):
 
         self.assertIn("minimise", OPERATIONS)
         self.assertIn("maximise", OPERATIONS)
+
+
+class TestWorkingASheetBackwards(unittest.TestCase):
+    """Every real question is stated backwards.
+
+    Not "what is the Reynolds number at 50 mm" but "what bore keeps it
+    under 4000". A sheet reads downwards, so the way to answer that is to
+    run the whole sheet at a trial value and read the target row off it -
+    which makes it a function of one number, and finding where one of
+    those crosses a value is a solved problem.
+    """
+
+    def _pipe(self):
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("d", "50", "mm", "bore")
+        sheet.add("Q", "3.5", "L/s")
+        sheet.add("rho", "998", "kg/m^3")
+        sheet.add("mu", "0.001", "Pa*s")
+        sheet.add("A", "pi*d^2/4", "mm^2")
+        sheet.add("v", "Q/A", "m/s")
+        sheet.add("Re", "rho*v*d/mu", "-")
+        return sheet
+
+    def _seek(self, sheet, **aim):
+        from engicalc.core.sheet import Aim, seek
+
+        return seek(sheet, Aim(**aim))
+
+    def test_it_finds_the_value_the_closed_form_gives(self):
+        """Checked against the algebra, not against a number from a run.
+
+        v = Q/A and A = pi d^2/4, so d = sqrt(4Q / (pi v)).
+        """
+        found = self._seek(self._pipe(), vary="d", target="v",
+                           wanted="1.2 m/s")
+        self.assertEqual(1, len(found.answers))
+        exact = math.sqrt(4.0 * 0.0035 / (math.pi * 1.2)) * 1000.0
+        self.assertAlmostEqual(exact, found.answers[0].value, places=4)
+
+    def test_and_again_where_the_relation_is_the_other_way_up(self):
+        """Re = 4 rho Q / (pi d mu), so d falls as Re rises."""
+        found = self._seek(self._pipe(), vary="d", target="Re",
+                           wanted="4000")
+        self.assertEqual(1, len(found.answers))
+        exact = 4.0 * 998.0 * 0.0035 / (math.pi * 0.001 * 4000.0) * 1000.0
+        self.assertAlmostEqual(exact, found.answers[0].value, places=3)
+
+    def test_two_answers_are_two_answers(self):
+        """A design question with two answers has two answers, and it is
+        not this code's business to pick one."""
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("d", "20", "mm")
+        sheet.add("y", "(d - 20 mm)^2 + 5 mm^2", "mm^2")
+        found = self._seek(sheet, vary="d", target="y", wanted="105 mm^2",
+                           low="0", high="40")
+        got = sorted(one.value for one in found.answers)
+        self.assertEqual(2, len(got))
+        self.assertAlmostEqual(10.0, got[0], places=6)
+        self.assertAlmostEqual(30.0, got[1], places=6)
+
+    def test_a_wide_range_is_searched_the_way_the_answer_is_spread(self):
+        """Evenly from 0.5 to 5000 spends nine tenths of its samples above
+        500 and barely looks at the small end, which is where the answer
+        to a velocity question is."""
+        found = self._seek(self._pipe(), vary="d", target="v",
+                           wanted="20 m/s")
+        self.assertEqual(1, len(found.answers))
+        exact = math.sqrt(4.0 * 0.0035 / (math.pi * 20.0)) * 1000.0
+        self.assertAlmostEqual(exact, found.answers[0].value, places=4)
+        self.assertLess(found.answers[0].value, 20.0)
+
+    def test_a_row_that_is_worked_out_cannot_be_varied(self):
+        from engicalc.core.parsing import ParseError
+
+        with self.assertRaises(ParseError) as caught:
+            self._seek(self._pipe(), vary="A", target="Re", wanted="4000")
+        self.assertIn("worked out from the rows above", str(caught.exception))
+
+    def test_a_target_above_the_varied_row_cannot_move(self):
+        from engicalc.core.parsing import ParseError
+
+        with self.assertRaises(ParseError) as caught:
+            self._seek(self._pipe(), vary="mu", target="Q", wanted="1 L/s")
+        self.assertIn("reads downwards", str(caught.exception))
+
+    def test_asking_a_row_to_reach_something_it_does_not_measure(self):
+        """And the message says what it measures, rather than reporting
+        that nothing in the range happened to work."""
+        from engicalc.core.parsing import ParseError
+
+        with self.assertRaises(ParseError) as caught:
+            self._seek(self._pipe(), vary="d", target="A", wanted="7 mm")
+        said = str(caught.exception)
+        self.assertIn("does not work out", said)
+        self.assertIn("area", said)
+
+    def test_a_target_nothing_reaches_says_so_rather_than_guessing(self):
+        found = self._seek(self._pipe(), vary="d", target="A",
+                           wanted="-5 mm^2")
+        self.assertEqual([], found.answers)
+        self.assertIn("Nothing in that range", found.note)
+
+    def test_a_range_is_needed_when_there_is_nothing_to_scale_from(self):
+        from engicalc.core.parsing import ParseError
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("d", "0", "mm")
+        sheet.add("A", "pi*d^2/4", "mm^2")
+        with self.assertRaises(ParseError) as caught:
+            self._seek(sheet, vary="d", target="A", wanted="100 mm^2")
+        self.assertIn("range", str(caught.exception))
+
+    def test_the_wanted_value_may_be_in_any_unit_that_measures_it(self):
+        one = self._seek(self._pipe(), vary="d", target="v", wanted="1.2 m/s")
+        other = self._seek(self._pipe(), vary="d", target="v",
+                           wanted="1200 mm/s")
+        self.assertAlmostEqual(one.answers[0].value,
+                               other.answers[0].value, places=6)
+
+    def test_skipping_the_tolerances_changes_nothing_but_the_speed(self):
+        """The search runs the sheet a few hundred times and only wants
+        the nominal value, so it turns the differentiation off. That must
+        not move the answer."""
+        sheet = self._pipe()
+        sheet.steps[0].expression = "50 +/- 0.5"
+        with_them = sheet.evaluate()
+        without = sheet.evaluate(tolerances=False)
+        self.assertEqual(len(with_them), len(without))
+        for left, right in zip(with_them, without):
+            self.assertEqual(left.error, right.error)
+            if left.value is not None:
+                self.assertAlmostEqual(float(left.value), float(right.value),
+                                       places=12)
+        self.assertIsNotNone(with_them[-1].spread)
+        self.assertIsNone(without[-1].spread)
+
+    def test_it_works_on_a_sheet_with_a_table_in_it(self):
+        """The trial values go through everything the sheet does."""
+        from engicalc.core.sheet import Sheet
+
+        sheet = Sheet()
+        sheet.add("k", "table in deg: 15, 0.35; 30, 0.60; 45, 0.95", "-")
+        sheet.add("theta", "20", "deg")
+        sheet.add("f", "k(theta)*10", "-")
+        found = self._seek(sheet, vary="theta", target="f", wanted="5",
+                           low="15", high="45")
+        self.assertEqual(1, len(found.answers))
+        # k = 0.5 is a third of the way from 0.35 to 0.60, so theta is a
+        # third of the way from 15 to 30.
+        self.assertAlmostEqual(15.0 + 15.0 * (0.15 / 0.25),
+                               found.answers[0].value, places=6)
+

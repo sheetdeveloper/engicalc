@@ -29,13 +29,14 @@ because one broken line in the middle of a sheet should not blank the page.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import sympy as sp
 
-from . import dimensional, uncertainty
+from . import dimensional, roots, uncertainty
 from . import units as unit_tools
 from .display import fmt, fmt_number
 from .parsing import ParseError, canonical_name, parse_input
@@ -239,8 +240,15 @@ class Sheet:
             del self.steps[index]
 
     # -- evaluating -------------------------------------------------------
-    def evaluate(self) -> list:
-        """Work down the sheet, carrying each answer into the next step."""
+    def evaluate(self, tolerances: bool = True) -> list:
+        """Work down the sheet, carrying each answer into the next step.
+
+        ``tolerances=False`` skips working out how far each answer moves
+        for the tolerances on what went into it. That is a differentiation
+        per row and it is most of the cost of a sheet, and goal-seek runs
+        the whole sheet a few hundred times looking for a crossing - where
+        only the nominal value is being asked about.
+        """
         known: dict = {}
         tables: dict = {}
         results: list = []
@@ -294,7 +302,8 @@ class Sheet:
 
             try:
                 value, note, spread = self._evaluate_step(
-                    step, known, formulas, givens, index, tables)
+                    step, known, formulas, givens, index, tables,
+                    tolerances)
             except ParseError as exc:
                 result.error = str(exc)
                 continue
@@ -433,7 +442,8 @@ class Sheet:
 
     def _evaluate_step(self, step: SheetStep, known: dict,
                        formulas: dict = None, givens: dict = None,
-                       index: int = 0, tables: dict = None):
+                       index: int = 0, tables: dict = None,
+                       tolerances: bool = True):
         """One step, against the names defined above it.
 
         Returns ``(answer, note, spread)``: the answer as a
@@ -541,7 +551,7 @@ class Sheet:
         # the derivatives costs a differentiation per name, and a sheet
         # with no tolerances on it is the ordinary case.
         spread = None
-        if any(one.error for one in givens.values()):
+        if tolerances and any(one.error for one in givens.values()):
             if written.count_ops() > TOO_BIG_TO_DIFFERENTIATE:
                 note = _and(note,
                             "too many steps deep to work the tolerances "
@@ -664,6 +674,204 @@ class Sheet:
     def load(cls, path: str) -> "Sheet":
         with open(path, "r", encoding="utf-8") as handle:
             return cls.from_dict(json.load(handle))
+
+
+@dataclass
+class Aim:
+    """Vary one row until another reads what it should.
+
+    ``vary`` has to be a row that was typed in rather than worked out -
+    a row below it is not free to take a value, it is whatever the rows
+    above make it. ``target`` has to be below ``vary``, or changing the
+    one cannot move the other.
+    """
+
+    vary: str
+    target: str
+    wanted: str
+    #: Where to look. Blank means work a range out from where the varied
+    #: row is now, which is usually right and is always said out loud.
+    low: str = ""
+    high: str = ""
+
+
+@dataclass
+class Answer:
+    """One value of the varied row that hits the target."""
+
+    value: float                 # in the varied row's own unit
+    unit: str
+    reading: object              # what the target then reads, as a Quantity
+
+
+@dataclass
+class Sought:
+    aim: Aim
+    answers: list = field(default_factory=list)
+    searched: tuple = (0.0, 0.0)
+    note: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.answers)
+
+
+#: How finely to scan for a crossing. Each sample runs the whole sheet,
+#: so this is a real cost - and it sets the closest two answers can be
+#: and still be told apart.
+SEEK_SAMPLES = 140
+
+#: A range wider than this is searched geometrically rather than in even
+#: steps. A bore might be anywhere from 5 mm to 500 mm, and stepping
+#: evenly from 0.5 to 5000 spends nine tenths of the samples above 500
+#: and barely looks at the small end - which is where the answer to a
+#: pressure-drop question usually is.
+DECADES_BEFORE_LOG = 1.5
+
+#: How far either side of the current value to look when nobody says.
+#: Two orders of magnitude each way covers a bore going from 5 mm to
+#: 500 mm, which is further than any real design moves.
+SEEK_SPAN = 100.0
+
+
+def seek(sheet: Sheet, aim: Aim) -> Sought:
+    """Find every value of one row that makes another read what is wanted.
+
+    The sheet is run again for each trial value and the target row read
+    off it, which makes this a function of one number - and finding where
+    a function of one number crosses a value is a solved problem, so the
+    scan in `core.roots` does it.
+
+    **Every answer, not the first.** A Reynolds number of 4000 can happen
+    at two bores, and a design question with two answers has two answers.
+    The scan reports each crossing it finds; what it cannot report is one
+    the curve only touches, and two closer together than a two-hundredth
+    of the range read as one.
+    """
+    names = [canonical_name(subscripted(one.name)) for one in sheet.steps]
+    vary = canonical_name(subscripted(aim.vary))
+    target = canonical_name(subscripted(aim.target))
+
+    if vary not in names:
+        raise ParseError(f"There is no row called {aim.vary}.")
+    if target not in names:
+        raise ParseError(f"There is no row called {aim.target}.")
+    if vary == target:
+        raise ParseError(
+            "That is the same row twice. Varying it until it reads what "
+            "it was set to is not a question.")
+    at = names.index(vary)
+    if not sheet.steps[at].is_input():
+        raise ParseError(
+            f"{aim.vary} is worked out from the rows above it, so it is "
+            f"not free to take a value. Vary one of the numbers that was "
+            f"typed in.")
+    if names.index(target) < at:
+        raise ParseError(
+            f"{aim.target} is above {aim.vary} on the sheet, and a sheet "
+            f"reads downwards - so changing {aim.vary} cannot move it.")
+
+    wanted = Quantity.parse(aim.wanted)
+    start = Quantity.parse(sheet.steps[at].expression).value
+    lo, hi, said = _seek_range(aim, start)
+
+    trial = Sheet(title=sheet.title,
+                  steps=[replace(one) for one in sheet.steps])
+
+    # Why a trial failed, and how many did not. A scan that steps over
+    # every point it tried has found nothing because nothing worked, and
+    # that is a different answer from "it never reaches that value".
+    trouble = {"worked": 0, "why": ""}
+
+    def miss(x: float):
+        """How far the target is from what is wanted, at this value."""
+        trial.steps[at].expression = repr(float(x))
+        got = trial.evaluate(tolerances=False)
+        row = got[names.index(target)]
+        try:
+            if row.error or row.quantity is None:
+                raise ArithmeticError(row.error or "it worked out to nothing")
+            gap = _difference(row.quantity, wanted, row.unit)
+        except (ArithmeticError, ParseError, QuantityError) as exc:
+            trouble["why"] = trouble["why"] or str(exc)
+            raise ArithmeticError(str(exc)) from exc
+        trouble["worked"] += 1
+        return gap
+
+    if lo > 0 and math.log10(hi / lo) > DECADES_BEFORE_LOG:
+        # Searched in the logarithm and reported back in the quantity, so
+        # the samples are spread the way the answer might be.
+        found = [math.exp(one) for one in roots.crossings(
+            lambda u: miss(math.exp(u)), math.log(lo), math.log(hi),
+            samples=SEEK_SAMPLES)]
+    else:
+        found = roots.crossings(miss, lo, hi, samples=SEEK_SAMPLES)
+
+    answers = []
+    for value in found:
+        trial.steps[at].expression = repr(float(value))
+        row = trial.evaluate()[names.index(target)]
+        answers.append(Answer(value=float(value),
+                              unit=sheet.steps[at].unit,
+                              reading=row.quantity))
+    note = ""
+    if not said:
+        note = (f"Nobody said where to look, so {lo:g} to {hi:g} was "
+                f"searched - a hundredfold either side of the "
+                f"{start:g} the row holds now.")
+    if not answers:
+        if trouble["worked"] == 0:
+            # Not "it never reaches that" - it never got as far as
+            # having a value to compare.
+            raise ParseError(
+                f"The sheet does not work out at any value of {aim.vary} "
+                f"that was tried: {trouble['why']}")
+        note = _and(note, "Nothing in that range makes it read that.")
+    return Sought(aim=aim, answers=answers, searched=(lo, hi), note=note)
+
+
+def _seek_range(aim: Aim, start: float) -> tuple:
+    """(low, high, whether anybody said). Worked out from the current
+    value when they did not, which needs the current value to be a
+    positive number - there is nothing sensible to scale from nought."""
+    if aim.low.strip() and aim.high.strip():
+        try:
+            lo = float(sp.sympify(aim.low))
+            hi = float(sp.sympify(aim.high))
+        except Exception as exc:                          # noqa: BLE001
+            raise ParseError("The range has to be two numbers.") from exc
+        if hi <= lo:
+            raise ParseError("The top of the range has to be above the "
+                             "bottom.")
+        return lo, hi, True
+    if start > 0:
+        return start / SEEK_SPAN, start * SEEK_SPAN, False
+    raise ParseError(
+        f"The row is at {start:g}, so there is nothing to scale a search "
+        f"range from. Give a range to look in.")
+
+
+def _difference(got, wanted, shown_in: str) -> float:
+    """How far *got* is from *wanted*, as a plain number.
+
+    A wanted value written with no unit is in whatever the target row
+    shows - the same rule a given follows, and the one anybody typing
+    "4000" into a box about a Reynolds number is relying on.
+    """
+    if wanted.plain and got.unit:
+        try:
+            here = got.to(shown_in) if shown_in else got
+        except QuantityError:
+            here = got
+        return float(here.value) - float(wanted.value)
+    if wanted.plain or not got.unit:
+        return float(got.value) - float(wanted.value)
+    try:
+        return float(got.to(wanted.unit).value) - float(wanted.value)
+    except QuantityError as exc:
+        raise ParseError(
+            f"That row reads {got.measures()} and it is being asked to "
+            f"reach {wanted.measures()}. ({exc})") from exc
 
 
 def _and(note: str, said: str) -> str:
