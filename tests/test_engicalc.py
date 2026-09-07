@@ -8888,3 +8888,111 @@ class TestTheme(unittest.TestCase):
 
         self.assertEqual({"check_at_start": False, "theme_base": "dark",
                           "theme_accent": "#b45309"}, kept)
+
+
+class TestReadingOffAGraph(unittest.TestCase):
+    """The three questions anybody asks a graph after looking at it.
+
+    Reading them off the picture is how a graph gets misread, so they are
+    computed - exactly where SymPy can, and by scanning for a sign change
+    where it cannot.
+    """
+
+    def spec(self, *expressions, lo=-10.0, hi=10.0):
+        from engicalc.plotting.plot import Curve, PlotSpec
+
+        return PlotSpec(curves=[Curve(expression=one) for one in expressions],
+                        xmin=lo, xmax=hi)
+
+    def test_a_quadratic_is_answered_exactly(self):
+        from engicalc.plotting.readoff import read_off
+
+        found = read_off(self.spec("x^2 - 4"))
+        roots = [one.x for one in found if one.kind == "root"]
+        self.assertEqual([-2.0, 2.0], roots)
+
+        turns = [one for one in found if one.kind == "turning point"]
+        self.assertEqual(1, len(turns))
+        self.assertEqual(0.0, turns[0].x)
+        self.assertEqual(-4.0, turns[0].y)
+        self.assertEqual("minimum", turns[0].detail)
+
+    def test_a_sine_gives_the_roots_that_are_on_screen(self):
+        """Not the two SymPy would list, and not infinitely many.
+
+        solveset answers a periodic equation with the whole family
+        indexed by an integer. Walking that index over the window is
+        what turns "n*pi for every whole n" into the seven that are
+        actually in view.
+        """
+        import math
+
+        from engicalc.plotting.readoff import read_off
+
+        found = read_off(self.spec("sin(x)"))
+        roots = sorted(one.x for one in found if one.kind == "root")
+        self.assertEqual(7, len(roots))
+        for index, at in enumerate(roots):
+            self.assertAlmostEqual((index - 3) * math.pi, at, places=9)
+
+        turns = sorted(one.x for one in found if one.kind == "turning point")
+        self.assertEqual(6, len(turns))
+
+    def test_what_sympy_cannot_solve_is_scanned_for(self):
+        """x*cos(x) turns where cos(x) = x*sin(x), which has no closed form.
+
+        Checked by putting the answers back into the derivative rather
+        than against numbers written out here - the test then says the
+        points are stationary, which is the claim, instead of saying they
+        are the ones I happened to get.
+        """
+        import sympy as sp
+
+        from engicalc.plotting.readoff import X, read_off
+
+        found = read_off(self.spec("x*cos(x)"))
+        turns = [one.x for one in found if one.kind == "turning point"]
+        self.assertEqual(8, len(turns))
+
+        slope = sp.diff(sp.sympify("x*cos(x)"), X)
+        for at in turns:
+            self.assertAlmostEqual(0.0, float(slope.subs(X, at)), places=8)
+
+    def test_two_curves_report_where_they_meet(self):
+        from engicalc.plotting.readoff import read_off
+
+        found = read_off(self.spec("x^3 - 3*x", "x"))
+        crossings = sorted(one.x for one in found if one.kind == "crossing")
+        # x^3 - 3x = x  ->  x(x^2 - 4) = 0
+        self.assertEqual([-2.0, 0.0, 2.0], crossings)
+
+    def test_nothing_outside_the_window_is_reported(self):
+        from engicalc.plotting.readoff import read_off
+
+        found = read_off(self.spec("x^2 - 4", lo=0.0, hi=10.0))
+        roots = [one.x for one in found if one.kind == "root"]
+        self.assertEqual([2.0], roots)
+
+    def test_only_the_curves_this_question_applies_to(self):
+        """An implicit curve crosses zero along a contour, not at an x.
+
+        Answering as though it were the same question would be worse
+        than not answering.
+        """
+        from engicalc.plotting.plot import Curve, PlotSpec
+        from engicalc.plotting.readoff import read_off
+
+        spec = PlotSpec(curves=[Curve(expression="x^2 + y^2 - 9",
+                                      kind="implicit"),
+                                Curve(expression="cos(t)", kind="parametric",
+                                      second="sin(t)")],
+                        xmin=-10.0, xmax=10.0)
+        self.assertEqual([], read_off(spec))
+
+    def test_a_curve_that_is_switched_off_is_not_read(self):
+        from engicalc.plotting.plot import Curve, PlotSpec
+        from engicalc.plotting.readoff import read_off
+
+        spec = PlotSpec(curves=[Curve(expression="x^2 - 4", visible=False)],
+                        xmin=-10.0, xmax=10.0)
+        self.assertEqual([], read_off(spec))

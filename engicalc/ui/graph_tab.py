@@ -12,7 +12,8 @@ from matplotlib.backends.backend_tkagg import (
 from matplotlib.figure import Figure
 
 from ..plotting.plot import Curve, PlotSpec, draw
-from .widgets import MONO
+from ..plotting.readoff import read_off
+from .widgets import AsyncRunner, MONO, ReadOnlyText
 
 from . import theme
 
@@ -115,6 +116,26 @@ class GraphTab(ttk.Frame):
                                  background=theme.colours()["bg"])
         self.messages.pack(fill="x", pady=(8, 0))
 
+        # The three questions anybody asks a graph after looking at it.
+        # They used to be answered by squinting at the picture, and the
+        # room they take up was empty.
+        found = ttk.Labelframe(left, text="What it does", padding=6)
+        found.pack(fill="both", expand=True, pady=(10, 0))
+        bar = ttk.Scrollbar(found, orient="vertical")
+        bar.pack(side="right", fill="y")
+        self.features = ReadOnlyText(found, height=8, width=42,
+                                     font=("Consolas", 9),
+                                     yscrollcommand=bar.set)
+        self.features.pack(side="left", fill="both", expand=True)
+        bar.configure(command=self.features.yview)
+        self.features.set("Plot something and the roots, turning points\n"
+                          "and crossings will be listed here.")
+        self.reader = AsyncRunner(self)
+        #: Which plot the numbers on screen belong to. A slow read-off
+        #: that lands after the user has changed the window would
+        #: otherwise label the new picture with the old numbers.
+        self._reading = 0
+
         right = ttk.Frame(self)
         right.pack(side="left", fill="both", expand=True)
         self.figure = Figure(figsize=(6.5, 5.2), dpi=100)
@@ -153,6 +174,67 @@ class GraphTab(ttk.Frame):
         self.figure.tight_layout()
         self.canvas.draw_idle()
         self.messages.configure(text="\n".join(warnings))
+        self._read_off(spec)
+
+    # -- what the graph says ----------------------------------------------
+    def _read_off(self, spec: PlotSpec) -> None:
+        """Work out the roots, turns and crossings, off the Tk thread.
+
+        A second of SymPy is a second of a frozen window if it is done
+        here, and the picture is already right - so the plot goes up
+        first and the numbers arrive under it.
+        """
+        self._reading += 1
+        mine = self._reading
+        self.features.set("working it out...")
+
+        def landed(found):
+            if mine == self._reading:      # still the plot on screen
+                self.features.set(self._as_text(found))
+
+        def failed(_problem):
+            if mine == self._reading:
+                self.features.set("Could not work these out for this plot.")
+
+        self.reader.run(lambda: read_off(spec), landed, failed)
+
+    @staticmethod
+    def _as_text(found) -> str:
+        """Grouped by curve, in x order within each.
+
+        Grouped rather than interleaved, because the curve a feature
+        belongs to is the first thing you need to know about it, and
+        repeating the name against every line spends half the column
+        saying it again.
+
+        A root's y is nought by definition, so it is not said. A turning
+        point's y is the whole point of the turning point.
+        """
+        if not found:
+            return ("Nothing to report in this window.\n\n"
+                    "Roots, turning points and crossings are found for "
+                    "y(x) curves. Implicit, parametric and polar ones "
+                    "cross zero somewhere that is not an x.")
+        order, grouped = [], {}
+        for one in found:
+            if one.where not in grouped:
+                order.append(one.where)
+                grouped[one.where] = []
+            grouped[one.where].append(one)
+
+        lines = []
+        for where in order:
+            if lines:
+                lines.append("")
+            lines.append(where)
+            for one in sorted(grouped[where], key=lambda f: f.x):
+                said = f"{one.x:>11.6g}   {one.kind}"
+                if one.detail:
+                    said += f", {one.detail}"
+                if one.kind != "root":
+                    said += f",  y = {one.y:.6g}"
+                lines.append(said)
+        return "\n".join(lines)
 
     def reset_window(self) -> None:
         self.xmin.set("-10")
