@@ -183,6 +183,18 @@ Up to six curves at once, in four flavours:
 Roots are marked and labelled. Full matplotlib pan/zoom toolbar underneath, and
 Save PNG (or PDF/SVG) for reports.
 
+**Minimise and maximise** are operations like any other. They are done the
+way it is done by hand - differentiate, solve for nought, and check each
+answer - rather than by walking downhill from a guess, which on anything
+with more than one dip finds whichever one it started nearest and reports
+it as though it were the answer.
+
+Give a range and **the ends of it are candidates too**, which is the part
+that gets forgotten: the least value of `x^2` on [1, 3] is at `x = 1`,
+where nothing is turning at all. Give no range and it says so, because
+then the answer is only the lowest turning point and a function that keeps
+falling has no least value.
+
 Beside the form, **what the graph does**: every root, every turning point with
 its value and whether it is a maximum or a minimum, and every place two curves
 cross. Computed rather than read off the picture - exactly where SymPy can

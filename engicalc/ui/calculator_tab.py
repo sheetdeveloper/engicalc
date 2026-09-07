@@ -264,7 +264,11 @@ class CalculatorTab(ttk.Frame):
         for frame in self._extra_widgets.values():
             frame.pack_forget()
         operation = self.op_var.get()
-        if operation == "integral":
+        if operation in ("integral", "minimise", "maximise"):
+            # For an integral these are the limits; for an optimisation
+            # they are the range to look in, and giving one matters more
+            # than it looks: the least value of x^2 on [1, 3] is at the
+            # end of the range, where nothing is turning.
             self._extra_widgets["lower"].pack(side="left")
             self._extra_widgets["upper"].pack(side="left")
         elif operation in ("limit", "series"):

@@ -19,7 +19,13 @@ from .parsing import ParseError, parse_input, parse_number, parse_system
 OPERATIONS = [
     "solve", "simplify", "expand", "factor", "evaluate",
     "derivative", "integral", "limit", "series", "roots", "system", "ode",
+    "minimise", "maximise",
 ]
+
+#: Where to look for a turning point when nobody says. Wide enough to
+#: catch the ones an ordinary expression has and narrow enough that the
+#: scan behind it can tell two of them apart.
+DEFAULT_RANGE = (-100.0, 100.0)
 
 
 @dataclass
@@ -122,7 +128,130 @@ def calculate(text: str, operation: str = "solve", variable: str | None = None,
     if operation == "series":
         return _series(text, expr, variable, kwargs.get("point", "0"),
                        int(kwargs.get("order", 6) or 6))
+    if operation in ("minimise", "maximise"):
+        return _optimise(text, expr, variable, operation,
+                         kwargs.get("lower"), kwargs.get("upper"))
     raise ParseError(f"Unknown operation {operation!r}")
+
+
+def _optimise(text, expr, variable, operation, lower, upper) -> CalcResult:
+    """The smallest or largest value, and where it happens.
+
+    Done the way it is done by hand: differentiate, solve for nought, and
+    check each answer - not by walking downhill from a guess. The
+    difference shows up on anything with more than one dip in it, where a
+    hill-climber finds whichever one it started nearest and reports it as
+    though it were the answer.
+
+    Over a range the ends are candidates too, and that is the part that
+    gets forgotten. The smallest value of x^2 on [1, 3] is at x = 1, and
+    there is no turning point there at all - setting the derivative to
+    nought and stopping finds x = 0, which is not in the range and is not
+    the answer.
+    """
+    from .roots import solutions
+
+    wanted = expr.rhs if isinstance(expr, sp.Eq) else expr
+    var = _pick_variable(wanted, variable)
+    if var is None:
+        raise ParseError("There is nothing to vary - this is a number.")
+    left = wanted.free_symbols - {var}
+    if left:
+        raise ParseError(
+            f"{', '.join(sorted(s.name for s in left))} would have to be "
+            f"given a value before this can be made "
+            f"{'small' if operation == 'minimise' else 'large'}est.")
+
+    lo, hi, bounded = _the_range(lower, upper)
+    slope = sp.diff(wanted, var)
+    stationary = [at for at in solutions(slope, lo, hi, var)
+                  if lo <= at <= hi]
+    candidates = list(stationary) + ([lo, hi] if bounded else [])
+
+    found = []
+    for at in candidates:
+        value = _to_float(wanted.subs(var, at))
+        if value is not None and value == value and abs(value) != float("inf"):
+            found.append((at, value))
+    if not found:
+        raise ParseError(
+            f"Nothing between {lo:g} and {hi:g} where this turns round"
+            + ("." if bounded else " - and with no range given, the ends "
+                                  "are not candidates. Give a range."))
+
+    smallest = operation == "minimise"
+    best = (min if smallest else max)(found, key=lambda pair: pair[1])
+    at, value = best
+
+    res = CalcResult(operation=operation, input_text=text,
+                     expression=wanted, variable=var.name,
+                     results=[sp.Float(value)], plottable=True)
+    res.numeric = [value]
+    res.result_text = (f"{'least' if smallest else 'greatest'} value "
+                       f"{_fmt(sp.Float(value))} at {var.name} = "
+                       f"{_fmt(sp.Float(at))}")
+    res.latex = sp.latex(sp.Eq(sp.Symbol(var.name), sp.Float(at),
+                               evaluate=False))
+    res.steps = _optimise_steps(wanted, var, slope, stationary, found, best,
+                                bounded, lo, hi, smallest)
+    if not bounded:
+        res.warnings.append(
+            f"No range was given, so the turning points were looked for "
+            f"between {lo:g} and {hi:g}. A function that keeps falling has "
+            f"no least value and the answer is only the lowest turning "
+            f"point.")
+    return res
+
+
+def _the_range(lower, upper) -> tuple:
+    """(low, high, whether anybody actually said)."""
+    def number(text, fallback):
+        if text is None or not str(text).strip():
+            return fallback, False
+        try:
+            return float(sp.sympify(str(text))), True
+        except Exception as exc:                      # noqa: BLE001
+            raise ParseError(f"{text!r} is not a number.") from exc
+
+    lo, said_lo = number(lower, DEFAULT_RANGE[0])
+    hi, said_hi = number(upper, DEFAULT_RANGE[1])
+    if hi <= lo:
+        raise ParseError("The top of the range has to be above the bottom.")
+    return lo, hi, said_lo and said_hi
+
+
+def _optimise_steps(expr, var, slope, stationary, found, best, bounded,
+                    lo, hi, smallest) -> list:
+    """The working: differentiate, solve, and try each candidate."""
+    said = [steps_mod.Step("Input", expr=expr),
+            steps_mod.Step(
+                f"A turning point is where the slope is nought, so "
+                f"differentiate and solve d/d{var.name} = 0", expr=slope)]
+    if stationary:
+        said.append(steps_mod.Step(
+            "Turning points",
+            detail=", ".join(f"{var.name} = {_fmt(sp.Float(at))}"
+                             for at in stationary)))
+    else:
+        said.append(steps_mod.Step(
+            "No turning points in the range",
+            detail="so the answer is at an end of it, if there is one"))
+    if bounded:
+        said.append(steps_mod.Step(
+            "The ends count too",
+            detail=f"{var.name} = {lo:g} and {var.name} = {hi:g}, because "
+                   f"the smallest value over a range can be at its edge "
+                   f"with nothing turning there."))
+    said.append(steps_mod.Step(
+        "Each candidate",
+        detail="\n".join(f"{var.name} = {_fmt(sp.Float(at))}  ->  "
+                          f"{_fmt(sp.Float(value))}"
+                          for at, value in sorted(found))))
+    said.append(steps_mod.Step(
+        f"The {'smallest' if smallest else 'largest'} of those",
+        detail=f"{var.name} = {_fmt(sp.Float(best[0]))}, "
+               f"giving {_fmt(sp.Float(best[1]))}"))
+    return said
 
 
 def _build_subs(subs: dict | None, expr) -> dict:

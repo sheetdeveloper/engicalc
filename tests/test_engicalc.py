@@ -9507,3 +9507,107 @@ class TestTablesOnASheet(unittest.TestCase):
         self.assertEqual("d", worst.name)
         self.assertGreater(worst.share, 0.5)
 
+
+
+class TestOptimising(unittest.TestCase):
+    """Minimise and maximise, done the way it is done by hand.
+
+    Differentiate, solve for nought, and check each answer - not by
+    walking downhill from a guess, which on anything with more than one
+    dip in it finds whichever one it started nearest and reports it as
+    though it were the answer.
+    """
+
+    def _run(self, text, operation, **kwargs):
+        from engicalc.core.engine import calculate
+
+        return calculate(text, operation, "x", **kwargs)
+
+    def test_a_parabola_is_least_at_its_vertex(self):
+        got = self._run("x^2 - 4*x + 7", "minimise")
+        self.assertAlmostEqual(3.0, got.numeric[0], places=9)
+        self.assertIn("x = 2", got.result_text)
+
+    def test_the_ends_of_the_range_are_candidates(self):
+        """The part that gets forgotten. The least value of x^2 on [1, 3]
+        is at x = 1, and there is no turning point there at all - setting
+        the derivative to nought and stopping finds x = 0, which is not in
+        the range and is not the answer."""
+        got = self._run("x^2", "minimise", lower="1", upper="3")
+        self.assertAlmostEqual(1.0, got.numeric[0], places=9)
+        self.assertIn("x = 1", got.result_text)
+
+        # And the same expression over a range that contains the vertex
+        # answers with the vertex.
+        wider = self._run("x^2", "minimise", lower="-1", upper="3")
+        self.assertAlmostEqual(0.0, wider.numeric[0], places=9)
+
+    def test_a_local_dip_does_not_beat_the_end_of_the_range(self):
+        """x^3 - 3x dips to -2 at x = 1 and reaches -18 at x = -3.
+
+        A hill-climber started near the dip would answer -2.
+        """
+        got = self._run("x^3 - 3*x", "minimise", lower="-3", upper="3")
+        self.assertAlmostEqual(-18.0, got.numeric[0], places=9)
+
+    def test_a_periodic_maximum_is_found(self):
+        import math
+
+        got = self._run("sin(x)", "maximise", lower="0", upper="10")
+        self.assertAlmostEqual(1.0, got.numeric[0], places=9)
+        self.assertIn(f"{math.pi / 2:.4g}"[:4], got.result_text)
+
+    def test_one_with_no_closed_form_turning_point(self):
+        """x*exp(-x) turns where (1-x)exp(-x) = 0, which SymPy does solve;
+        x*cos(x) turns where cos(x) = x*sin(x), which it does not. Both
+        have to work."""
+        got = self._run("x*exp(-x)", "maximise", lower="0", upper="10")
+        self.assertAlmostEqual(math.exp(-1.0), got.numeric[0], places=8)
+
+        awkward = self._run("x*cos(x)", "minimise", lower="0", upper="10")
+        # Checked as a property rather than against a number copied out
+        # of a run: it is stationary there, and nothing in the range goes
+        # lower. That says the answer is right without asserting which
+        # of the several dips it is.
+        import sympy as sp
+
+        x = sp.Symbol("x")
+        expression = x * sp.cos(x)
+        at = float(sp.sympify(awkward.result_text.split("= ")[-1]))
+        self.assertAlmostEqual(
+            0.0, float(sp.diff(expression, x).subs(x, at)), places=6)
+        for step in range(0, 1001):
+            here = 10.0 * step / 1000.0
+            self.assertGreaterEqual(
+                float(expression.subs(x, here)), awkward.numeric[0] - 1e-6)
+
+    def test_it_says_when_no_range_was_given(self):
+        """Because then the answer is only the lowest turning point, and a
+        function that keeps falling has no least value at all."""
+        got = self._run("x^2 - 4*x + 7", "minimise")
+        self.assertTrue(got.warnings)
+        self.assertIn("No range was given", got.warnings[0])
+
+        bounded = self._run("x^2 - 4*x + 7", "minimise", lower="0", upper="5")
+        self.assertEqual([], bounded.warnings)
+
+    def test_something_with_another_name_in_it_is_refused(self):
+        from engicalc.core.parsing import ParseError
+
+        with self.assertRaises(ParseError) as caught:
+            self._run("a*x^2 + b", "minimise")
+        self.assertIn("a", str(caught.exception))
+        self.assertIn("b", str(caught.exception))
+
+    def test_the_working_names_the_candidates(self):
+        got = self._run("x^2", "minimise", lower="1", upper="3")
+        said = " ".join(str(getattr(step, "detail", "") or "")
+                        for step in got.steps)
+        self.assertIn("x = 1", said)
+        self.assertIn("x = 3", said)
+
+    def test_both_operations_are_offered(self):
+        from engicalc.core.engine import OPERATIONS
+
+        self.assertIn("minimise", OPERATIONS)
+        self.assertIn("maximise", OPERATIONS)
